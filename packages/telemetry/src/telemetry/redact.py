@@ -7,6 +7,8 @@ SENSITIVE_KEYS = frozenset({"authorization", "cookie", "password", "secret", "to
 
 
 def redact(value: Any) -> Any:
+    if isinstance(value, bytes | bytearray):
+        return REDACTED
     if isinstance(value, Mapping):
         return {
             str(key): REDACTED if _sensitive(str(key)) else redact(item)

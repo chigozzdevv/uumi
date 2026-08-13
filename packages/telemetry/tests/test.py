@@ -6,6 +6,7 @@ def test_redact_removes_nested_secret_values() -> None:
         "provider": "sendgrid",
         "api_key": "plaintext",
         "secret_reference": "projects/example/secrets/mail/versions/2",
+        "payload": b"plaintext bytes",
         "nested": [{"authorization": "Bearer plaintext"}],
     }
 
@@ -13,5 +14,6 @@ def test_redact_removes_nested_secret_values() -> None:
         "provider": "sendgrid",
         "api_key": REDACTED,
         "secret_reference": "projects/example/secrets/mail/versions/2",
+        "payload": REDACTED,
         "nested": [{"authorization": REDACTED}],
     }
