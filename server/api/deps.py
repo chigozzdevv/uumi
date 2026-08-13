@@ -112,6 +112,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         agents=AgentRuntimeService(
             AgentFleetService(agent_repository),
             continuity,
+            google,
             configured.project_id,
             _now,
         ),

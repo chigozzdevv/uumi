@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.firestore_database,
         _now,
     )
-    agent_runtime = AgentRuntimeService(fleet, continuity, settings.project_id, _now)
+    agent_runtime = AgentRuntimeService(fleet, continuity, google, settings.project_id, _now)
     browser_service = BrowserService(FirestoreBrowserRepository(firestore), _now)
     browser = BrowserStepExecutor(
         catalog,

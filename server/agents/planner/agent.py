@@ -34,4 +34,13 @@ add tools, change actions, or mutate resources. Return structured JSON.""",
     disallow_transfer_to_peers=True,
 )
 app = App(name="firekey_planner", root_agent=root_agent)
-agent_app = managed_app(app)
+agent_app = managed_app(
+    app,
+    {
+        "plan_rotation",
+        "select_strategy",
+        "bind_playbook",
+        "diagnose_failed_stage",
+        "recommend_authorised_recovery",
+    },
+)

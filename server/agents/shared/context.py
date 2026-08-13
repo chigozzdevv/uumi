@@ -5,20 +5,10 @@ from core.errors import ResourceNotFoundError
 from core.storage.paths import FirestorePaths
 from google.adk.agents.context import Context as ToolContext
 from google.cloud.firestore_v1 import AsyncClient
+from telemetry import REDACTED
+from telemetry import redact as redact_sensitive
 
-_SENSITIVE = frozenset(
-    {
-        "api_key",
-        "authorization",
-        "cookie",
-        "credential",
-        "password",
-        "private_key",
-        "secret",
-        "token",
-        "value",
-    }
-)
+_PLAINTEXT_SECRET_KEYS = frozenset({"plaintext", "private-key", "secret-value"})
 
 
 class AgentContext:
@@ -55,14 +45,15 @@ class AgentContext:
 
 
 def redact(value: Any, key: str = "") -> Any:
-    if any(part in _SENSITIVE for part in key.lower().split("_")):
-        return "[redacted]"
+    normalised = key.lower().replace("_", "-")
+    if normalised in _PLAINTEXT_SECRET_KEYS:
+        return REDACTED
     if isinstance(value, Mapping):
-        return {str(name): redact(item, str(name)) for name, item in value.items()}
+        return redact_sensitive(value)
     if isinstance(value, list):
         return [redact(item) for item in value]
     if isinstance(value, tuple):
         return tuple(redact(item) for item in value)
     if isinstance(value, bytes):
-        return "[redacted]"
+        return REDACTED
     return value

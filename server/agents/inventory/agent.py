@@ -20,4 +20,7 @@ IDs. Never request or infer credential values. Return conclusions as structured 
     disallow_transfer_to_peers=True,
 )
 app = App(name="firekey_inventory", root_agent=root_agent)
-agent_app = managed_app(app)
+agent_app = managed_app(
+    app,
+    {"correlate_exposure", "resolve_consumers", "detect_stale_mapping"},
+)
