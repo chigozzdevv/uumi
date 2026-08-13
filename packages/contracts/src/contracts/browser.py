@@ -102,6 +102,7 @@ class BrowserSession(Contract):
     run_id: Identifier
     playbook_id: Identifier
     playbook_version: Identifier
+    provider_connection_id: Identifier
     worker_instance: str | None = Field(default=None, max_length=512)
     internal_address: str | None = Field(default=None, max_length=128)
     status: BrowserStatus
@@ -150,6 +151,7 @@ class SecureCaptureResult(Contract):
     organisation_id: Identifier
     session_id: Identifier
     field_name: Identifier
+    provider_id: str = Field(min_length=1, max_length=256)
     secret_reference: str = Field(min_length=1, max_length=1024)
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     masked_value_digest: str = Field(pattern=r"^[a-f0-9]{64}$")

@@ -10,7 +10,7 @@ get() {
 organisation="$(get firekey-organisation)"
 session="$(get firekey-session)"
 project="$(get firekey-project)"
-capability="$(get firekey-capability)"
+capability_public="$(get firekey-capability-public)"
 evidence="$(get firekey-evidence)"
 region="$(get firekey-region)"
 image="$(get firekey-worker-image)"
@@ -23,7 +23,7 @@ docker run --detach --restart=no --network=host --name=firekey-browser \
   --env FIREKEY_PROJECT_ID="$project" \
   --env FIREKEY_ORGANISATION_ID="$organisation" \
   --env FIREKEY_SESSION_ID="$session" \
-  --env FIREKEY_CAPABILITY_KEY_VERSION="$capability" \
+  --env FIREKEY_CAPABILITY_PUBLIC_KEY="$capability_public" \
   --env FIREKEY_EVIDENCE_BUCKET="$evidence" \
   --env FIREKEY_REGION="$region" \
   "$image"

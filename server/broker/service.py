@@ -23,7 +23,7 @@ from core.audit import AuditWriter
 from core.errors import ApprovalError, CapabilityError
 from policy import digest
 
-from broker.capability import CapabilityClaims, CapabilitySigner, request_digest
+from broker.capability import CapabilityClaims, CapabilityVerifier, request_digest
 from broker.validate import READ_TOOLS, validate_capability, validate_request
 
 
@@ -91,7 +91,7 @@ class BrokerService:
         self,
         repository: BrokerRepository,
         connectors: ConnectorRegistry,
-        capabilities: CapabilitySigner,
+        capabilities: CapabilityVerifier,
         evidence: EvidenceSink,
         audit: AuditWriter,
         clock: Callable[[], datetime],

@@ -19,8 +19,8 @@ variable "service_account" {
   type        = string
 }
 
-variable "capability_secret_version" {
-  description = "Capability signing Secret Manager version."
+variable "capability_public_key" {
+  description = "Base64url Ed25519 public key used to verify browser capabilities."
   type        = string
 }
 

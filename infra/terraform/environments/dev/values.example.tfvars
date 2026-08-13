@@ -11,6 +11,7 @@ coordinator_image         = null
 browser_image             = null
 gateway_image             = null
 capability_secret_version = null
+capability_public_key     = "replace-with-ed25519-public-key-base64url-x"
 
 scc_sources = {
   org_replace = {

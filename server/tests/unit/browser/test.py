@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from broker import CapabilitySigner
 from browser.access import BrowserAccessService
+from browser.auth import BrowserAuthBroker
 from browser.driver import BrowserDriver
 from browser.model import ComputerUseClient
 from browser.service import BrowserService
@@ -17,6 +18,9 @@ from contracts import (
     BrowserPolicy,
     BrowserSession,
     BrowserStatus,
+    Connection,
+    ConnectionKind,
+    ConnectionStatus,
     ReplayCheckpoint,
     RotationRun,
     RunStatus,
@@ -122,6 +126,7 @@ async def test_secure_capture_barriers_remain_until_result_is_persisted() -> Non
         organisation_id="org_one",
         session_id=session.id,
         field_name="api_key",
+        provider_id="provider-key-one",
         secret_reference="projects/project-one/secrets/key/versions/4",
         fingerprint="a" * 64,
         masked_value_digest="b" * 64,
@@ -228,6 +233,7 @@ async def test_takeover_capability_is_identity_bound_and_releases_to_a_safe_paus
 
     assert grant.session.status is BrowserStatus.TAKEOVER
     assert grant.session.takeover_subject == "operator-subject"
+    assert grant.session.recording_paused is True
     assert claims.tool == "browser.takeover"
     assert claims.agent_id.startswith("actor_")
 
@@ -272,6 +278,51 @@ def test_browser_domain_allowlist_does_not_accept_lookalikes() -> None:
         driver.validate_url("https://user:password@console.vendor.example.com/keys")
 
 
+@pytest.mark.anyio
+async def test_auth_broker_accepts_only_allowlisted_playwright_state() -> None:
+    broker = BrowserAuthBroker(AuthSecrets("console.vendor.example.com"))  # type: ignore[arg-type]
+    connection = Connection(
+        id="provider_one",
+        organisation_id="org_one",
+        kind=ConnectionKind.PROVIDER,
+        provider="vendor",
+        display_name="Vendor console",
+        auth_reference="projects/project/secrets/session/versions/1",
+        capabilities=frozenset({"browser.authenticate"}),
+        allowed_resources=("console.vendor.example.com",),
+        status=ConnectionStatus.READY,
+        region="us-central1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    state = await broker.storage_state(connection, ("*.vendor.example.com",))
+
+    assert state["cookies"][0]["name"] == "session"
+
+
+@pytest.mark.anyio
+async def test_auth_broker_rejects_cross_domain_cookie() -> None:
+    broker = BrowserAuthBroker(AuthSecrets("attacker.example"))  # type: ignore[arg-type]
+    connection = Connection(
+        id="provider_one",
+        organisation_id="org_one",
+        kind=ConnectionKind.PROVIDER,
+        provider="vendor",
+        display_name="Vendor console",
+        auth_reference="projects/project/secrets/session/versions/1",
+        capabilities=frozenset({"browser.authenticate"}),
+        allowed_resources=("console.vendor.example.com",),
+        status=ConnectionStatus.READY,
+        region="us-central1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    with pytest.raises(ResourceConflictError, match="outside"):
+        await broker.storage_state(connection, ("*.vendor.example.com",))
+
+
 def _session() -> BrowserSession:
     return BrowserSession(
         id="session_one",
@@ -279,6 +330,7 @@ def _session() -> BrowserSession:
         run_id="run_one",
         playbook_id="playbook_one",
         playbook_version="version_one",
+        provider_connection_id="provider_one",
         status=BrowserStatus.PROVISIONING,
         policy=BrowserPolicy(
             allowed_domains=("*.vendor.example.com",),
@@ -347,3 +399,40 @@ class ComputerGoogle:
                 }
             ]
         }
+
+
+class AuthSecret:
+    def __init__(self, value: bytes) -> None:
+        self.value = bytearray(value)
+
+    def bytes(self) -> bytes:
+        return bytes(self.value)
+
+    def clear(self) -> None:
+        for index in range(len(self.value)):
+            self.value[index] = 0
+
+
+class AuthSecrets:
+    def __init__(self, domain: str) -> None:
+        self.domain = domain
+
+    async def access(self, reference: str) -> AuthSecret:
+        import json
+
+        assert reference.endswith("/versions/1")
+        return AuthSecret(
+            json.dumps(
+                {
+                    "cookies": [
+                        {
+                            "name": "session",
+                            "value": "opaque-cookie",
+                            "domain": self.domain,
+                            "path": "/",
+                        }
+                    ],
+                    "origins": [],
+                }
+            ).encode()
+        )

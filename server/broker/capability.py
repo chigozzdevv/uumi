@@ -1,6 +1,5 @@
 import base64
 import hashlib
-import hmac
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -8,6 +7,9 @@ from typing import Any
 
 from contracts import Stage
 from core.errors import CapabilityError
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,26 +30,58 @@ class CapabilityClaims:
 
 class CapabilitySigner:
     def __init__(self, key: bytes) -> None:
-        if len(key) < 32:
-            raise ValueError("capability signing key must be at least 32 bytes")
-        self._key = key
+        if len(key) != 32:
+            raise ValueError("capability signing key must be a 32-byte Ed25519 private key")
+        self._key = Ed25519PrivateKey.from_private_bytes(key)
+        self._verifier = CapabilityVerifier(self.public_key)
+
+    @property
+    def public_key(self) -> bytes:
+        return self._key.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+
+    @property
+    def encoded_public_key(self) -> str:
+        return _urlsafe(self.public_key)
 
     def mint(self, claims: CapabilityClaims) -> str:
-        header = _encode({"alg": "HS256", "typ": "FKC", "v": 1})
+        header = _encode({"alg": "EdDSA", "typ": "FKC", "v": 2})
         payload = _encode({**asdict(claims), "stage": claims.stage.value})
-        signature = _sign(self._key, f"{header}.{payload}".encode())
+        signature = _urlsafe(self._key.sign(f"{header}.{payload}".encode()))
         return f"{header}.{payload}.{signature}"
+
+    def verify(self, token: str, now: datetime) -> CapabilityClaims:
+        return self._verifier.verify(token, now)
+
+
+class CapabilityVerifier:
+    def __init__(self, key: bytes) -> None:
+        if len(key) != 32:
+            raise ValueError("capability verification key must be a 32-byte Ed25519 public key")
+        self._key = Ed25519PublicKey.from_public_bytes(key)
+
+    @classmethod
+    def decode(cls, value: str) -> "CapabilityVerifier":
+        try:
+            key = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        except ValueError as error:
+            raise ValueError("capability public key is not valid base64url") from error
+        return cls(key)
 
     def verify(self, token: str, now: datetime) -> CapabilityClaims:
         parts = token.split(".")
         if len(parts) != 3:
             raise CapabilityError("action capability is malformed")
         header, payload, signature = parts
-        expected = _sign(self._key, f"{header}.{payload}".encode())
-        if not hmac.compare_digest(signature, expected):
-            raise CapabilityError("action capability signature is invalid")
+        try:
+            raw_signature = base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
+            self._key.verify(raw_signature, f"{header}.{payload}".encode())
+        except (InvalidSignature, ValueError) as error:
+            raise CapabilityError("action capability signature is invalid") from error
         header_value = _decode(header)
-        if header_value != {"alg": "HS256", "typ": "FKC", "v": 1}:
+        if header_value != {"alg": "EdDSA", "typ": "FKC", "v": 2}:
             raise CapabilityError("action capability header is unsupported")
         value = _decode(payload)
         try:
@@ -80,10 +114,6 @@ def request_digest(tool: str, payload: dict[str, Any]) -> str:
         sort_keys=True,
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def _sign(key: bytes, value: bytes) -> str:
-    return _urlsafe(hmac.new(key, value, hashlib.sha256).digest())
 
 
 def _encode(value: dict[str, Any]) -> str:

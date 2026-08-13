@@ -16,7 +16,7 @@ from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
-from broker.capability import CapabilitySigner
+from broker.capability import CapabilityVerifier
 from broker.config import BrokerSettings
 from broker.evidence import GcsEvidenceSink
 from broker.service import BrokerService, ConnectorRegistry
@@ -47,8 +47,7 @@ async def lifespan(_: MCPServer[Any]) -> Any:
     google = GoogleRestClient()
     firestore = AsyncClient(project=settings.project_id, database=settings.firestore_database)
     secrets = SecretManagerConnector(google)
-    with await secrets.access(settings.capability_secret) as signing_secret:
-        signer = CapabilitySigner(signing_secret.bytes())
+    signer = CapabilityVerifier.decode(settings.capability_public_key)
     connectors = ConnectorRegistry()
     connectors.register(ConnectionKind.SECRET, "google-secret-manager", secrets)
     connectors.register(ConnectionKind.PROVIDER, "sendgrid", SendGridConnector(secrets))

@@ -3,6 +3,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from contracts.base import Contract, Identifier
+from contracts.playbook import RecoveryAction
 from contracts.state import Stage
 
 
@@ -20,6 +21,6 @@ class RecoveryPlan(Contract):
     run_id: Identifier
     failed_stage: Stage
     mode: RecoveryMode
-    steps: tuple[str, ...] = Field(min_length=1)
+    steps: tuple[RecoveryAction, ...] = Field(min_length=1)
     preserves_old_generation: bool
     requires_approval: bool

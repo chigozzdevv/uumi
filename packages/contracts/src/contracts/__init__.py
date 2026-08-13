@@ -76,9 +76,11 @@ from contracts.playbook import (
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
+    RecoveryAction,
     SecureField,
     Selector,
     SelectorKind,
+    StepOutput,
 )
 from contracts.provider import ConnectorCapabilities, MutationMode, MutationSemantics
 from contracts.recovery import RecoveryMode, RecoveryPlan
@@ -165,6 +167,7 @@ __all__ = [
     "ProbeResult",
     "ProtectedAction",
     "RecoverRunCommand",
+    "RecoveryAction",
     "RecoveryMode",
     "RecoveryPlan",
     "RenewLeaseCommand",
@@ -190,6 +193,7 @@ __all__ = [
     "StageExecutionStatus",
     "StageProof",
     "StartRunCommand",
+    "StepOutput",
     "TimedText",
     "ToolAttempt",
     "ToolAttemptStatus",

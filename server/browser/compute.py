@@ -20,7 +20,7 @@ class BrowserVmManager:
         project_id: str,
         zone: str,
         instance_template: str,
-        capability_key_version: str,
+        capability_public_key: str,
         evidence_bucket: str,
         region: str,
         worker_image: str,
@@ -29,7 +29,7 @@ class BrowserVmManager:
         self._project = project_id
         self._zone = zone
         self._template = instance_template
-        self._capability = capability_key_version
+        self._capability_public = capability_public_key
         self._evidence = evidence_bucket
         self._region = region
         self._image = worker_image
@@ -60,7 +60,10 @@ class BrowserVmManager:
                         {"key": "firekey-session", "value": session_id},
                         {"key": "firekey-expires", "value": expires_at.isoformat()},
                         {"key": "firekey-project", "value": self._project},
-                        {"key": "firekey-capability", "value": self._capability},
+                        {
+                            "key": "firekey-capability-public",
+                            "value": self._capability_public,
+                        },
                         {"key": "firekey-evidence", "value": self._evidence},
                         {"key": "firekey-region", "value": self._region},
                         {"key": "firekey-worker-image", "value": self._image},

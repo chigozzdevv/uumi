@@ -1,4 +1,6 @@
 import asyncio
+import json
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -12,6 +14,8 @@ from contracts import (
     BrowserPolicy,
     BrowserSession,
     BrowserStatus,
+    Connection,
+    ConnectionKind,
     PlaybookAssignment,
     PlaybookStep,
     PlaybookVersion,
@@ -65,7 +69,10 @@ class BrowserStepExecutor:
             )
             navigated = BrowserSession.model_validate(result.get("session"))
             return {"session_id": navigated.id, "step_id": step.id, "done": True}
-        objective = f"Execute immutable playbook step {step.id}: {step.operation}"
+        objective = (
+            f"Execute only this approved browser objective: {step.objective}. "
+            f"Operation: {step.operation}. Approved parameters: {_safe_parameters(step.parameters)}"
+        )
         for _ in range(session.policy.max_steps):
             propose_payload = {"step": step.model_dump(mode="json"), "objective": objective}
             proposal = await self._post(
@@ -76,7 +83,18 @@ class BrowserStepExecutor:
                 propose_payload,
             )
             if proposal.get("done") is True:
-                return {"session_id": session.id, "step_id": step.id, "done": True}
+                outputs = proposal.get("outputs", {})
+                if not isinstance(outputs, dict) or any(
+                    not isinstance(key, str) or not isinstance(value, str)
+                    for key, value in outputs.items()
+                ):
+                    raise RuntimeError("browser worker returned invalid declared outputs")
+                return {
+                    "session_id": session.id,
+                    "step_id": step.id,
+                    "done": True,
+                    **outputs,
+                }
             action = proposal.get("action")
             if not isinstance(action, dict) or not isinstance(action.get("id"), str):
                 raise RuntimeError("browser worker returned no deterministic action")
@@ -103,10 +121,11 @@ class BrowserStepExecutor:
             session = BrowserSession.model_validate(result.get("session"))
             capture = result.get("capture")
             if capture is not None:
+                captured = dict(capture) if isinstance(capture, dict) else {"capture": capture}
                 return {
                     "session_id": session.id,
                     "step_id": step.id,
-                    "capture": capture,
+                    **captured,
                 }
             if session.status is BrowserStatus.PAUSED:
                 raise BrowserPauseError(
@@ -151,6 +170,16 @@ class BrowserStepExecutor:
                 PlaybookVersion,
             )
             now = datetime.now(UTC)
+            provider_connections = []
+            for connection_id in assignment.connection_ids:
+                connection = await self._catalog.get(
+                    FirestorePaths.connection(run.organisation_id, connection_id),
+                    Connection,
+                )
+                if connection.kind is ConnectionKind.PROVIDER:
+                    provider_connections.append(connection)
+            if len(provider_connections) != 1:
+                raise RuntimeError("browser run requires exactly one provider connection") from None
             session = await self._sessions.create(
                 BrowserSession(
                     id=session_id,
@@ -158,6 +187,7 @@ class BrowserStepExecutor:
                     run_id=run.id,
                     playbook_id=assignment.playbook_id,
                     playbook_version=assignment.version_id,
+                    provider_connection_id=provider_connections[0].id,
                     status=BrowserStatus.PROVISIONING,
                     policy=BrowserPolicy(
                         allowed_domains=version.definition.allowed_domains,
@@ -251,3 +281,12 @@ class BrowserStepExecutor:
 
 def _session_id(run_id: str) -> str:
     return f"browser_{run_id.removeprefix('run_')}"[:128]
+
+
+def _safe_parameters(value: Mapping[str, object]) -> str:
+    safe = {
+        key: item
+        for key, item in value.items()
+        if key.lower() not in {"secret", "password", "token", "value"}
+    }
+    return json.dumps(safe, separators=(",", ":"), sort_keys=True)

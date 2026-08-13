@@ -1,9 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from broker import CapabilitySigner
-from connectors.google import GoogleRestClient
-from connectors.secrets import SecretManagerConnector
+from broker import CapabilityVerifier
 from core.auth import AccessControl, FirestoreAccessRepository, IapTokenVerifier
 from fastapi import FastAPI, WebSocket
 from google.cloud.firestore_v1 import AsyncClient
@@ -20,28 +18,22 @@ class GatewaySettings(BaseSettings):
     project_id: str = Field(min_length=4)
     firestore_database: str = "(default)"
     iap_audience: str = Field(min_length=8)
-    capability_key_version: str = Field(pattern=r"^projects/.+/secrets/.+/versions/\d+$")
+    capability_public_key: str = Field(min_length=40, max_length=64)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = GatewaySettings()  # type: ignore[call-arg]
     firestore = AsyncClient(project=settings.project_id, database=settings.firestore_database)
-    google = GoogleRestClient()
-    secret = await SecretManagerConnector(google).access(settings.capability_key_version)
-    try:
-        signer = CapabilitySigner(secret.bytes())
-    finally:
-        secret.clear()
+    verifier = CapabilityVerifier.decode(settings.capability_public_key)
     app.state.gateway = BrowserSessionGateway(
         FirestoreGatewayRepository(firestore),
         AccessControl(FirestoreAccessRepository(firestore)),
         IapTokenVerifier(settings.iap_audience),
-        signer,
+        verifier,
     )
     yield
     firestore.close()  # type: ignore[no-untyped-call]
-    await google.close()
 
 
 app = FastAPI(title="FireKey Browser Gateway", docs_url=None, lifespan=lifespan)

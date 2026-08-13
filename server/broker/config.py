@@ -9,14 +9,14 @@ class BrokerSettings(BaseSettings):
     firestore_database: str = "(default)"
     region: str = Field(default="", min_length=3)
     evidence_bucket: str = Field(default="", min_length=3)
-    capability_secret: str = Field(default="", min_length=20)
+    capability_public_key: str = Field(default="", min_length=40, max_length=64)
 
     @model_validator(mode="after")
     def require_runtime_configuration(self) -> "BrokerSettings":
-        if not all((self.project_id, self.region, self.evidence_bucket, self.capability_secret)):
+        if not all(
+            (self.project_id, self.region, self.evidence_bucket, self.capability_public_key)
+        ):
             raise ValueError(
-                "broker project, region, evidence bucket, and capability secret required"
+                "broker project, region, evidence bucket, and capability public key required"
             )
-        if not self.capability_secret.startswith("projects/"):
-            raise ValueError("capability secret must be a full Secret Manager version")
         return self

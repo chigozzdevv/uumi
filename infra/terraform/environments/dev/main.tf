@@ -97,10 +97,7 @@ module "storage" {
   agent_staging_user = module.identity.members["firekey-agents"]
   secret_accessors = {
     api         = module.identity.members["firekey-api"]
-    broker      = module.identity.members["firekey-broker"]
     coordinator = module.identity.members["firekey-coordinator"]
-    browser     = module.identity.members["firekey-browser"]
-    gateway     = module.identity.members["firekey-gateway"]
   }
   github_organisations   = var.workflow_organisations
   github_secret_accessor = module.identity.members["firekey-ingestion"]
@@ -188,6 +185,7 @@ module "runtime" {
   evidence_bucket             = module.storage.evidence_bucket
   walkthrough_bucket          = module.storage.walkthrough_bucket
   capability_secret_version   = local.capability_secret_version
+  capability_public_key       = var.capability_public_key
   browser_template            = module.browser.template
   browser_zone                = var.zone
   network                     = module.browser.network
@@ -199,14 +197,14 @@ module "runtime" {
 module "gateway" {
   source = "../../modules/gateway"
 
-  project_id                = var.project_id
-  region                    = var.region
-  image                     = var.gateway_image
-  service_account           = module.identity.emails["firekey-gateway"]
-  capability_secret_version = local.capability_secret_version
-  network                   = module.browser.network
-  subnetwork                = module.browser.subnetwork
-  users                     = var.gateway_users
+  project_id            = var.project_id
+  region                = var.region
+  image                 = var.gateway_image
+  service_account       = module.identity.emails["firekey-gateway"]
+  capability_public_key = var.capability_public_key
+  network               = module.browser.network
+  subnetwork            = module.browser.subnetwork
+  users                 = var.gateway_users
 
   depends_on = [module.project, module.browser, module.storage]
 }

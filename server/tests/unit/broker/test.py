@@ -4,7 +4,13 @@ from typing import Any
 
 import httpx
 import pytest
-from broker import BrokerService, CapabilityClaims, CapabilitySigner, ConnectorRegistry
+from broker import (
+    BrokerService,
+    CapabilityClaims,
+    CapabilitySigner,
+    CapabilityVerifier,
+    ConnectorRegistry,
+)
 from broker.capability import request_digest
 from broker.server import server as mcp_server
 from connectors import ConnectorContext, ConnectorResponse, SecretValue
@@ -96,6 +102,7 @@ class Repository:
                     stage=Stage.CREATE,
                     tool="provider.createCredential",
                     operation="create",
+                    objective="Create the replacement provider credential",
                     evidence_checks=frozenset({"provider-created"}),
                 ),
             ),
@@ -243,7 +250,7 @@ async def test_broker_stores_one_time_secret_and_deduplicates_provider_call() ->
     broker = BrokerService(
         repository,
         registry,
-        signer,
+        CapabilityVerifier(signer.public_key),
         EvidenceSink(),
         AuditWriter(audits, "us-east1", lambda: NOW),
         lambda: NOW,

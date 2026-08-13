@@ -55,8 +55,8 @@ resource "google_cloud_run_v2_service" "gateway" {
         value = "/projects/${data.google_project.current.number}/locations/${var.region}/services/firekey-browser-gateway"
       }
       env {
-        name  = "FIREKEY_CAPABILITY_KEY_VERSION"
-        value = var.capability_secret_version
+        name  = "FIREKEY_CAPABILITY_PUBLIC_KEY"
+        value = var.capability_public_key
       }
 
       resources {

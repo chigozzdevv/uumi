@@ -155,7 +155,7 @@ class BrowserService:
             current,
             status=BrowserStatus.TAKEOVER if takeover else BrowserStatus.RUNNING,
             model_paused=takeover,
-            recording_paused=False,
+            recording_paused=takeover,
         )
         return await self._repository.update(
             result.organisation_id, result.session_id, revision, changed
@@ -185,6 +185,7 @@ class BrowserService:
             current,
             status=BrowserStatus.TAKEOVER,
             model_paused=True,
+            recording_paused=True,
             takeover_subject=subject,
         )
         return await self._repository.update(organisation_id, session_id, revision, changed)
@@ -229,6 +230,8 @@ class BrowserService:
             raise ResourceConflictError("browser action holds a stale session fence")
         if action.kind not in current.policy.allowed_actions:
             raise ResourceConflictError("browser action is not allowed by session policy")
+        if current.status is BrowserStatus.TAKEOVER and action.protected:
+            raise ResourceConflictError("takeover cannot self-authorise a protected action")
         changed = self._change(current, step_count=current.step_count + 1)
         recorded = (
             action.model_copy(update={"value": "<redacted>"})

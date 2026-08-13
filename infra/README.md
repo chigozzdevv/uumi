@@ -35,9 +35,12 @@ This creates the protected Firestore database, service accounts, immutable Artif
 CMEK keys, the locked evidence bucket, Agent Runtime staging bucket, GitHub webhook secret
 containers, capability secret container, private browser network, and one-run VM template.
 
-Create secret versions outside Terraform. The capability value must be at least 32 random bytes.
-Each GitHub organisation requires a distinct random HMAC secret version. Do not place either
-value in Terraform variables, plans, state, commands, or shell history.
+Create secret versions outside Terraform. The capability secret version must contain exactly the
+raw 32-byte private key of an Ed25519 keypair; `capability_public_key` contains only the paired raw
+public key in unpadded base64url form. Only the API and coordinator can read the private key.
+Broker, gateway, and one-run browser workers receive the public key and therefore cannot mint
+capabilities. Each GitHub organisation requires a distinct random HMAC secret version. Do not
+place private or HMAC values in Terraform variables, plans, state, commands, or shell history.
 
 ## 3. Build and push every runtime by digest
 
@@ -67,8 +70,8 @@ gcloud artifacts docker images describe \
 
 Repeat that operation for all seven images. Set every image variable to its full
 `REGION-docker.pkg.dev/PROJECT/firekey/NAME@sha256:DIGEST` reference. Set the explicit capability
-secret version, at least one `workflow_organisation`, at least one IAP `gateway_user`, and each
-SCC source's Cloud organisation, location, and filter. Then apply again.
+secret version and paired public key, at least one `workflow_organisation`, at least one IAP
+`gateway_user`, and each SCC source's Cloud organisation, location, and filter. Then apply again.
 
 The resulting graph includes:
 

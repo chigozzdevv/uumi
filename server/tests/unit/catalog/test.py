@@ -15,6 +15,7 @@ from contracts import (
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
+    RecoveryAction,
     Stage,
 )
 from core.audit import GENESIS, event_hash
@@ -259,6 +260,7 @@ def _draft() -> PlaybookDraft:
             stage=stage,
             tool=f"test.{stage.value}",
             operation=stage.value,
+            objective=f"Execute the {stage.value} lifecycle stage",
             protected=stage is Stage.REVOKE,
             evidence_checks=frozenset({f"{stage.value}-passed"}),
         )
@@ -271,5 +273,8 @@ def _draft() -> PlaybookDraft:
         allowed_tools=frozenset(step.tool for step in steps),
         required_connections=("provider_one", "secret_one", "runtime_one"),
         steps=steps,
-        recovery={"create": ("cleanup",), "deploy": ("rollback",)},
+        recovery={
+            "create": (RecoveryAction(tool="test.cleanup", operation="cleanup"),),
+            "deploy": (RecoveryAction(tool="test.rollback", operation="rollback"),),
+        },
     )

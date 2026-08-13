@@ -52,9 +52,12 @@ contained after independent revocation proof, to resolved after audit-chain veri
 Computer Use is intentionally bounded. Gemini may propose supported actions, but deterministic
 code validates the immutable step, domain, unique selector, coordinates, expected and forbidden
 text, current URL, policy, approval, and fencing token. Navigation is deterministic Playwright
-code. Secure Capture pauses model frames and replay, transfers the declared one-time field into
-Secret Manager, masks and rechecks the page, clears mutable buffers, and only then resumes. Any
-ambiguity pauses for identity-bound human takeover.
+code. The Auth Broker loads an allowlisted Playwright session from the exact provider connection
+before Gemini starts, without adding cookies or refresh material to model context. Secure Capture
+pauses model frames and replay, transfers the declared one-time field into Secret Manager, reads
+the declared provider identifier, masks and rechecks the page, clears mutable buffers, and only
+then resumes. Human takeover remains model-paused and replay-paused, and cannot operate controls
+declared protected by the immutable playbook.
 
 ## Development
 

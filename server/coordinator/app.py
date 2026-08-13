@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             settings.project_id,
             settings.zone,
             settings.browser_template,
-            settings.capability_secret,
+            signer.encoded_public_key,
             settings.evidence_bucket,
             settings.region,
             settings.browser_image,

@@ -180,6 +180,16 @@ variable "capability_secret_version" {
   nullable    = true
 }
 
+variable "capability_public_key" {
+  description = "Base64url Ed25519 public key paired with the capability signing secret."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_-]{43}$", var.capability_public_key))
+    error_message = "capability_public_key must be a raw 32-byte Ed25519 key encoded as base64url."
+  }
+}
+
 variable "zone" {
   description = "Zone for one-run Computer Use VMs."
   type        = string

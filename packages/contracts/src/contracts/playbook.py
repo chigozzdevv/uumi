@@ -49,6 +49,20 @@ class SecureField(Contract):
     selector: Selector
     sink_connection_id: Identifier
     secret_resource: str = Field(min_length=1, max_length=1024)
+    provider_id_selector: Selector
+
+
+class StepOutput(Contract):
+    name: Identifier
+    selector: Selector
+    attribute: str = Field(default="text", pattern=r"^(text|value)$")
+
+
+class RecoveryAction(Contract):
+    tool: str = Field(min_length=3, max_length=128)
+    operation: str = Field(min_length=1, max_length=96)
+    parameters: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
+    protected: bool = False
 
 
 class PlaybookStep(Contract):
@@ -56,11 +70,13 @@ class PlaybookStep(Contract):
     stage: Stage
     tool: str = Field(min_length=3, max_length=128)
     operation: str = Field(min_length=1, max_length=96)
+    objective: str = Field(min_length=1, max_length=1024)
     parameters: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
     selectors: tuple[Selector, ...] = ()
     checkpoint: PageCheckpoint | None = None
     protected: bool = False
     secure_field: SecureField | None = None
+    outputs: tuple[StepOutput, ...] = ()
     timeout_seconds: int = Field(default=30, ge=1, le=600)
     retry_limit: int = Field(default=0, ge=0, le=5)
     evidence_checks: frozenset[str] = Field(min_length=1)
@@ -71,6 +87,8 @@ class PlaybookStep(Contract):
             raise ValueError("secure fields can only be handled by browser.secure-capture")
         if self.tool.startswith("browser.") and self.operation != "navigate" and not self.selectors:
             raise ValueError("browser actions require deterministic selectors")
+        if self.tool.startswith("browser.") and len(self.selectors) > 1:
+            raise ValueError("each browser step must target exactly one control")
         if self.tool.startswith("browser.") and self.checkpoint is None:
             raise ValueError("browser actions require a deterministic page checkpoint")
         return self
@@ -84,7 +102,7 @@ class PlaybookDraft(Contract):
     allowed_tools: frozenset[str] = Field(min_length=1)
     required_connections: tuple[Identifier, ...] = Field(min_length=1)
     steps: tuple[PlaybookStep, ...] = Field(min_length=1)
-    recovery: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    recovery: dict[str, tuple[RecoveryAction, ...]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_execution(self) -> "PlaybookDraft":

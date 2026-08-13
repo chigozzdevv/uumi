@@ -32,6 +32,7 @@ from contracts import (
     ProbeDefinition,
     ProbeKind,
     ProtectedAction,
+    RecoveryAction,
     RecoveryMode,
     RecoveryPlan,
     RotationPlan,
@@ -336,7 +337,15 @@ class StageCoordinator:
             run_id=run.id,
             failed_stage=Stage.DEPLOY,
             mode=RecoveryMode.ROLLBACK,
-            steps=version.definition.recovery.get("deploy", ("runtime.rollback",)),
+            steps=version.definition.recovery.get(
+                "deploy",
+                (
+                    RecoveryAction(
+                        tool="runtime.rollback",
+                        operation="rollback",
+                    ),
+                ),
+            ),
             preserves_old_generation=True,
             requires_approval=False,
         )

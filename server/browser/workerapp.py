@@ -4,9 +4,9 @@ import binascii
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
-from broker import CapabilityClaims, CapabilitySigner
+from broker import CapabilityClaims, CapabilityVerifier
 from broker.capability import request_digest
 from broker.evidence import GcsEvidenceSink
 from capture import SecureCapture
@@ -19,6 +19,7 @@ from contracts import (
     BrowserActionKind,
     BrowserSession,
     BrowserStatus,
+    Connection,
     Contract,
     PlaybookStep,
     PlaybookVersion,
@@ -40,6 +41,7 @@ from policy import digest
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from browser.auth import BrowserAuthBroker
 from browser.driver import BrowserDriver
 from browser.model import ComputerProposal, ComputerUseClient
 from browser.replay import ReplayRecorder
@@ -55,7 +57,7 @@ class WorkerSettings(BaseSettings):
     firestore_database: str = "(default)"
     organisation_id: str = Field(min_length=3)
     session_id: str = Field(min_length=3)
-    capability_key_version: str = Field(pattern=r"^projects/.+/secrets/.+/versions/\d+$")
+    capability_public_key: str = Field(min_length=40, max_length=64)
     evidence_bucket: str = Field(min_length=3)
     region: str = Field(min_length=3, max_length=32)
     model: str = "gemini-3.5-flash"
@@ -72,6 +74,7 @@ class NavigateRequest(Contract):
 
 class ProposeResponse(Contract):
     done: bool
+    outputs: dict[str, str] = Field(default_factory=dict)
     action: BrowserAction | None = None
     requires_confirmation: bool = False
     safety_explanation: str | None = Field(default=None, max_length=1024)
@@ -96,7 +99,7 @@ class WorkerRuntime:
         playwright: Playwright,
         browser: Browser,
         session: BrowserSession,
-        signer: CapabilitySigner,
+        signer: CapabilityVerifier,
         driver: BrowserDriver,
         sessions: BrowserService,
         capture: SecureCapture,
@@ -132,11 +135,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     catalog = FirestoreCatalog(firestore)
     session = await _wait_session(catalog, settings.organisation_id, settings.session_id)
     google = GoogleRestClient()
-    capability = await SecretManagerConnector(google).access(settings.capability_key_version)
-    try:
-        signer = CapabilitySigner(capability.bytes())
-    finally:
-        capability.clear()
+    signer = CapabilityVerifier.decode(settings.capability_public_key)
+    connection = await catalog.get(
+        FirestorePaths.connection(session.organisation_id, session.provider_connection_id),
+        Connection,
+    )
+    storage_state = await BrowserAuthBroker(SecretManagerConnector(google)).storage_state(
+        connection,
+        session.policy.allowed_domains,
+    )
     engine = await async_playwright().start()
     browser = await engine.chromium.launch(
         headless=True,
@@ -146,6 +153,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         viewport={"width": 1440, "height": 900},
         accept_downloads=False,
         service_workers="block",
+        storage_state=cast(Any, storage_state),
     )
     page = await context.new_page()
     driver = BrowserDriver(page, session.policy)
@@ -230,7 +238,7 @@ async def propose(
     )
     if proposed is None:
         runtime.continuations.pop(body.step.id, None)
-        return ProposeResponse(done=True)
+        return ProposeResponse(done=True, outputs=await runtime.driver.extract(body.step.outputs))
     runtime.pending.clear()
     runtime.pending[proposed.action.id] = (proposed, body.step)
     return ProposeResponse(
@@ -372,7 +380,11 @@ async def live_browser(websocket: WebSocket) -> None:
             BrowserSession,
         )
         if kind == "frame":
-            if session.recording_paused:
+            if session.status is BrowserStatus.TAKEOVER:
+                await websocket.send_bytes(
+                    await runtime.driver.live_screenshot(session, runtime.masked_selectors)
+                )
+            elif session.recording_paused:
                 await websocket.send_json({"type": "paused", "status": session.status.value})
             else:
                 await websocket.send_bytes(
@@ -380,6 +392,7 @@ async def live_browser(websocket: WebSocket) -> None:
                 )
         elif kind == "action" and mode == "takeover":
             action = BrowserAction.model_validate(message.get("action"))
+            await _validate_takeover_action(runtime, session, action)
             authorised = await runtime.sessions.authorize_action(
                 session.organisation_id, session.id, session.revision, action
             )
@@ -399,13 +412,6 @@ async def live_browser(websocket: WebSocket) -> None:
                     session.organisation_id, session.id, action.id, True
                 )
                 runtime.session = authorised
-                if not authorised.recording_paused:
-                    await runtime.replay.record(
-                        authorised,
-                        action.kind.value,
-                        runtime.masked_selectors,
-                        ("human-takeover",),
-                    )
                 await websocket.send_json({"type": "action", "succeeded": True})
         elif kind == "secure-key" and mode == "takeover":
             public_key = runtime.private_key.public_key().public_bytes(
@@ -514,8 +520,46 @@ async def _validate_step(
         PlaybookVersion,
     )
     matches = tuple(item for item in version.definition.steps if item.id == step.id)
-    if len(matches) != 1 or matches[0] != step:
+    if len(matches) != 1 or not _resolved_step(matches[0], step):
         raise CapabilityError("browser step differs from the immutable playbook")
+
+
+def _resolved_step(template: PlaybookStep, resolved: PlaybookStep) -> bool:
+    return resolved.model_copy(update={"parameters": template.parameters}) == template
+
+
+async def _validate_takeover_action(
+    runtime: WorkerRuntime,
+    session: BrowserSession,
+    action: BrowserAction,
+) -> None:
+    if session.status is not BrowserStatus.TAKEOVER or session.takeover_subject is None:
+        raise CapabilityError("human action requires an active takeover")
+    if action.protected or action.expected_url or action.expected_text or action.forbidden_text:
+        raise CapabilityError("takeover cannot declare its own protected checkpoint")
+    version = await FirestoreCatalog(runtime.firestore).get(
+        FirestorePaths.playbook_version(
+            session.organisation_id,
+            session.playbook_id,
+            session.playbook_version,
+        ),
+        PlaybookVersion,
+    )
+    protected = {
+        selector
+        for step in version.definition.steps
+        if step.protected
+        for selector in (
+            *step.selectors,
+            *(
+                (step.secure_field.selector, step.secure_field.provider_id_selector)
+                if step.secure_field is not None
+                else ()
+            ),
+        )
+    }
+    if action.selector is not None and action.selector in protected:
+        raise CapabilityError("takeover cannot operate a protected playbook control")
 
 
 async def _wait_session(

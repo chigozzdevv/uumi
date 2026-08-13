@@ -14,8 +14,9 @@ def anyio_backend() -> str:
 
 
 class Locator:
-    def __init__(self) -> None:
+    def __init__(self, value: str = "one-time-key") -> None:
         self.masked = False
+        self.value = value
 
     async def evaluate(self, script: str, values: Any = None) -> str:
         if "tagName" in script:
@@ -25,7 +26,7 @@ class Locator:
         return '<input data-firekey-capture="masked" aria-label="Credential stored securely">'
 
     async def input_value(self) -> str:
-        return "one-time-key"
+        return self.value
 
     async def text_content(self) -> str | None:
         return None
@@ -60,9 +61,10 @@ class Page:
 class Driver:
     def __init__(self, locator: Locator) -> None:
         self.value = locator
+        self.provider = Locator("provider-key-one")
 
     async def locator(self, selector: Selector) -> Locator:
-        return self.value
+        return self.provider if selector.value == "new-key-id" else self.value
 
 
 class Secrets:
@@ -101,6 +103,7 @@ async def test_capture_stores_masks_checks_and_only_returns_reference() -> None:
     assert locator.masked is True
     assert page.clipboard_cleared is True
     assert result.secret_reference.endswith("/versions/7")
+    assert result.provider_id == "provider-key-one"
     assert "one-time-key" not in result.model_dump_json()
 
 
@@ -133,6 +136,7 @@ def _field() -> SecureField:
         selector=Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),
         sink_connection_id="sink_one",
         secret_resource="projects/project-one/secrets/key",
+        provider_id_selector=Selector(kind=SelectorKind.TEST_ID, value="new-key-id"),
     )
 
 

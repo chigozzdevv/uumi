@@ -147,6 +147,7 @@ def test_computer_playbook_requires_secure_capture() -> None:
                     stage=Stage.CREATE,
                     tool="browser.click",
                     operation="click",
+                    objective="Click the Create control",
                     selectors=(Selector(kind=SelectorKind.ROLE, value="button", name="Create"),),
                     checkpoint=PageCheckpoint(url_pattern="https://vendor.example.com/keys"),
                     evidence_checks=frozenset({"page-confirmed"}),
@@ -163,6 +164,7 @@ def test_secure_capture_session_requires_both_barriers() -> None:
             run_id="run_one",
             playbook_id="playbook_one",
             playbook_version="playbook_one",
+            provider_connection_id="provider_one",
             status=BrowserStatus.CAPTURING,
             policy=BrowserPolicy(
                 allowed_domains=("vendor.example.com",),

@@ -377,8 +377,8 @@ resource "google_cloud_run_v2_service" "broker" {
         value = var.evidence_bucket
       }
       env {
-        name  = "FIREKEY_CAPABILITY_SECRET"
-        value = var.capability_secret_version
+        name  = "FIREKEY_CAPABILITY_PUBLIC_KEY"
+        value = var.capability_public_key
       }
 
       resources {

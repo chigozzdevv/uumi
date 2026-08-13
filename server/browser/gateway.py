@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Any, Protocol
 
-from broker.capability import CapabilitySigner, request_digest
+from broker.capability import CapabilityVerifier, request_digest
 from contracts import BrowserSession, RotationRun
 from core.auth import AccessControl, AuthenticatedIdentity, IdentityTokenVerifier, Permission
 from core.errors import AuthenticationError, CapabilityError, ResourceConflictError
@@ -24,7 +24,7 @@ class BrowserSessionGateway:
         repository: GatewayRepository,
         access: AccessControl,
         identities: IdentityTokenVerifier,
-        capabilities: CapabilitySigner,
+        capabilities: CapabilityVerifier,
     ) -> None:
         self._repository = repository
         self._access = access

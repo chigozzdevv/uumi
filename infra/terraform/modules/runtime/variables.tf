@@ -192,6 +192,16 @@ variable "capability_secret_version" {
   type        = string
 }
 
+variable "capability_public_key" {
+  description = "Base64url Ed25519 public key used by capability verifiers."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_-]{43}$", var.capability_public_key))
+    error_message = "capability_public_key must be a raw 32-byte Ed25519 key encoded as base64url."
+  }
+}
+
 variable "browser_template" {
   description = "Ephemeral browser VM instance template."
   type        = string

@@ -7,9 +7,11 @@ from contracts import (
     BrowserActionKind,
     BrowserPolicy,
     BrowserSession,
+    BrowserStatus,
     PlaybookStep,
     Selector,
     SelectorKind,
+    StepOutput,
 )
 from core.errors import ResourceConflictError
 from playwright.async_api import Locator, Page, Request, Route
@@ -68,6 +70,18 @@ class BrowserDriver:
         ]
         return await self._page.screenshot(type="png", animations="disabled", mask=masks)
 
+    async def live_screenshot(
+        self,
+        session: BrowserSession,
+        masked_selectors: Iterable[Selector] = (),
+    ) -> bytes:
+        if session.status is not BrowserStatus.TAKEOVER or not session.model_paused:
+            raise ResourceConflictError("live screenshot requires supervised takeover")
+        masks = [
+            await self.locator(selector, require_unique=False) for selector in masked_selectors
+        ]
+        return await self._page.screenshot(type="png", animations="disabled", mask=masks)
+
     async def validate_coordinate(self, selector: Selector, x: int, y: int) -> None:
         if not 0 <= x <= 999 or not 0 <= y <= 999:
             raise ResourceConflictError("model coordinate is outside the normalised viewport")
@@ -94,6 +108,20 @@ class BrowserDriver:
         for selector in step.selectors:
             await self.locator(selector)
         await self._validate_text(step.checkpoint.required_text, step.checkpoint.forbidden_text)
+
+    async def extract(self, outputs: tuple[StepOutput, ...]) -> dict[str, str]:
+        values: dict[str, str] = {}
+        for output in outputs:
+            locator = await self.locator(output.selector)
+            raw: str | None
+            if output.attribute == "value":
+                raw = await locator.input_value()
+            else:
+                raw = await locator.text_content()
+            if not isinstance(raw, str) or not raw.strip():
+                raise ResourceConflictError(f"browser output {output.name} is empty")
+            values[output.name] = raw.strip()
+        return values
 
     async def locator(self, selector: Selector, require_unique: bool = True) -> Locator:
         if selector.kind is SelectorKind.ROLE:
