@@ -12,3 +12,23 @@ class LeaseConflictError(FireKeyError):
 
 class TransitionRejectedError(FireKeyError):
     pass
+
+
+class RunNotFoundError(FireKeyError):
+    pass
+
+
+class ActiveRunConflictError(FireKeyError):
+    pass
+
+
+class IdempotencyConflictError(FireKeyError):
+    pass
+
+
+class StorageIntegrityError(FireKeyError):
+    pass
+
+
+class OutboxLeaseError(FireKeyError):
+    pass
