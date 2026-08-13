@@ -86,7 +86,6 @@ module "storage" {
     coordinator = module.identity.members["firekey-coordinator"]
     browser     = module.identity.members["firekey-browser"]
     gateway     = module.identity.members["firekey-gateway"]
-    agents      = module.identity.members["firekey-agents"]
   }
   evidence_users = {
     broker      = module.identity.members["firekey-broker"]
@@ -213,6 +212,31 @@ module "runtime" {
   depends_on = [module.project, module.storage, module.browser, module.gateway]
 }
 
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
+locals {
+  agent_trust_domain = coalesce(data.google_project.current.org_id, "") != "" ? (
+    "agents.global.org-${data.google_project.current.org_id}.system.id.goog"
+    ) : (
+    "agents.global.project-${data.google_project.current.number}.system.id.goog"
+  )
+  agent_principal_set = "principalSet://${local.agent_trust_domain}/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
+}
+
+module "governance" {
+  count  = var.enable_gateway ? 1 : 0
+  source = "../../modules/governance"
+
+  project_id          = var.project_id
+  region              = var.region
+  agent_principal_set = local.agent_principal_set
+  broker_uri          = module.runtime.broker_uri
+
+  depends_on = [module.project, module.runtime]
+}
+
 module "gateway" {
   source = "../../modules/gateway"
 
@@ -261,18 +285,6 @@ module "workflow" {
   oidc_audience         = var.oidc_audience
 
   depends_on = [module.project, module.events, module.runtime]
-}
-
-resource "google_project_iam_member" "agent_runtime" {
-  for_each = toset([
-    "roles/aiplatform.user",
-    "roles/logging.logWriter",
-    "roles/cloudtrace.agent",
-  ])
-
-  project = var.project_id
-  role    = each.value
-  member  = module.identity.members["firekey-agents"]
 }
 
 resource "google_project_iam_member" "browser_runtime" {

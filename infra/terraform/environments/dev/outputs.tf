@@ -68,6 +68,31 @@ output "agent_kms_key" {
   value       = module.storage.kms_key
 }
 
+output "agent_ingress_gateway" {
+  description = "Model Armor governed gateway for client-to-agent calls."
+  value       = try(module.governance[0].ingress_gateway, null)
+}
+
+output "agent_egress_gateway" {
+  description = "Identity and Model Armor governed gateway for agent egress."
+  value       = try(module.governance[0].egress_gateway, null)
+}
+
+output "agent_model_armor" {
+  description = "Model Armor template applied to the managed agent fleet."
+  value       = try(module.governance[0].model_armor_template, null)
+}
+
+output "agent_endpoints" {
+  description = "Agent Registry resources allowed through the egress gateway."
+  value       = try(module.governance[0].registered_endpoints, {})
+}
+
+output "agent_broker" {
+  description = "MCP broker registration governed by the agent egress gateway."
+  value       = try(module.governance[0].registered_broker, null)
+}
+
 output "browser_template" {
   description = "One-run Computer Use VM template."
   value       = module.browser.template

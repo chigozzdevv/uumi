@@ -1,0 +1,330 @@
+locals {
+  registry = "//agentregistry.googleapis.com/projects/${var.project_id}/locations/${var.region}"
+  endpoints = merge(
+    {
+      aiplatform = {
+        display_name = "Vertex AI regional API"
+        url          = "https://${var.region}-aiplatform.googleapis.com"
+      }
+      aiplatform_mtls = {
+        display_name = "Vertex AI regional mTLS API"
+        url          = "https://${var.region}-aiplatform.mtls.googleapis.com"
+      }
+      aiplatform_rep = {
+        display_name = "Vertex AI regional REP API"
+        url          = "https://aiplatform.${var.region}.rep.googleapis.com"
+      }
+      agentregistry = {
+        display_name = "Agent Registry API"
+        url          = "https://agentregistry.googleapis.com"
+      }
+      aiplatform_global = {
+        display_name = "Vertex AI global API"
+        url          = "https://aiplatform.googleapis.com"
+      }
+      cloudresourcemanager_mtls = {
+        display_name = "Resource Manager mTLS API"
+        url          = "https://cloudresourcemanager.mtls.googleapis.com"
+      }
+      firestore = {
+        display_name = "Firestore API"
+        url          = "https://firestore.googleapis.com"
+      }
+      logging = {
+        display_name = "Cloud Logging API"
+        url          = "https://logging.googleapis.com"
+      }
+      monitoring = {
+        display_name = "Cloud Monitoring API"
+        url          = "https://monitoring.googleapis.com"
+      }
+      telemetry = {
+        display_name = "Cloud Telemetry API"
+        url          = "https://telemetry.googleapis.com"
+      }
+      telemetry_mtls = {
+        display_name = "Cloud Telemetry mTLS API"
+        url          = "https://telemetry.mtls.googleapis.com"
+      }
+    },
+  )
+}
+
+resource "google_model_armor_template" "firekey" {
+  project         = var.project_id
+  location        = var.region
+  template_id     = "firekey-agent-guardrails"
+  deletion_policy = "ENABLED"
+
+  filter_config {
+    pi_and_jailbreak_filter_settings {
+      filter_enforcement = "ENABLED"
+      confidence_level   = "MEDIUM_AND_ABOVE"
+    }
+
+    malicious_uri_filter_settings {
+      filter_enforcement = "ENABLED"
+    }
+
+    sdp_settings {
+      basic_config {
+        filter_enforcement = "ENABLED"
+      }
+    }
+
+    rai_settings {
+      dynamic "rai_filters" {
+        for_each = toset(["DANGEROUS", "HARASSMENT", "HATE_SPEECH", "SEXUALLY_EXPLICIT"])
+        content {
+          filter_type      = rai_filters.value
+          confidence_level = "MEDIUM_AND_ABOVE"
+        }
+      }
+    }
+  }
+
+  template_metadata {
+    enforcement_type                         = "INSPECT_AND_BLOCK"
+    ignore_partial_invocation_failures       = false
+    log_sanitize_operations                  = true
+    log_template_operations                  = true
+    custom_prompt_safety_error_code          = 403
+    custom_prompt_safety_error_message       = "FireKey agent input was blocked by policy."
+    custom_llm_response_safety_error_code    = 403
+    custom_llm_response_safety_error_message = "FireKey agent output was blocked by policy."
+
+    filter_version_selector {
+      alias = "FILTER_VERSION_ALIAS_STABLE"
+    }
+
+    multi_language_detection {
+      enable_multi_language_detection = true
+    }
+  }
+}
+
+resource "google_network_services_agent_gateway" "ingress" {
+  project         = var.project_id
+  location        = var.region
+  name            = "firekey-agent-ingress"
+  description     = "Model Armor governed client access to FireKey Agent Runtime."
+  deletion_policy = "PREVENT"
+
+  google_managed {
+    governed_access_path = "CLIENT_TO_AGENT"
+  }
+}
+
+resource "google_network_services_agent_gateway" "egress" {
+  project         = var.project_id
+  location        = var.region
+  name            = "firekey-agent-egress"
+  description     = "Default-deny governed egress from FireKey Agent Runtime."
+  registries      = [local.registry]
+  deletion_policy = "PREVENT"
+
+  google_managed {
+    governed_access_path = "AGENT_TO_ANYWHERE"
+  }
+}
+
+resource "google_network_services_authz_extension" "armor" {
+  project         = var.project_id
+  location        = var.region
+  name            = "firekey-model-armor"
+  description     = "Fail-closed content screening for FireKey agent traffic."
+  service         = "modelarmor.${var.region}.rep.googleapis.com"
+  timeout         = "1s"
+  fail_open       = false
+  deletion_policy = "PREVENT"
+  metadata = {
+    model_armor_settings = jsonencode([{
+      request_template_id  = google_model_armor_template.firekey.name
+      response_template_id = google_model_armor_template.firekey.name
+    }])
+  }
+}
+
+resource "google_network_services_authz_extension" "iap" {
+  project         = var.project_id
+  location        = var.region
+  name            = "firekey-iap"
+  description     = "Fail-closed identity authorization for FireKey agent egress."
+  service         = "iap.googleapis.com"
+  timeout         = "1s"
+  fail_open       = false
+  deletion_policy = "PREVENT"
+  metadata = {
+    iapPolicyVersion = "V1"
+  }
+}
+
+resource "google_network_security_authz_policy" "ingress" {
+  project         = var.project_id
+  location        = var.region
+  name            = "firekey-agent-ingress-armor"
+  description     = "Screens FireKey agent prompts and responses."
+  policy_profile  = "CONTENT_AUTHZ"
+  action          = "CUSTOM"
+  deletion_policy = "PREVENT"
+
+  target {
+    resources = [google_network_services_agent_gateway.ingress.id]
+  }
+
+  custom_provider {
+    authz_extension {
+      resources = [google_network_services_authz_extension.armor.id]
+    }
+  }
+}
+
+resource "google_network_security_authz_policy" "egress" {
+  project         = var.project_id
+  location        = var.region
+  name            = "firekey-agent-egress-armor"
+  description     = "Screens supported FireKey MCP, agent, and model egress."
+  policy_profile  = "CONTENT_AUTHZ"
+  action          = "CUSTOM"
+  deletion_policy = "PREVENT"
+
+  target {
+    resources = [google_network_services_agent_gateway.egress.id]
+  }
+
+  custom_provider {
+    authz_extension {
+      resources = [google_network_services_authz_extension.armor.id]
+    }
+  }
+}
+
+resource "google_network_security_authz_policy" "egress_identity" {
+  project         = var.project_id
+  location        = var.region
+  name            = "firekey-agent-egress-identity"
+  description     = "Enforces Agent Identity and IAP policy on FireKey agent egress."
+  policy_profile  = "REQUEST_AUTHZ"
+  action          = "CUSTOM"
+  deletion_policy = "PREVENT"
+
+  target {
+    resources = [google_network_services_agent_gateway.egress.id]
+  }
+
+  custom_provider {
+    authz_extension {
+      resources = [google_network_services_authz_extension.iap.id]
+    }
+  }
+}
+
+resource "google_agent_registry_service" "endpoint" {
+  for_each = local.endpoints
+
+  project         = var.project_id
+  location        = var.region
+  service_id      = "firekey-${replace(each.key, "_", "-")}"
+  display_name    = each.value.display_name
+  description     = "Approved FireKey Agent Gateway destination."
+  deletion_policy = "PREVENT"
+
+  interfaces {
+    url              = each.value.url
+    protocol_binding = "HTTP_JSON"
+  }
+
+  endpoint_spec {
+    type = "NO_SPEC"
+  }
+}
+
+resource "google_agent_registry_service" "broker" {
+  count = var.broker_uri == null ? 0 : 1
+
+  project         = var.project_id
+  location        = var.region
+  service_id      = "firekey-broker"
+  display_name    = "FireKey MCP broker"
+  description     = "Capability-scoped FireKey provider and runtime tools."
+  deletion_policy = "PREVENT"
+
+  interfaces {
+    url              = "${trimsuffix(var.broker_uri, "/")}/mcp"
+    protocol_binding = "JSONRPC"
+  }
+
+  mcp_server_spec {
+    type = "NO_SPEC"
+  }
+}
+
+resource "google_iap_agent_registry_endpoint_iam_member" "egress" {
+  for_each = google_agent_registry_service.endpoint
+
+  project     = var.project_id
+  location    = var.region
+  endpoint_id = element(reverse(split("/", each.value.registry_resource)), 0)
+  role        = "roles/iap.egressor"
+  member      = var.agent_principal_set
+}
+
+resource "google_iap_agent_registry_mcp_server_iam_member" "broker" {
+  count = var.broker_uri == null ? 0 : 1
+
+  project       = var.project_id
+  location      = var.region
+  mcp_server_id = element(reverse(split("/", google_agent_registry_service.broker[0].registry_resource)), 0)
+  role          = "roles/iap.egressor"
+  member        = var.agent_principal_set
+}
+
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
+locals {
+  modelarmor_grants = {
+    for grant in setproduct(
+      toset(["gateway", "runtime"]),
+      toset([
+        "roles/modelarmor.calloutUser",
+        "roles/modelarmor.user",
+        "roles/serviceusage.serviceUsageConsumer",
+      ]),
+      ) : "${grant[0]}-${grant[1]}" => {
+      role = grant[1]
+      member = (
+        grant[0] == "gateway" ?
+        "serviceAccount:service-${data.google_project.current.number}@gcp-sa-dep.iam.gserviceaccount.com" :
+        "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+      )
+    }
+  }
+}
+
+resource "google_project_iam_member" "modelarmor" {
+  for_each = local.modelarmor_grants
+
+  project = var.project_id
+  role    = each.value.role
+  member  = each.value.member
+}
+
+resource "google_project_iam_member" "agent" {
+  for_each = toset([
+    "roles/agentregistry.viewer",
+    "roles/aiplatform.agentDefaultAccess",
+    "roles/aiplatform.expressUser",
+    "roles/aiplatform.user",
+    "roles/browser",
+    "roles/datastore.viewer",
+    "roles/logging.logWriter",
+    "roles/monitoring.metricWriter",
+    "roles/serviceusage.serviceUsageConsumer",
+  ])
+
+  project = var.project_id
+  role    = each.value
+  member  = var.agent_principal_set
+}

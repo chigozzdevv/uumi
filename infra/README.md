@@ -93,7 +93,8 @@ The resulting graph includes:
 
 ## 4. Deploy and register the four agents
 
-Use the Terraform outputs for the staging bucket, KMS key, and `firekey-agents` service account:
+Run the deployment under the `firekey-agents` deployment identity and use the Terraform outputs
+for the staging bucket, KMS key, and two governed gateways:
 
 ```bash
 uv run python -m agents.deploy \
@@ -101,16 +102,19 @@ uv run python -m agents.deploy \
   --organisation YOUR_FIREKEY_ORGANISATION \
   --region YOUR_REGION \
   --staging-bucket AGENT_STAGING_BUCKET \
-  --service-account FIREKEY_AGENT_SERVICE_ACCOUNT \
   --kms-key AGENT_KMS_KEY \
+  --ingress-gateway AGENT_INGRESS_GATEWAY \
+  --egress-gateway AGENT_EGRESS_GATEWAY \
+  --approved-caller FIREKEY_COORDINATOR_SERVICE_ACCOUNT \
   --version RELEASE_VERSION
 ```
 
 The deployment uploads the complete Python package topology, creates separately bounded
 Inventory, Planner, Playbook Builder, and Console Operator ADK applications in Agent Runtime,
-enables tracing and Memory Bank, and writes immutable tenant routing registrations to Firestore.
-Agent Runtime deployments are automatically visible in Google Agent Registry; Firestore remains
-FireKey's exact per-tenant and per-skill routing index.
+assigns each deployment its own Agent Identity, enables tracing and Memory Bank, binds ingress and
+egress Agent Gateway enforcement, and writes immutable tenant routing registrations to Firestore.
+Agent Runtime deployments are catalogued in Agent Registry; Firestore remains FireKey's exact
+per-tenant and per-skill routing index.
 
 ## 5. Operational readiness
 
@@ -118,6 +122,8 @@ Before enabling schedules or webhooks, verify:
 
 - all seven Cloud Run revisions use the expected image digests;
 - the four agent registrations report ready and resolve exactly one deployment per skill;
+- each registration carries a distinct Agent Identity and both governed gateway resources;
+- Model Armor blocks a seeded prompt-injection probe and IAP rejects an unregistered endpoint;
 - capability, GitHub, and provider webhook secret versions exist and IAM grants are limited to
   their workloads;
 - Workflows can complete a controlled dry-run assignment in an isolated non-production
