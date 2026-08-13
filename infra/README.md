@@ -13,17 +13,16 @@ terraform -chdir=infra/terraform/bootstrap apply \
 
 The state bucket has versioning, public-access prevention, uniform access, and destruction protection.
 
-## Initialise the demo environment
+## Initialise the development environment
 
 ```bash
-terraform -chdir=infra/terraform/environments/demo init \
+terraform -chdir=infra/terraform/environments/dev init \
   -backend-config=bucket=YOUR_STATE_BUCKET \
-  -backend-config=prefix=firekey/demo
-terraform -chdir=infra/terraform/environments/demo plan \
+  -backend-config=prefix=firekey/dev
+terraform -chdir=infra/terraform/environments/dev plan \
   -var=project_id=YOUR_PROJECT
 ```
 
 `us-east1` is the default shared region for the current Agent Runtime, Sessions, Memory Bank, and Agent Gateway feature set. Change it only to another region accepted by the environment validation after confirming every selected platform feature remains available there.
 
 No credentials or secret values belong in Terraform variables, state, plans, or outputs.
-

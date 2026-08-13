@@ -33,5 +33,5 @@ infra:
 	TF_PLUGIN_CACHE_DIR=$(TF_CACHE_DIR) $(TERRAFORM) fmt -check -recursive infra
 	TF_PLUGIN_CACHE_DIR=$(TF_CACHE_DIR) $(TERRAFORM) -chdir=infra/terraform/bootstrap init -backend=false -input=false
 	TF_PLUGIN_CACHE_DIR=$(TF_CACHE_DIR) $(TERRAFORM) -chdir=infra/terraform/bootstrap validate
-	TF_PLUGIN_CACHE_DIR=$(TF_CACHE_DIR) $(TERRAFORM) -chdir=infra/terraform/environments/demo init -backend=false -input=false
-	TF_PLUGIN_CACHE_DIR=$(TF_CACHE_DIR) $(TERRAFORM) -chdir=infra/terraform/environments/demo validate
+	TF_PLUGIN_CACHE_DIR=$(TF_CACHE_DIR) $(TERRAFORM) -chdir=infra/terraform/environments/dev init -backend=false -input=false
+	TF_PLUGIN_CACHE_DIR=$(TF_CACHE_DIR) $(TERRAFORM) -chdir=infra/terraform/environments/dev validate

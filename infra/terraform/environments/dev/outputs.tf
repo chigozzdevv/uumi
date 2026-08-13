@@ -7,4 +7,3 @@ output "services" {
   description = "APIs managed for the FireKey project."
   value       = module.project.services
 }
-
