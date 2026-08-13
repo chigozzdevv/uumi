@@ -1,4 +1,4 @@
-.PHONY: lock sync format lint type test infra verify
+.PHONY: lock sync format image lint type test infra verify
 
 UV_CACHE_DIR ?= .cache/uv
 UV_PYTHON_INSTALL_DIR ?= .cache/python
@@ -27,6 +27,9 @@ test:
 	$(UV_ENV) uv run pytest
 
 verify: lint type test
+
+image:
+	docker build --file server/api/Dockerfile --tag firekey-api:local .
 
 infra:
 	mkdir -p $(TF_CACHE_DIR)

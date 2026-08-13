@@ -32,5 +32,7 @@ jobs:
         run: make sync
       - name: Verify
         run: make verify
+      - name: Build API image
+        run: make image
       - name: Validate infrastructure
         run: make infra
