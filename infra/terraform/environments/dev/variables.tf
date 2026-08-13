@@ -73,6 +73,21 @@ variable "api_image" {
   }
 }
 
+variable "publisher_image" {
+  description = "Immutable FireKey publisher image reference; null leaves delivery disabled."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.publisher_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.publisher_image))
+    )
+    error_message = "publisher_image must be null or an immutable sha256 image reference."
+  }
+}
+
 variable "oidc_audience" {
   description = "Stable audience used by Cloud Run and FireKey token verification."
   type        = string

@@ -47,11 +47,29 @@ jobs:
           done
           docker logs firekey-firestore
           exit 1
-      - name: Verify Firestore transactions
+      - name: Start Pub/Sub emulator
+        run: |
+          docker run --detach \
+            --name firekey-pubsub \
+            --publish 8788:8788 \
+            gcr.io/google.com/cloudsdktool/google-cloud-cli:528.0.0-emulators \
+            gcloud beta emulators pubsub start --host-port=0.0.0.0:8788 --project=firekey-test
+          for attempt in {1..30}; do
+            if nc -z 127.0.0.1 8788; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs firekey-pubsub
+          exit 1
+      - name: Verify durable event delivery
         env:
           FIRESTORE_EMULATOR_HOST: 127.0.0.1:8787
-        run: uv run pytest server/tests/integration/firestore -m integration
+          PUBSUB_EMULATOR_HOST: 127.0.0.1:8788
+        run: uv run pytest server/tests/integration -m integration
       - name: Build API image
         run: make image
+      - name: Build publisher image
+        run: make publisher-image
       - name: Validate infrastructure
         run: make infra

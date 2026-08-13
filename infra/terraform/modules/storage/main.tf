@@ -50,3 +50,21 @@ resource "google_firestore_document" "principal" {
     }
   })
 }
+
+resource "google_firestore_index" "outbox" {
+  project         = var.project_id
+  database        = google_firestore_database.primary.name
+  collection      = "outbox"
+  query_scope     = "COLLECTION_GROUP"
+  deletion_policy = "PREVENT"
+
+  fields {
+    field_path = "published_at"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "available_at"
+    order      = "ASCENDING"
+  }
+}

@@ -4,3 +4,4 @@ enable_gateway = true
 
 workflow_organisations = ["org_replace"]
 api_image              = null
+publisher_image        = null

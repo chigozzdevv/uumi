@@ -23,6 +23,16 @@ output "api_uri" {
   value       = module.runtime.api_uri
 }
 
+output "publisher_uri" {
+  description = "Private FireKey publisher URI, or null before the first image deployment."
+  value       = module.runtime.publisher_uri
+}
+
+output "event_topic" {
+  description = "Ordered FireKey run event topic."
+  value       = module.events.topic
+}
+
 output "image_repository" {
   description = "Artifact Registry repository prefix for FireKey images."
   value       = module.runtime.repository
