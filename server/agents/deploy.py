@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import vertexai
+from connectors.google import GoogleRestClient
 from contracts import AgentKind, AgentRegistration, AgentStatus
 from core.errors import ResourceNotFoundError
 from google.cloud.firestore_v1 import AsyncClient
@@ -25,7 +26,40 @@ async def deploy(
     kms_key: str,
     ingress_gateway: str,
     egress_gateway: str,
-    approved_caller: str,
+    caller_role: str,
+    approved_callers: frozenset[str],
+    version: str,
+) -> tuple[AgentRegistration, ...]:
+    google = GoogleRestClient()
+    try:
+        return await _deploy_fleet(
+            google,
+            project_id,
+            organisation_id,
+            region,
+            staging_bucket,
+            kms_key,
+            ingress_gateway,
+            egress_gateway,
+            caller_role,
+            approved_callers,
+            version,
+        )
+    finally:
+        await google.close()
+
+
+async def _deploy_fleet(
+    google: GoogleRestClient,
+    project_id: str,
+    organisation_id: str,
+    region: str,
+    staging_bucket: str,
+    kms_key: str,
+    ingress_gateway: str,
+    egress_gateway: str,
+    caller_role: str,
+    approved_callers: frozenset[str],
     version: str,
 ) -> tuple[AgentRegistration, ...]:
     os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
@@ -51,13 +85,20 @@ async def deploy(
                 or current.region != region
                 or current.ingress_gateway != ingress_gateway
                 or current.egress_gateway != egress_gateway
-                or current.approved_callers != frozenset({approved_caller})
+                or current.approved_callers != approved_callers
                 or current.status is not AgentStatus.READY
             ):
                 raise RuntimeError(
                     f"existing {kind.value} registration does not match this deployment"
                 )
             registrations.append(current)
+            await _grant_callers(
+                google,
+                region,
+                current.deployment,
+                caller_role,
+                approved_callers,
+            )
             continue
         module = __import__(f"agents.{kind.value}.agent", fromlist=["agent_app"])
         app = module.agent_app
@@ -77,6 +118,13 @@ async def deploy(
         if resource is None or not resource.name:
             raise RuntimeError(f"Agent Runtime returned no resource for {kind.value}")
         identity = _effective_identity(resource)
+        await _grant_callers(
+            google,
+            region,
+            resource.name,
+            caller_role,
+            approved_callers,
+        )
         registration = AgentRegistration(
             id=registration_id,
             organisation_id=organisation_id,
@@ -92,7 +140,7 @@ async def deploy(
             ingress_gateway=ingress_gateway,
             egress_gateway=egress_gateway,
             region=region,
-            approved_callers=frozenset({approved_caller}),
+            approved_callers=approved_callers,
             tool_destinations=frozenset({"firestore"}),
             status=AgentStatus.READY,
             registered_at=datetime.now(UTC),
@@ -152,6 +200,57 @@ def _effective_identity(resource: Any) -> str:
     return identity
 
 
+async def _grant_callers(
+    google: GoogleRestClient,
+    region: str,
+    deployment: str,
+    role: str,
+    callers: frozenset[str],
+) -> None:
+    project = deployment.split("/", 2)[1] if deployment.startswith("projects/") else ""
+    if role != f"projects/{project}/roles/firekeyAgentCaller":
+        raise ValueError("caller role must be the FireKey least-privilege project role")
+    if not callers or any(not _iam_member(value) for value in callers):
+        raise ValueError("approved callers must be explicit IAM service-account or group members")
+    endpoint = f"https://{region}-aiplatform.googleapis.com/v1beta1/{deployment}"
+    policy = await google.request("POST", f"{endpoint}:getIamPolicy", json={})
+    bindings = policy.get("bindings", [])
+    if not isinstance(bindings, list):
+        raise RuntimeError("Agent Runtime returned an invalid IAM policy")
+    changed: list[dict[str, Any]] = []
+    found = False
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            raise RuntimeError("Agent Runtime returned an invalid IAM binding")
+        if binding.get("role") != role:
+            changed.append(binding)
+            continue
+        members = binding.get("members", [])
+        if not isinstance(members, list):
+            raise RuntimeError("Agent Runtime returned an invalid IAM member list")
+        if found:
+            raise RuntimeError("Agent Runtime returned duplicate FireKey caller bindings")
+        changed.append({**binding, "members": sorted(callers)})
+        found = True
+    if not found:
+        changed.append({"role": role, "members": sorted(callers)})
+    if changed == bindings:
+        return
+    updated: dict[str, Any] = {"bindings": changed}
+    if isinstance(policy.get("etag"), str):
+        updated["etag"] = policy["etag"]
+    await google.request(
+        "POST",
+        f"{endpoint}:setIamPolicy",
+        json={"policy": updated},
+    )
+
+
+def _iam_member(value: str) -> bool:
+    kind, separator, identifier = value.partition(":")
+    return bool(separator and identifier and kind in {"serviceAccount", "group"})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
@@ -161,7 +260,8 @@ def main() -> None:
     parser.add_argument("--kms-key", required=True)
     parser.add_argument("--ingress-gateway", required=True)
     parser.add_argument("--egress-gateway", required=True)
-    parser.add_argument("--approved-caller", required=True)
+    parser.add_argument("--caller-role", required=True)
+    parser.add_argument("--approved-caller", required=True, action="append")
     parser.add_argument("--version", required=True)
     args = parser.parse_args()
     import asyncio
@@ -175,7 +275,8 @@ def main() -> None:
             args.kms_key,
             args.ingress_gateway,
             args.egress_gateway,
-            args.approved_caller,
+            args.caller_role,
+            frozenset(args.approved_caller),
             args.version,
         )
     )

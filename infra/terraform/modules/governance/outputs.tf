@@ -22,3 +22,13 @@ output "registered_broker" {
   description = "FireKey MCP server registered for governed agent egress."
   value       = try(google_agent_registry_service.broker[0].registry_resource, null)
 }
+
+output "caller_role" {
+  description = "Least-privilege role bound to approved callers on each managed agent."
+  value       = google_project_iam_custom_role.caller.name
+}
+
+output "deployer_role" {
+  description = "Least-privilege role used to apply per-agent caller IAM."
+  value       = google_project_iam_custom_role.deployer.name
+}

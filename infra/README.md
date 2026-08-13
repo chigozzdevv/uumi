@@ -105,7 +105,9 @@ uv run python -m agents.deploy \
   --kms-key AGENT_KMS_KEY \
   --ingress-gateway AGENT_INGRESS_GATEWAY \
   --egress-gateway AGENT_EGRESS_GATEWAY \
-  --approved-caller FIREKEY_COORDINATOR_SERVICE_ACCOUNT \
+  --caller-role AGENT_CALLER_ROLE \
+  --approved-caller serviceAccount:FIREKEY_API_SERVICE_ACCOUNT \
+  --approved-caller serviceAccount:FIREKEY_COORDINATOR_SERVICE_ACCOUNT \
   --version RELEASE_VERSION
 ```
 

@@ -18,6 +18,16 @@ variable "agent_principal_set" {
   }
 }
 
+variable "deployment_member" {
+  description = "Service-account member that deploys agents and applies per-agent caller IAM."
+  type        = string
+
+  validation {
+    condition     = startswith(var.deployment_member, "serviceAccount:")
+    error_message = "deployment_member must be an explicit service-account IAM member."
+  }
+}
+
 variable "broker_uri" {
   description = "Private FireKey MCP broker URI, or null before runtime deployment."
   type        = string

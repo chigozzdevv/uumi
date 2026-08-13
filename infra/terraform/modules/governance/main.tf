@@ -328,3 +328,31 @@ resource "google_project_iam_member" "agent" {
   role    = each.value
   member  = var.agent_principal_set
 }
+
+resource "google_project_iam_custom_role" "caller" {
+  project     = var.project_id
+  role_id     = "firekeyAgentCaller"
+  title       = "FireKey Agent Caller"
+  description = "Queries managed FireKey agent deployments."
+  permissions = [
+    "aiplatform.reasoningEngines.get",
+    "aiplatform.reasoningEngines.query",
+  ]
+}
+
+resource "google_project_iam_custom_role" "deployer" {
+  project     = var.project_id
+  role_id     = "firekeyAgentDeployer"
+  title       = "FireKey Agent IAM Deployer"
+  description = "Applies approved caller bindings to managed FireKey agent deployments."
+  permissions = [
+    "aiplatform.reasoningEngines.getIamPolicy",
+    "aiplatform.reasoningEngines.setIamPolicy",
+  ]
+}
+
+resource "google_project_iam_member" "deployer" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.deployer.name
+  member  = var.deployment_member
+}

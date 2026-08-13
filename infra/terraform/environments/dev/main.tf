@@ -232,6 +232,7 @@ module "governance" {
   project_id          = var.project_id
   region              = var.region
   agent_principal_set = local.agent_principal_set
+  deployment_member   = module.identity.members["firekey-agents"]
   broker_uri          = module.runtime.broker_uri
 
   depends_on = [module.project, module.runtime]
@@ -302,7 +303,6 @@ resource "google_project_iam_member" "browser_runtime" {
 
 resource "google_project_iam_member" "api_runtime" {
   for_each = toset([
-    "roles/aiplatform.user",
     "roles/logging.logWriter",
   ])
 
@@ -313,7 +313,6 @@ resource "google_project_iam_member" "api_runtime" {
 
 resource "google_project_iam_member" "coordinator_runtime" {
   for_each = toset([
-    "roles/aiplatform.user",
     "roles/logging.viewer",
     "roles/monitoring.viewer",
   ])
@@ -321,6 +320,34 @@ resource "google_project_iam_member" "coordinator_runtime" {
   project = var.project_id
   role    = each.value
   member  = module.identity.members["firekey-coordinator"]
+}
+
+resource "google_project_iam_member" "agent_deployer" {
+  for_each = toset([
+    "roles/agentregistry.viewer",
+    "roles/aiplatform.user",
+  ])
+
+  project = var.project_id
+  role    = each.value
+  member  = module.identity.members["firekey-agents"]
+}
+
+locals {
+  agent_context_grants = {
+    api_memory          = [module.identity.members["firekey-api"], "roles/aiplatform.memoryUser"]
+    api_session         = [module.identity.members["firekey-api"], "roles/aiplatform.sessionUser"]
+    coordinator_memory  = [module.identity.members["firekey-coordinator"], "roles/aiplatform.memoryViewer"]
+    coordinator_session = [module.identity.members["firekey-coordinator"], "roles/aiplatform.sessionUser"]
+  }
+}
+
+resource "google_project_iam_member" "agent_context" {
+  for_each = local.agent_context_grants
+
+  project = var.project_id
+  member  = each.value[0]
+  role    = each.value[1]
 }
 
 resource "google_project_iam_member" "ingestion_runtime" {

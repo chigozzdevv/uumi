@@ -93,6 +93,16 @@ output "agent_broker" {
   value       = try(module.governance[0].registered_broker, null)
 }
 
+output "agent_caller_role" {
+  description = "Custom role applied to approved callers on each managed agent deployment."
+  value       = try(module.governance[0].caller_role, null)
+}
+
+output "agent_deployer_role" {
+  description = "Least-privilege role used by the managed agent deployment identity."
+  value       = try(module.governance[0].deployer_role, null)
+}
+
 output "browser_template" {
   description = "One-run Computer Use VM template."
   value       = module.browser.template
