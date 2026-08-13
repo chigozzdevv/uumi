@@ -42,9 +42,13 @@ async def test_viewer_can_read_but_cannot_mutate() -> None:
     access = AccessControl(AccessRepository(grant))
 
     await access.require(IDENTITY, "org_one", Permission.RUN_READ)
+    await access.require(IDENTITY, "org_one", Permission.AGENT_READ)
 
     with pytest.raises(AuthorizationError, match=r"run\.write"):
         await access.require(IDENTITY, "org_one", Permission.RUN_WRITE)
+
+    with pytest.raises(AuthorizationError, match=r"agent\.write"):
+        await access.require(IDENTITY, "org_one", Permission.AGENT_WRITE)
 
 
 @pytest.mark.anyio

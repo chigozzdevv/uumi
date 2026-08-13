@@ -24,6 +24,7 @@ class ApprovalRequest(Contract):
     plan_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     evidence_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     expires_at: AwareDatetime
+    token: str = Field(pattern=r"^[A-Za-z0-9_-]{43,256}$")
 
 
 class ApprovalCapabilityResponse(Contract):
@@ -61,6 +62,7 @@ async def request_approval(
         body.evidence_hash,
         identity.actor_id,
         body.expires_at,
+        body.token,
     )
     return ApprovalCapabilityResponse(approval=value.approval, token=value.token)
 

@@ -20,6 +20,8 @@ class Permission(StrEnum):
     APPROVAL_READ = "approval.read"
     APPROVAL_DECIDE = "approval.decide"
     INCIDENT_WRITE = "incident.write"
+    AGENT_READ = "agent.read"
+    AGENT_WRITE = "agent.write"
     AUDIT_READ = "audit.read"
 
 
@@ -37,6 +39,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.INVENTORY_READ,
             Permission.PLAYBOOK_READ,
             Permission.APPROVAL_READ,
+            Permission.AGENT_READ,
             Permission.AUDIT_READ,
         }
     ),
@@ -48,6 +51,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.PLAYBOOK_READ,
             Permission.PLAYBOOK_WRITE,
             Permission.APPROVAL_READ,
+            Permission.AGENT_READ,
             Permission.INCIDENT_WRITE,
         }
     ),
@@ -59,6 +63,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.PLAYBOOK_READ,
             Permission.PLAYBOOK_WRITE,
             Permission.APPROVAL_READ,
+            Permission.AGENT_READ,
             Permission.INCIDENT_WRITE,
         }
     ),

@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -60,11 +59,13 @@ class ApprovalService:
         evidence_hash: str,
         requester_id: str,
         expires_at: datetime,
+        token: str,
     ) -> ApprovalCapability:
         now = self._clock()
         if expires_at <= now:
             raise ApprovalError("approval expiry must be in the future")
-        token = secrets.token_urlsafe(32)
+        if len(token) < 43 or not token.replace("-", "").replace("_", "").isalnum():
+            raise ApprovalError("approval capability must be a URL-safe 256-bit value")
         approval = Approval(
             id=approval_id,
             organisation_id=action.organisation_id,

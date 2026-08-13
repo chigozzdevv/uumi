@@ -20,7 +20,9 @@ from policy import PolicyViolationError
 
 from api.deps import ApiServices, build_services
 from api.routes import (
+    agents_router,
     approvals_router,
+    browsers_router,
     health_router,
     incidents_router,
     inventory_router,
@@ -39,6 +41,8 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.include_router(inventory_router)
     app.include_router(playbooks_router)
     app.include_router(approvals_router)
+    app.include_router(agents_router)
+    app.include_router(browsers_router)
     app.include_router(incidents_router)
     app.add_exception_handler(FireKeyError, _firekey_error)
     app.add_exception_handler(PolicyViolationError, _policy_error)

@@ -136,6 +136,18 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/reports/{_segment(report_id)}"
 
     @staticmethod
+    def plan(organisation_id: str, plan_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/plans/{_segment(plan_id)}"
+
+    @staticmethod
+    def recovery(organisation_id: str, recovery_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/recovery/{_segment(recovery_id)}"
+
+    @staticmethod
+    def stage(organisation_id: str, execution_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/stages/{_segment(execution_id)}"
+
+    @staticmethod
     def tool(organisation_id: str, request_id: str) -> str:
         return f"{FirestorePaths.organisation(organisation_id)}/tools/{_segment(request_id)}"
 

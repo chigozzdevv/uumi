@@ -12,9 +12,20 @@ class Settings(BaseSettings):
     project_id: str = Field(default="", min_length=4)
     firestore_database: str = "(default)"
     oidc_audience: str = Field(default="", min_length=8)
+    capability_secret: str = Field(default="", min_length=20)
+    browser_gateway_url: str = Field(default="", min_length=12)
 
     @model_validator(mode="after")
     def require_runtime_configuration(self) -> "Settings":
-        if not self.project_id or not self.oidc_audience:
-            raise ValueError("project_id and oidc_audience are required")
+        if not all(
+            (
+                self.project_id,
+                self.oidc_audience,
+                self.capability_secret,
+                self.browser_gateway_url,
+            )
+        ):
+            raise ValueError("API runtime configuration is incomplete")
+        if not self.capability_secret.startswith("projects/"):
+            raise ValueError("capability secret must be a full Secret Manager version")
         return self

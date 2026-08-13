@@ -1,4 +1,9 @@
+from datetime import UTC, datetime
+
 from contracts import (
+    AgentKind,
+    AgentResult,
+    AgentTask,
     Contract,
     DryRun,
     Identifier,
@@ -6,12 +11,14 @@ from contracts import (
     PlaybookAssignment,
     PlaybookDraft,
     PlaybookVersion,
+    RotationRun,
 )
 from core.auth import Permission
-from core.errors import ResourceConflictError
-from fastapi import APIRouter, Request, status
+from core.errors import PlaybookError
+from fastapi import APIRouter, Request, Response, status
+from pydantic import AwareDatetime, Field
 
-from api.deps import Identity, required, services
+from api.deps import IdempotencyKey, Identity, command_id, required, services
 
 router = APIRouter(
     prefix="/v1/organisations/{organisation_id}/playbooks",
@@ -30,6 +37,33 @@ class VersionResponse(Contract):
     version: PlaybookVersion
 
 
+class BuildVersionRequest(Contract):
+    version_id: Identifier
+    objective: str = Field(min_length=1, max_length=2048)
+    source_ids: tuple[Identifier, ...] = Field(min_length=1)
+
+
+class BuildVersionResponse(VersionResponse):
+    agent: AgentResult
+
+
+class DryRunRequest(Contract):
+    id: Identifier
+    version_id: Identifier
+    environment_id: Identifier
+    credential_id: Identifier
+    policy_version: Identifier
+    reason: str = Field(min_length=1, max_length=1024)
+    urgency: str = Field(min_length=1, max_length=32)
+    received_at: AwareDatetime
+
+
+class DryRunResponse(Contract):
+    dryrun: DryRun
+    run: RotationRun
+    applied: bool
+
+
 class ActivateRequest(Contract):
     dryrun_id: Identifier
 
@@ -38,6 +72,8 @@ class AssignmentRequest(Contract):
     credential_id: Identifier
     version_id: Identifier
     connection_ids: tuple[Identifier, ...]
+    dry_run_only: bool = False
+    environment_id: Identifier | None = None
 
 
 @router.post(
@@ -65,19 +101,83 @@ async def create_version(
     return VersionResponse(playbook=root, version=version)
 
 
-@router.post("/{playbook_id}/dryruns", response_model=DryRun)
-async def record_dryrun(
+@router.post(
+    "/{playbook_id}/build",
+    response_model=BuildVersionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def build_version(
     organisation_id: Identifier,
     playbook_id: Identifier,
-    body: DryRun,
+    body: BuildVersionRequest,
     identity: Identity,
+    key: IdempotencyKey,
     request: Request,
-) -> DryRun:
+) -> BuildVersionResponse:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
-    if body.organisation_id != organisation_id or body.playbook_id != playbook_id:
-        raise ResourceConflictError("dry run crosses playbook boundary")
-    return await required(api.playbooks, "playbooks").record_dryrun(body)
+    task_id = command_id(identity, organisation_id, key).replace("cmd_", "task_", 1)
+    result = await required(api.agents, "agents").execute(
+        AgentTask(
+            id=task_id,
+            organisation_id=organisation_id,
+            run_id=f"run_{task_id.removeprefix('task_')}",
+            agent=AgentKind.PLAYBOOK,
+            skill="build_playbook",
+            objective=(
+                f"{body.objective}\nBuild playbook {playbook_id} from the declared sanitised "
+                f"evidence IDs: {', '.join(body.source_ids)}."
+            ),
+            evidence_ids=body.source_ids,
+            requested_at=datetime.now(UTC),
+        )
+    )
+    if not result.succeeded:
+        raise PlaybookError(result.error or "Playbook Builder Agent failed")
+    candidate = result.output.get("playbook_draft", result.output)
+    try:
+        definition = PlaybookDraft.model_validate(candidate)
+    except ValueError as error:
+        raise PlaybookError("Playbook Builder Agent returned an invalid definition") from error
+    root, version = await required(api.playbooks, "playbooks").create_version(
+        organisation_id,
+        playbook_id,
+        body.version_id,
+        definition,
+        identity.actor_id,
+        body.source_ids,
+    )
+    return BuildVersionResponse(playbook=root, version=version, agent=result)
+
+
+@router.post("/{playbook_id}/dryruns", response_model=DryRunResponse)
+async def start_dryrun(
+    organisation_id: Identifier,
+    playbook_id: Identifier,
+    body: DryRunRequest,
+    identity: Identity,
+    key: IdempotencyKey,
+    request: Request,
+    response: Response,
+) -> DryRunResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    dryrun, run, applied = await required(api.playbooks, "playbooks").start_dryrun(
+        organisation_id,
+        playbook_id,
+        body.id,
+        body.version_id,
+        body.environment_id,
+        body.credential_id,
+        body.policy_version,
+        identity.actor_id,
+        command_id(identity, organisation_id, key),
+        body.reason,
+        body.urgency,
+        body.received_at,
+    )
+    response.status_code = status.HTTP_201_CREATED if applied else status.HTTP_200_OK
+    return DryRunResponse(dryrun=dryrun, run=run, applied=applied)
 
 
 @router.post("/{playbook_id}/versions/{version_id}/activate", response_model=PlaybookVersion)
@@ -117,4 +217,6 @@ async def assign(
         body.version_id,
         body.connection_ids,
         identity.actor_id,
+        body.dry_run_only,
+        body.environment_id,
     )

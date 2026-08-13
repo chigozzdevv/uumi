@@ -30,7 +30,18 @@ class FirestoreApprovalRepository:
             existing_action = await action_ref.get(transaction=transaction)
             if existing_approval.exists:
                 current = Approval.model_validate(_data(existing_approval))
-                if current == approval:
+                stored_action = (
+                    ProtectedAction.model_validate(_data(existing_action))
+                    if existing_action.exists
+                    else None
+                )
+                replay = approval.model_copy(
+                    update={
+                        "created_at": current.created_at,
+                        "revision": current.revision,
+                    }
+                )
+                if current == replay and stored_action == action:
                     return current
                 raise ResourceConflictError(f"approval {approval.id} already exists")
             if existing_action.exists:
@@ -100,7 +111,15 @@ class FirestoreApprovalRepository:
                 raise ResourceNotFoundError(f"approval {approval_id} was not found")
             current = Approval.model_validate(_data(snapshot))
             if current.consumed_at is not None:
-                raise ApprovalError("approval capability has already been consumed")
+                replay_values = (
+                    (capability_hash, current.capability_hash),
+                    (action_digest, current.action_digest),
+                    (plan_hash, current.plan_hash),
+                    (evidence_hash, current.evidence_hash),
+                )
+                if all(hmac.compare_digest(actual, expected) for actual, expected in replay_values):
+                    return current
+                raise ApprovalError("approval capability was consumed with different bindings")
             if current.decision is not ApprovalDecision.APPROVED:
                 raise ApprovalError("approval was not granted")
             if consumed_at >= current.expires_at:

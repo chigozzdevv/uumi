@@ -3,6 +3,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, cast
 
+from agents.continuity import AgentContinuityService
+from agents.fleet import AgentFleetService
+from agents.runtime import AgentRuntimeService
+from agents.storage import AgentRepository
+from broker import CapabilitySigner
+from browser.access import BrowserAccessService
+from browser.service import BrowserService
+from browser.storage import FirestoreBrowserRepository
+from connectors.google import GoogleRestClient
+from connectors.secrets import SecretManagerConnector
 from core.approval import ApprovalService
 from core.auth import (
     AccessControl,
@@ -18,6 +28,7 @@ from core.inventory import InventoryService
 from core.playbook import PlaybookService
 from core.storage import (
     FirestoreApprovalRepository,
+    FirestoreCatalog,
     FirestoreIncidentRepository,
     FirestoreInventoryRepository,
     FirestorePlaybookRepository,
@@ -37,6 +48,10 @@ class ApiServices:
     playbooks: PlaybookService | None = None
     approvals: ApprovalService | None = None
     incidents: IncidentService | None = None
+    browsers: BrowserAccessService | None = None
+    agents: AgentRuntimeService | None = None
+    agent_repository: AgentRepository | None = None
+    agent_continuity: AgentContinuityService | None = None
 
 
 def build_services(settings: Settings | None = None) -> ApiServices:
@@ -45,14 +60,53 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         project=configured.project_id,
         database=configured.firestore_database,
     )
+    google = GoogleRestClient()
+    secret_manager = SecretManagerConnector(google)
+
+    async def load_signer() -> CapabilitySigner:
+        secret = await secret_manager.access(configured.capability_secret)
+        try:
+            return CapabilitySigner(secret.bytes())
+        finally:
+            secret.clear()
+
+    workflow = RunWorkflow(FirestoreRunRepository(client))
+    agent_repository = AgentRepository(client)
+    continuity = AgentContinuityService(
+        agent_repository,
+        google,
+        configured.project_id,
+        configured.firestore_database,
+        _now,
+    )
     return ApiServices(
-        workflow=RunWorkflow(FirestoreRunRepository(client)),
+        workflow=workflow,
         access=AccessControl(FirestoreAccessRepository(client)),
         tokens=GoogleTokenVerifier(configured.oidc_audience),
         inventory=InventoryService(FirestoreInventoryRepository(client)),
-        playbooks=PlaybookService(FirestorePlaybookRepository(client), _now),
+        playbooks=PlaybookService(FirestorePlaybookRepository(client), _now, workflow),
         approvals=ApprovalService(FirestoreApprovalRepository(client), _now),
-        incidents=IncidentService(FirestoreIncidentRepository(client), _now),
+        incidents=IncidentService(
+            FirestoreIncidentRepository(client),
+            _now,
+            FirestoreInventoryRepository(client),
+            workflow,
+        ),
+        browsers=BrowserAccessService(
+            FirestoreCatalog(client),
+            BrowserService(FirestoreBrowserRepository(client), _now),
+            load_signer,
+            configured.browser_gateway_url,
+            _now,
+        ),
+        agents=AgentRuntimeService(
+            AgentFleetService(agent_repository),
+            continuity,
+            configured.project_id,
+            _now,
+        ),
+        agent_repository=agent_repository,
+        agent_continuity=continuity,
     )
 
 

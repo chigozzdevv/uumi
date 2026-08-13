@@ -13,6 +13,7 @@ from contracts import (
     RotationRun,
     RunStep,
     Stage,
+    StageBindings,
     StageProof,
     StartRunCommand,
     Trigger,
@@ -67,6 +68,7 @@ class ProofRequest(Contract):
 class CompleteRequest(RevisionRequest):
     fencing_token: int = Field(gt=0)
     proof: ProofRequest
+    bindings: StageBindings = StageBindings()
 
 
 class FencedRequest(RevisionRequest):
@@ -217,6 +219,7 @@ async def complete_stage(
             expected_revision=body.expected_revision,
             fencing_token=body.fencing_token,
             proof=proof,
+            bindings=body.bindings,
         )
     )
     return _response(result)
