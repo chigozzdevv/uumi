@@ -1,24 +1,26 @@
-FROM python:3.12-slim
+FROM python:3.12.13-slim-bookworm
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH"
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
 WORKDIR /app
 
-RUN python -m venv /opt/venv
+RUN pip install --no-cache-dir uv==0.12.3
 
-COPY packages /app/packages
-COPY server /app/server
-COPY pyproject.toml uv.lock /app/
+COPY pyproject.toml uv.lock ./
+COPY packages ./packages
+COPY server ./server
 
-RUN pip install --no-cache-dir uv && \
-    uv pip install --python /opt/venv/bin/python --no-cache /app/server
+RUN uv sync --frozen --no-dev --no-editable --package firekey-server \
+    && find /app -type d -name __pycache__ -prune -exec rm -rf {} +
 
-WORKDIR /app/server
-
-RUN useradd --create-home --uid 10001 firekey && chown -R firekey:firekey /app
+RUN useradd --create-home --uid 10001 firekey
 
 USER firekey
 
-CMD ["python", "-m", "browser.gatewaymain"]
+EXPOSE 8080
+
+CMD ["uvicorn", "browser.gatewayapp:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
