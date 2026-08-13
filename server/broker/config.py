@@ -10,6 +10,7 @@ class BrokerSettings(BaseSettings):
     region: str = Field(default="", min_length=3)
     evidence_bucket: str = Field(default="", min_length=3)
     capability_public_key: str = Field(default="", min_length=40, max_length=64)
+    attempt_lease_seconds: int = Field(default=120, ge=30, le=900)
 
     @model_validator(mode="after")
     def require_runtime_configuration(self) -> "BrokerSettings":

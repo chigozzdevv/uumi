@@ -31,6 +31,8 @@ from contracts import (
     ProtectedAction,
     RunStatus,
     Stage,
+    ToolAttempt,
+    ToolAttemptStatus,
     ToolRequest,
     ToolResult,
 )
@@ -64,10 +66,27 @@ class Provider:
             )
         return ConnectorResponse(result={"revoked": True})
 
+    async def prepare(
+        self, tool: str, payload: dict[str, Any], context: ConnectorContext
+    ) -> dict[str, str | int | bool | tuple[str, ...]]:
+        del tool, payload, context
+        return {"baseline": ()}
+
+    async def reconcile(
+        self,
+        tool: str,
+        payload: dict[str, Any],
+        state: dict[str, str | int | bool | tuple[str, ...]],
+        context: ConnectorContext,
+    ) -> ConnectorResponse | None:
+        del tool, payload, context
+        assert state == {"baseline": ()}
+        return None
+
 
 class Repository:
     def __init__(self) -> None:
-        self.results: dict[str, tuple[str, ToolResult | None]] = {}
+        self.results: dict[str, tuple[str, ToolAttempt]] = {}
         self.run_value = make_run(NOW).model_copy(
             update={
                 "status": RunStatus.RUNNING,
@@ -132,17 +151,64 @@ class Repository:
             created_at=NOW,
         )
 
-    async def result(self, request: ToolRequest, request_hash: str) -> ToolResult | None:
+    async def attempt(self, request: ToolRequest, request_hash: str) -> ToolAttempt | None:
         value = self.results.get(request.id)
         if value is None:
             return None
         assert value[0] == request_hash
         return value[1]
 
-    async def begin(self, request: ToolRequest, request_hash: str, now: datetime) -> None:
-        del now
+    async def begin(
+        self,
+        request: ToolRequest,
+        request_hash: str,
+        reconciliation: dict[str, str | int | bool | tuple[str, ...]],
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None:
         assert request.id not in self.results
-        self.results[request.id] = (request_hash, None)
+        self.results[request.id] = (
+            request_hash,
+            ToolAttempt(
+                id=request.id,
+                organisation_id=request.organisation_id,
+                run_id=request.run_id,
+                request_digest=request_hash,
+                tool=request.tool,
+                status=ToolAttemptStatus.RUNNING,
+                reconciliation=reconciliation,
+                started_at=now,
+                lease_expires_at=lease_expires_at,
+            ),
+        )
+
+    async def reclaim(
+        self,
+        request: ToolRequest,
+        request_hash: str,
+        expected_expiry: datetime,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None:
+        attempt = self.results[request.id][1]
+        assert attempt.lease_expires_at == expected_expiry
+        assert attempt.lease_expires_at <= now
+        self.results[request.id] = (
+            request_hash,
+            attempt.model_copy(update={"lease_expires_at": lease_expires_at}),
+        )
+
+    async def checkpoint(
+        self,
+        request: ToolRequest,
+        request_hash: str,
+        result: ToolResult,
+    ) -> None:
+        attempt = self.results[request.id][1]
+        self.results[request.id] = (
+            request_hash,
+            attempt.model_copy(update={"checkpoint": result}),
+        )
 
     async def finish(
         self,
@@ -151,8 +217,22 @@ class Repository:
         result: ToolResult,
         now: datetime,
     ) -> None:
-        del now
-        self.results[request.id] = (request_hash, result)
+        attempt = self.results[request.id][1]
+        self.results[request.id] = (
+            request_hash,
+            attempt.model_copy(
+                update={
+                    "status": (
+                        ToolAttemptStatus.SUCCEEDED
+                        if result.succeeded
+                        else ToolAttemptStatus.FAILED
+                    ),
+                    "result": result,
+                    "checkpoint": None,
+                    "completed_at": now,
+                }
+            ),
+        )
 
     async def run(self, organisation_id: str, run_id: str) -> Any:
         assert (organisation_id, run_id) == ("org_one", self.run_value.id)
@@ -296,6 +376,88 @@ async def test_broker_stores_one_time_secret_and_deduplicates_provider_call() ->
     assert "one-time-secret" not in first.model_dump_json()
     assert first.result["secret_reference"].endswith("/versions/4")
     assert audits.events[0].kind == "tool.succeeded"
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_broker_recovers_expired_create_before_retrying() -> None:
+    stored: dict[str, Any] = {}
+
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        stored.update(__import__("json").loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "name": "projects/project-one/secrets/credential/versions/5",
+                "state": "ENABLED",
+            },
+        )
+
+    google = GoogleRestClient(
+        credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
+    )
+    provider = Provider()
+    registry = ConnectorRegistry()
+    registry.register(ConnectionKind.PROVIDER, "provider", provider)
+    registry.register(
+        ConnectionKind.SECRET,
+        "google-secret-manager",
+        SecretManagerConnector(google),
+    )
+    repository = Repository()
+    signer = CapabilitySigner(b"s" * 32)
+    request = ToolRequest(
+        id="request_stale",
+        organisation_id="org_one",
+        run_id=repository.run_value.id,
+        agent_id="operator_one",
+        tool="provider.createCredential",
+        connection_id="provider_one",
+        payload={
+            "name": "firekey-run-one",
+            "sink_connection_id": "sink_one",
+            "secret_resource": "projects/project-one/secrets/credential",
+        },
+        fencing_token=1,
+    )
+    request_hash = request_digest(request.tool, request.payload)
+    token = signer.mint(
+        CapabilityClaims(
+            organisation_id="org_one",
+            run_id=repository.run_value.id,
+            agent_id="operator_one",
+            tool=request.tool,
+            connection_id="provider_one",
+            stage=Stage.CREATE,
+            fencing_token=1,
+            request_digest=request_hash,
+            action_digest=request_hash,
+            expires_at=int((NOW + timedelta(minutes=1)).timestamp()),
+            nonce="nonce_stale",
+        )
+    )
+    await repository.begin(
+        request,
+        request_hash,
+        {"baseline": ()},
+        NOW - timedelta(minutes=5),
+        NOW - timedelta(minutes=1),
+    )
+    broker = BrokerService(
+        repository,
+        registry,
+        CapabilityVerifier(signer.public_key),
+        EvidenceSink(),
+        AuditWriter(Audits(), "us-east1", lambda: NOW),
+        lambda: NOW,
+    )
+
+    result = await broker.execute(request, token)
+
+    assert result.succeeded is True
+    assert provider.creations == 1
+    assert base64.b64decode(stored["payload"]["data"]) == b"one-time-secret"
     await google.close()
 
 

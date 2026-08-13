@@ -1,6 +1,6 @@
 import hashlib
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from connectors import Connector, ConnectorContext, ConnectorResponse
@@ -16,11 +16,13 @@ from contracts import (
     PlaybookVersion,
     ProtectedAction,
     RotationRun,
+    ToolAttempt,
+    ToolAttemptStatus,
     ToolRequest,
     ToolResult,
 )
 from core.audit import AuditWriter
-from core.errors import ApprovalError, CapabilityError
+from core.errors import ApprovalError, CapabilityError, ResourceConflictError
 from policy import digest
 
 from broker.capability import CapabilityClaims, CapabilityVerifier, request_digest
@@ -28,9 +30,32 @@ from broker.validate import READ_TOOLS, validate_capability, validate_request
 
 
 class BrokerRepository(Protocol):
-    async def result(self, request: ToolRequest, request_hash: str) -> ToolResult | None: ...
+    async def attempt(self, request: ToolRequest, request_hash: str) -> ToolAttempt | None: ...
 
-    async def begin(self, request: ToolRequest, request_hash: str, now: datetime) -> None: ...
+    async def begin(
+        self,
+        request: ToolRequest,
+        request_hash: str,
+        reconciliation: dict[str, str | int | bool | tuple[str, ...]],
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None: ...
+
+    async def reclaim(
+        self,
+        request: ToolRequest,
+        request_hash: str,
+        expected_expiry: datetime,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None: ...
+
+    async def checkpoint(
+        self,
+        request: ToolRequest,
+        request_hash: str,
+        result: ToolResult,
+    ) -> None: ...
 
     async def finish(
         self,
@@ -95,6 +120,7 @@ class BrokerService:
         evidence: EvidenceSink,
         audit: AuditWriter,
         clock: Callable[[], datetime],
+        attempt_lease_seconds: int = 120,
     ) -> None:
         self._repository = repository
         self._connectors = connectors
@@ -102,12 +128,15 @@ class BrokerService:
         self._evidence = evidence
         self._audit = audit
         self._clock = clock
+        self._attempt_lease = timedelta(seconds=attempt_lease_seconds)
 
     async def execute(self, request: ToolRequest, capability: str | None) -> ToolResult:
         request_hash = request_digest(request.tool, request.payload)
-        previous = await self._repository.result(request, request_hash)
-        if previous is not None:
-            return previous
+        previous = await self._repository.attempt(request, request_hash)
+        if previous is not None and previous.status is not ToolAttemptStatus.RUNNING:
+            if previous.result is None:
+                raise RuntimeError("terminal tool attempt has no result")
+            return previous.result
 
         run = await self._repository.run(request.organisation_id, request.run_id)
         connection = await self._repository.connection(
@@ -122,7 +151,6 @@ class BrokerService:
             await self._authorize_mutation(request, run, request_hash, capability)
 
         now = self._clock()
-        await self._repository.begin(request, request_hash, now)
         context = ConnectorContext(
             request_id=request.id,
             agent_id=request.agent_id,
@@ -131,10 +159,48 @@ class BrokerService:
             now=now,
             idempotency_key=request.id,
         )
-        try:
-            response = await self._connectors.resolve(connection, request.tool).execute(
-                request.tool, request.payload, context
+        connector = self._connectors.resolve(connection, request.tool)
+        if previous is None:
+            reconciliation = await self._prepare(connector, request, context)
+            await self._repository.begin(
+                request,
+                request_hash,
+                reconciliation,
+                now,
+                now + self._attempt_lease,
             )
+        else:
+            if previous.checkpoint is not None:
+                await self._repository.finish(
+                    request, request_hash, previous.checkpoint, self._clock()
+                )
+                return previous.checkpoint
+            if previous.lease_expires_at > now:
+                raise ResourceConflictError(f"tool request {request.id} is already running")
+            await self._repository.reclaim(
+                request,
+                request_hash,
+                previous.lease_expires_at,
+                now,
+                now + self._attempt_lease,
+            )
+            reconciled = await self._reconcile(connector, request, context, previous.reconciliation)
+            if reconciled is not None:
+                reconciled = await self._store_provider_secret(
+                    request, assignment, reconciled, context
+                )
+                evidence_ids = await self._write_evidence(request, reconciled, now)
+                result = ToolResult(
+                    request_id=request.id,
+                    succeeded=True,
+                    result=reconciled.result,
+                    evidence_ids=evidence_ids,
+                )
+                await self._repository.checkpoint(request, request_hash, result)
+                await self._repository.finish(request, request_hash, result, self._clock())
+                return result
+        try:
+            response = await connector.execute(request.tool, request.payload, context)
             response = await self._store_provider_secret(request, assignment, response, context)
             evidence_ids = await self._write_evidence(request, response, now)
             result = ToolResult(
@@ -143,6 +209,7 @@ class BrokerService:
                 result=response.result,
                 evidence_ids=evidence_ids,
             )
+            await self._repository.checkpoint(request, request_hash, result)
         except ConnectorError as error:
             result = ToolResult(
                 request_id=request.id,
@@ -176,6 +243,44 @@ class BrokerService:
             evidence_ids=result.evidence_ids,
         )
         return result
+
+    async def _prepare(
+        self,
+        connector: Connector,
+        request: ToolRequest,
+        context: ConnectorContext,
+    ) -> dict[str, str | int | bool | tuple[str, ...]]:
+        prepare = getattr(connector, "prepare", None)
+        if not callable(prepare):
+            return {}
+        value = await prepare(request.tool, request.payload, context)
+        if not isinstance(value, dict) or _contains_sensitive(value):
+            raise ConnectorError(
+                "invalid-reconciliation-state",
+                "connector reconciliation state is invalid or contains sensitive material",
+            )
+        return value
+
+    async def _reconcile(
+        self,
+        connector: Connector,
+        request: ToolRequest,
+        context: ConnectorContext,
+        state: dict[str, str | int | bool | tuple[str, ...]],
+    ) -> ConnectorResponse | None:
+        reconcile = getattr(connector, "reconcile", None)
+        if not callable(reconcile):
+            raise ConnectorError(
+                "stale-mutation-unrecoverable",
+                "connector cannot reconcile an expired mutation attempt",
+            )
+        value = await reconcile(request.tool, request.payload, state, context)
+        if value is not None and not isinstance(value, ConnectorResponse):
+            raise ConnectorError(
+                "invalid-reconciliation-result",
+                "connector returned an invalid reconciliation result",
+            )
+        return value
 
     async def _authorize_mutation(
         self,
@@ -319,3 +424,15 @@ def _string(payload: dict[str, Any], key: str) -> str:
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _contains_sensitive(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key.lower() in {"secret", "api_key", "password", "token", "value"}
+            or _contains_sensitive(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(_contains_sensitive(item) for item in value)
+    return False

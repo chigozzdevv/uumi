@@ -77,6 +77,35 @@ class SecretManagerConnector:
             ) from error
         return SecretValue(decoded)
 
+    async def versions(self, secret: str) -> tuple[dict[str, Any], ...]:
+        if not secret.startswith("projects/") or "/secrets/" not in secret:
+            raise ConnectorError(
+                "invalid-secret-resource", "a full Secret Manager secret is required"
+            )
+        response = await self._client.request(
+            "GET",
+            f"https://secretmanager.googleapis.com/v1/{secret}/versions",
+            params={"pageSize": "100"},
+        )
+        values = response.get("versions", [])
+        if not isinstance(values, list) or not all(isinstance(item, dict) for item in values):
+            raise ConnectorError(
+                "secret-list-failed", "Secret Manager returned invalid version metadata"
+            )
+        return tuple(_metadata(item) for item in values)
+
+    async def disable(self, version: str) -> dict[str, Any]:
+        if not version.startswith("projects/") or "/versions/" not in version:
+            raise ConnectorError(
+                "invalid-secret-version", "a full Secret Manager version is required"
+            )
+        response = await self._client.request(
+            "POST",
+            f"https://secretmanager.googleapis.com/v1/{version}:disable",
+            json={},
+        )
+        return _metadata(response)
+
 
 def _version(payload: dict[str, Any]) -> str:
     value = payload.get("version")

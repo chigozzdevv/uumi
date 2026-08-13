@@ -191,6 +191,82 @@ async def test_sendgrid_timeout_deletes_attributable_orphan_and_stops() -> None:
     await google.close()
 
 
+@pytest.mark.anyio
+async def test_sendgrid_stale_reconcile_cleans_provider_and_secret_orphans() -> None:
+    listed_keys = 0
+    listed_versions = 0
+    deleted: list[str] = []
+    disabled: list[str] = []
+
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal listed_versions
+        if request.url.path.endswith(":access"):
+            return httpx.Response(
+                200,
+                json={"payload": {"data": base64.b64encode(b"admin-key").decode()}},
+            )
+        if request.method == "GET" and request.url.path.endswith("/versions"):
+            listed_versions += 1
+            versions = [
+                {
+                    "name": "projects/project-one/secrets/key/versions/1",
+                    "state": "ENABLED",
+                }
+            ]
+            if listed_versions > 1:
+                versions.append(
+                    {
+                        "name": "projects/project-one/secrets/key/versions/2",
+                        "state": "ENABLED",
+                    }
+                )
+            return httpx.Response(200, json={"versions": versions})
+        if request.method == "POST" and request.url.path.endswith(":disable"):
+            disabled.append(request.url.path)
+            return httpx.Response(
+                200,
+                json={
+                    "name": "projects/project-one/secrets/key/versions/2",
+                    "state": "DISABLED",
+                },
+            )
+        raise AssertionError(f"unexpected Google request {request.method} {request.url}")
+
+    def sendgrid_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal listed_keys
+        if request.method == "GET":
+            listed_keys += 1
+            keys = []
+            if listed_keys > 1:
+                keys.append({"api_key_id": "orphan-one", "name": "rotate"})
+            return httpx.Response(200, json={"result": keys})
+        if request.method == "DELETE":
+            deleted.append(request.url.path)
+            return httpx.Response(204)
+        raise AssertionError(f"unexpected SendGrid request {request.method} {request.url}")
+
+    google = _google(google_handler)
+    connector = SendGridConnector(
+        SecretManagerConnector(google),
+        httpx.AsyncClient(
+            base_url="https://api.sendgrid.com/v3",
+            transport=httpx.MockTransport(sendgrid_handler),
+        ),
+    )
+    payload = {
+        "name": "rotate",
+        "scopes": ["mail.send"],
+        "secret_resource": "projects/project-one/secrets/key",
+    }
+
+    state = await connector.prepare("provider.createCredential", payload, _context())
+    await connector.reconcile("provider.createCredential", payload, state, _context())
+
+    assert deleted == ["/v3/api_keys/orphan-one"]
+    assert disabled == ["/v1/projects/project-one/secrets/key/versions/2:disable"]
+    await google.close()
+
+
 def test_github_webhook_rejects_modified_payload() -> None:
     webhook = GitHubWebhook()
     body = b'{"action":"created"}'

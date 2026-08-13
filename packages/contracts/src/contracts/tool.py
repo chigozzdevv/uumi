@@ -39,7 +39,10 @@ class ToolAttempt(Contract):
     tool: str = Field(min_length=1, max_length=128)
     status: ToolAttemptStatus
     result: ToolResult | None = None
+    checkpoint: ToolResult | None = None
+    reconciliation: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
     started_at: AwareDatetime
+    lease_expires_at: AwareDatetime
     completed_at: AwareDatetime | None = None
 
     @model_validator(mode="after")
@@ -47,4 +50,6 @@ class ToolAttempt(Contract):
         terminal = self.status is not ToolAttemptStatus.RUNNING
         if terminal != (self.result is not None and self.completed_at is not None):
             raise ValueError("terminal tool attempts require a result and completion time")
+        if terminal and self.checkpoint is not None:
+            raise ValueError("terminal tool attempts cannot retain a checkpoint")
         return self

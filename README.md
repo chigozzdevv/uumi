@@ -27,7 +27,9 @@ run, and successful compensation ends as `compensated`, never as a completed cre
 - `server/agents` contains four separately deployed ADK agents, deterministic skill tools,
   managed sessions, approved Memory Bank context, and the per-tenant routing registry.
 - `server/broker` exposes capability-scoped MCP tools. The model never receives provider or
-  secret-store credentials.
+  secret-store credentials. Mutations use leased attempts, pre-mutation reconciliation baselines,
+  and post-transfer result checkpoints; an expired SendGrid create cleans exactly attributable
+  provider and Secret Manager orphans before a new attempt.
 - `server/coordinator` executes exact immutable playbook steps and independently verifies each
   stage before Workflows can advance it.
 - `server/verifier` executes approved immutable probe versions, binds provider and secret targets

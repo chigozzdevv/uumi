@@ -61,6 +61,7 @@ async def lifespan(_: MCPServer[Any]) -> Any:
             FirestoreAuditRepository(firestore), settings.region, lambda: datetime.now(UTC)
         ),
         lambda: datetime.now(UTC),
+        settings.attempt_lease_seconds,
     )
     try:
         yield BrokerRuntime(service, google)

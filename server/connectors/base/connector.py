@@ -27,3 +27,20 @@ class Connector(Protocol):
         payload: dict[str, Any],
         context: ConnectorContext,
     ) -> ConnectorResponse: ...
+
+
+class ReconcilesMutations(Protocol):
+    async def prepare(
+        self,
+        tool: str,
+        payload: dict[str, Any],
+        context: ConnectorContext,
+    ) -> dict[str, str | int | bool | tuple[str, ...]]: ...
+
+    async def reconcile(
+        self,
+        tool: str,
+        payload: dict[str, Any],
+        state: dict[str, str | int | bool | tuple[str, ...]],
+        context: ConnectorContext,
+    ) -> ConnectorResponse | None: ...

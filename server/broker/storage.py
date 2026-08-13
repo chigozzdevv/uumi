@@ -27,7 +27,7 @@ class FirestoreBrokerRepository:
         self._client = client
         self._catalog = FirestoreCatalog(client)
 
-    async def result(self, request: ToolRequest, request_hash: str) -> ToolResult | None:
+    async def attempt(self, request: ToolRequest, request_hash: str) -> ToolAttempt | None:
         snapshot = await self._client.document(
             FirestorePaths.tool(request.organisation_id, request.id)
         ).get()
@@ -35,13 +35,16 @@ class FirestoreBrokerRepository:
             return None
         attempt = ToolAttempt.model_validate(_data(snapshot))
         self._same_attempt(attempt, request, request_hash)
-        if attempt.status is ToolAttemptStatus.RUNNING:
-            raise ResourceConflictError(f"tool request {request.id} is already running")
-        if attempt.result is None:
-            raise StorageIntegrityError("terminal tool attempt has no result")
-        return attempt.result
+        return attempt
 
-    async def begin(self, request: ToolRequest, request_hash: str, now: datetime) -> None:
+    async def begin(
+        self,
+        request: ToolRequest,
+        request_hash: str,
+        reconciliation: dict[str, str | int | bool | tuple[str, ...]],
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None:
         reference = self._client.document(FirestorePaths.tool(request.organisation_id, request.id))
         attempt = ToolAttempt(
             id=request.id,
@@ -50,7 +53,9 @@ class FirestoreBrokerRepository:
             request_digest=request_hash,
             tool=request.tool,
             status=ToolAttemptStatus.RUNNING,
+            reconciliation=reconciliation,
             started_at=now,
+            lease_expires_at=lease_expires_at,
         )
 
         @async_transactional
@@ -61,6 +66,62 @@ class FirestoreBrokerRepository:
                 self._same_attempt(stored, request, request_hash)
                 raise ResourceConflictError(f"tool request {request.id} is already running")
             transaction.create(reference, encode(attempt))
+
+        await apply(self._client.transaction(max_attempts=5))
+
+    async def reclaim(
+        self,
+        request: ToolRequest,
+        request_hash: str,
+        expected_expiry: datetime,
+        now: datetime,
+        lease_expires_at: datetime,
+    ) -> None:
+        reference = self._client.document(FirestorePaths.tool(request.organisation_id, request.id))
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> None:
+            snapshot = await reference.get(transaction=transaction)
+            if not snapshot.exists:
+                raise StorageIntegrityError(f"tool request {request.id} disappeared")
+            current = ToolAttempt.model_validate(_data(snapshot))
+            self._same_attempt(current, request, request_hash)
+            if (
+                current.status is not ToolAttemptStatus.RUNNING
+                or current.lease_expires_at != expected_expiry
+                or current.lease_expires_at > now
+                or current.checkpoint is not None
+            ):
+                raise ResourceConflictError(f"tool request {request.id} cannot be reclaimed")
+            transaction.set(
+                reference,
+                encode(current.model_copy(update={"lease_expires_at": lease_expires_at})),
+            )
+
+        await apply(self._client.transaction(max_attempts=5))
+
+    async def checkpoint(
+        self,
+        request: ToolRequest,
+        request_hash: str,
+        result: ToolResult,
+    ) -> None:
+        reference = self._client.document(FirestorePaths.tool(request.organisation_id, request.id))
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> None:
+            snapshot = await reference.get(transaction=transaction)
+            if not snapshot.exists:
+                raise StorageIntegrityError(f"tool request {request.id} was not started")
+            current = ToolAttempt.model_validate(_data(snapshot))
+            self._same_attempt(current, request, request_hash)
+            if current.status is not ToolAttemptStatus.RUNNING:
+                if current.result == result:
+                    return
+                raise ResourceConflictError(f"tool request {request.id} already completed")
+            if current.checkpoint is not None and current.checkpoint != result:
+                raise ResourceConflictError(f"tool request {request.id} checkpoint changed")
+            transaction.set(reference, encode(current.model_copy(update={"checkpoint": result})))
 
         await apply(self._client.transaction(max_attempts=5))
 
@@ -92,6 +153,7 @@ class FirestoreBrokerRepository:
                         else ToolAttemptStatus.FAILED
                     ),
                     "result": result,
+                    "checkpoint": None,
                     "completed_at": now,
                 }
             )
