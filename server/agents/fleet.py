@@ -15,6 +15,20 @@ class AgentFleetService:
             raise ValueError("only ready Agent Runtime deployments may enter the fleet")
         if not registration.deployment.startswith("projects/"):
             raise ValueError("agent deployment must be a managed Agent Runtime resource")
+        expected_registry = (
+            f"//agentregistry.googleapis.com/projects/"
+            f"{registration.deployment.split('/')[1]}/locations/{registration.region}"
+        )
+        if registration.registry != expected_registry:
+            raise ValueError("agent must use the regional registry paired with its deployment")
+        for gateway in (registration.ingress_gateway, registration.egress_gateway):
+            if not gateway.startswith(
+                f"projects/{registration.deployment.split('/')[1]}/locations/"
+                f"{registration.region}/agentGateways/"
+            ):
+                raise ValueError("agent gateways must match the deployment project and region")
+        if not registration.identity.startswith("principal://"):
+            raise ValueError("agent deployment must expose a managed Agent Identity")
         return await self._repository.register(registration)
 
     async def resolve(self, organisation_id: str, kind: AgentKind, skill: str) -> AgentRegistration:

@@ -3,11 +3,13 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import vertexai
 from contracts import AgentKind, AgentRegistration, AgentStatus
 from core.errors import ResourceNotFoundError
 from google.cloud.firestore_v1 import AsyncClient
+from vertexai import types
 
 from agents.fleet import _SKILLS, AgentFleetService
 from agents.storage import AgentRepository
@@ -20,13 +22,19 @@ async def deploy(
     organisation_id: str,
     region: str,
     staging_bucket: str,
-    service_account: str,
     kms_key: str,
+    ingress_gateway: str,
+    egress_gateway: str,
+    approved_caller: str,
     version: str,
 ) -> tuple[AgentRegistration, ...]:
     os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
     os.environ["GOOGLE_CLOUD_LOCATION"] = region
-    client = vertexai.Client(project=project_id, location=region)
+    client = vertexai.Client(
+        project=project_id,
+        location=region,
+        http_options={"api_version": "v1beta1"},
+    )
     repository = AgentRepository(AsyncClient(project=project_id))
     fleet = AgentFleetService(repository)
     registrations = []
@@ -41,7 +49,9 @@ async def deploy(
                 current.kind is not kind
                 or current.version != version
                 or current.region != region
-                or current.identity != service_account
+                or current.ingress_gateway != ingress_gateway
+                or current.egress_gateway != egress_gateway
+                or current.approved_callers != frozenset({approved_caller})
                 or current.status is not AgentStatus.READY
             ):
                 raise RuntimeError(
@@ -53,38 +63,20 @@ async def deploy(
         app = module.agent_app
         remote = client.agent_engines.create(
             agent=app,
-            config={
-                "display_name": f"FireKey {kind.value.title()} Agent {version}",
-                "description": f"FireKey managed {kind.value} agent",
-                "staging_bucket": staging_bucket,
-                "requirements": str(_ROOT / "server" / "agents" / "requirements.txt"),
-                "extra_packages": [
-                    str(_ROOT / "server"),
-                    str(_ROOT / "packages" / "contracts" / "src"),
-                    str(_ROOT / "packages" / "policy" / "src"),
-                ],
-                "env_vars": {"GOOGLE_CLOUD_PROJECT": project_id},
-                "service_account": service_account,
-                "min_instances": 0,
-                "max_instances": 10,
-                "resource_limits": {"cpu": "2", "memory": "4Gi"},
-                "container_concurrency": 5,
-                "encryption_spec": {"kms_key_name": kms_key},
-                "labels": {
-                    "firekey-agent": kind.value,
-                    "firekey-version": version.replace(".", "-"),
-                },
-                "context_spec": {
-                    "memory_bank_config": {
-                        "ttl_config": {"default_ttl": "2592000s"},
-                        "disable_memory_revisions": False,
-                    }
-                },
-            },
+            config=_deployment_config(
+                project_id,
+                kind,
+                version,
+                staging_bucket,
+                kms_key,
+                ingress_gateway,
+                egress_gateway,
+            ),
         )
         resource = remote.api_resource
         if resource is None or not resource.name:
             raise RuntimeError(f"Agent Runtime returned no resource for {kind.value}")
+        identity = _effective_identity(resource)
         registration = AgentRegistration(
             id=registration_id,
             organisation_id=organisation_id,
@@ -93,17 +85,71 @@ async def deploy(
             version=version,
             skills=_SKILLS[kind],
             owner="FireKey Platform",
-            identity=service_account,
+            identity=identity,
             endpoint=f"https://{region}-aiplatform.googleapis.com",
             deployment=resource.name,
+            registry=f"//agentregistry.googleapis.com/projects/{project_id}/locations/{region}",
+            ingress_gateway=ingress_gateway,
+            egress_gateway=egress_gateway,
             region=region,
-            approved_callers=frozenset({service_account}),
-            tool_destinations=frozenset({"firestore", "firekey-browser", "firekey-broker"}),
+            approved_callers=frozenset({approved_caller}),
+            tool_destinations=frozenset({"firestore"}),
             status=AgentStatus.READY,
             registered_at=datetime.now(UTC),
         )
         registrations.append(await fleet.register(registration))
     return tuple(registrations)
+
+
+def _deployment_config(
+    project_id: str,
+    kind: AgentKind,
+    version: str,
+    staging_bucket: str,
+    kms_key: str,
+    ingress_gateway: str,
+    egress_gateway: str,
+) -> dict[str, Any]:
+    return {
+        "display_name": f"FireKey {kind.value.title()} Agent {version}",
+        "description": f"FireKey managed {kind.value} agent",
+        "staging_bucket": staging_bucket,
+        "requirements": str(_ROOT / "server" / "agents" / "requirements.txt"),
+        "extra_packages": [
+            str(_ROOT / "server"),
+            str(_ROOT / "packages" / "contracts" / "src"),
+            str(_ROOT / "packages" / "policy" / "src"),
+        ],
+        "env_vars": {"GOOGLE_CLOUD_PROJECT": project_id},
+        "identity_type": types.IdentityType.AGENT_IDENTITY,
+        "agent_gateway_config": {
+            "client_to_agent_config": {"agent_gateway": ingress_gateway},
+            "agent_to_anywhere_config": {"agent_gateway": egress_gateway},
+        },
+        "min_instances": 0,
+        "max_instances": 10,
+        "resource_limits": {"cpu": "2", "memory": "4Gi"},
+        "container_concurrency": 5,
+        "encryption_spec": {"kms_key_name": kms_key},
+        "labels": {
+            "firekey-agent": kind.value,
+            "firekey-version": version.replace(".", "-"),
+        },
+        "context_spec": {
+            "memory_bank_config": {
+                "ttl_config": {"default_ttl": "2592000s"},
+                "disable_memory_revisions": False,
+            }
+        },
+    }
+
+
+def _effective_identity(resource: Any) -> str:
+    spec = getattr(resource, "spec", None)
+    identity = getattr(spec, "effective_identity", None)
+    if not isinstance(identity, str) or not identity.startswith("principal://"):
+        raise RuntimeError("Agent Runtime returned no managed Agent Identity")
+    return identity
 
 
 def main() -> None:
@@ -112,8 +158,10 @@ def main() -> None:
     parser.add_argument("--organisation", required=True)
     parser.add_argument("--region", required=True)
     parser.add_argument("--staging-bucket", required=True)
-    parser.add_argument("--service-account", required=True)
     parser.add_argument("--kms-key", required=True)
+    parser.add_argument("--ingress-gateway", required=True)
+    parser.add_argument("--egress-gateway", required=True)
+    parser.add_argument("--approved-caller", required=True)
     parser.add_argument("--version", required=True)
     args = parser.parse_args()
     import asyncio
@@ -124,8 +172,10 @@ def main() -> None:
             args.organisation,
             args.region,
             args.staging_bucket,
-            args.service_account,
             args.kms_key,
+            args.ingress_gateway,
+            args.egress_gateway,
+            args.approved_caller,
             args.version,
         )
     )

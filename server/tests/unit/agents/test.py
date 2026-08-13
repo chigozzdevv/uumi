@@ -2,10 +2,12 @@ from datetime import UTC, datetime
 
 import pytest
 from agents.continuity import AgentContinuityService
+from agents.deploy import _deployment_config, _effective_identity
 from agents.fleet import AgentFleetService
 from agents.shared.context import redact
 from connectors.base.errors import ConnectorError
 from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
+from vertexai import types
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
@@ -38,9 +40,12 @@ def registration() -> AgentRegistration:
             }
         ),
         owner="FireKey",
-        identity="planner@example.iam.gserviceaccount.com",
+        identity="principal://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/agents/subject/planner",
         endpoint="https://us-central1-aiplatform.googleapis.com",
         deployment="projects/test/locations/us-central1/reasoningEngines/planner",
+        registry="//agentregistry.googleapis.com/projects/test/locations/us-central1",
+        ingress_gateway="projects/test/locations/us-central1/agentGateways/ingress",
+        egress_gateway="projects/test/locations/us-central1/agentGateways/egress",
         region="us-central1",
         approved_callers=frozenset({"workflow@example.iam.gserviceaccount.com"}),
         tool_destinations=frozenset({"firestore"}),
@@ -66,6 +71,36 @@ async def test_fleet_rejects_unregistered_skill_boundary() -> None:
 
     with pytest.raises(ValueError, match="invalid skill boundary"):
         await service.register(value)
+
+
+def test_agent_deployment_uses_identity_and_both_gateways() -> None:
+    config = _deployment_config(
+        "project-one",
+        AgentKind.PLANNER,
+        "1.2.3",
+        "gs://staging",
+        "projects/project-one/locations/us-central1/keyRings/firekey/cryptoKeys/agents",
+        "projects/project-one/locations/us-central1/agentGateways/ingress",
+        "projects/project-one/locations/us-central1/agentGateways/egress",
+    )
+
+    assert config["identity_type"] is types.IdentityType.AGENT_IDENTITY
+    assert "service_account" not in config
+    assert config["agent_gateway_config"] == {
+        "client_to_agent_config": {
+            "agent_gateway": "projects/project-one/locations/us-central1/agentGateways/ingress"
+        },
+        "agent_to_anywhere_config": {
+            "agent_gateway": "projects/project-one/locations/us-central1/agentGateways/egress"
+        },
+    }
+
+
+def test_agent_deployment_requires_effective_identity() -> None:
+    resource = type("Resource", (), {"spec": type("Spec", (), {"effective_identity": None})()})()
+
+    with pytest.raises(RuntimeError, match="no managed Agent Identity"):
+        _effective_identity(resource)
 
 
 def test_agent_context_recursively_redacts_secret_material() -> None:
