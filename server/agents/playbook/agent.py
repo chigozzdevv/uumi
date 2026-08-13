@@ -1,3 +1,4 @@
+from contracts import PlaybookDraft
 from google.adk.agents import Agent
 from google.adk.apps import App
 
@@ -13,6 +14,8 @@ page checkpoints. Include complete lifecycle, evidence checks, recovery, protect
 revocation, and explicit secure capture for computer-use. Validate every candidate with the
 build_playbook tool. Never place secrets in a playbook or response.""",
     tools=[analyse_walkthrough, build_playbook, generate_dry_run],
+    output_schema=PlaybookDraft,
+    output_key="playbook_draft",
     mode="task",
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,

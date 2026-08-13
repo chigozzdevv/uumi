@@ -1,10 +1,12 @@
 import argparse
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 import vertexai
 from contracts import AgentKind, AgentRegistration, AgentStatus
+from core.errors import ResourceNotFoundError
 from google.cloud.firestore_v1 import AsyncClient
 
 from agents.fleet import _SKILLS, AgentFleetService
@@ -22,11 +24,31 @@ async def deploy(
     kms_key: str,
     version: str,
 ) -> tuple[AgentRegistration, ...]:
+    os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
+    os.environ["GOOGLE_CLOUD_LOCATION"] = region
     client = vertexai.Client(project=project_id, location=region)
     repository = AgentRepository(AsyncClient(project=project_id))
     fleet = AgentFleetService(repository)
     registrations = []
     for kind in AgentKind:
+        registration_id = f"{kind.value}_{version.replace('.', '_')}"
+        try:
+            current = await repository.get(organisation_id, registration_id)
+        except ResourceNotFoundError:
+            pass
+        else:
+            if (
+                current.kind is not kind
+                or current.version != version
+                or current.region != region
+                or current.identity != service_account
+                or current.status is not AgentStatus.READY
+            ):
+                raise RuntimeError(
+                    f"existing {kind.value} registration does not match this deployment"
+                )
+            registrations.append(current)
+            continue
         module = __import__(f"agents.{kind.value}.agent", fromlist=["agent_app"])
         app = module.agent_app
         remote = client.agent_engines.create(
@@ -37,10 +59,9 @@ async def deploy(
                 "staging_bucket": staging_bucket,
                 "requirements": str(_ROOT / "server" / "agents" / "requirements.txt"),
                 "extra_packages": [
-                    str(_ROOT / "server" / "agents"),
-                    str(_ROOT / "server" / "core"),
-                    str(_ROOT / "packages" / "contracts" / "src" / "contracts"),
-                    str(_ROOT / "packages" / "policy" / "src" / "policy"),
+                    str(_ROOT / "server"),
+                    str(_ROOT / "packages" / "contracts" / "src"),
+                    str(_ROOT / "packages" / "policy" / "src"),
                 ],
                 "env_vars": {"GOOGLE_CLOUD_PROJECT": project_id},
                 "service_account": service_account,
@@ -65,7 +86,7 @@ async def deploy(
         if resource is None or not resource.name:
             raise RuntimeError(f"Agent Runtime returned no resource for {kind.value}")
         registration = AgentRegistration(
-            id=f"{kind.value}_{version.replace('.', '_')}",
+            id=registration_id,
             organisation_id=organisation_id,
             kind=kind,
             display_name=f"FireKey {kind.value.title()} Agent",

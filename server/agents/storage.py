@@ -1,4 +1,4 @@
-from contracts import AgentMemory, AgentRegistration, AgentSession
+from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession
 from core.errors import ResourceNotFoundError
 from core.storage.catalog import FirestoreCatalog
 from core.storage.paths import FirestorePaths
@@ -55,3 +55,11 @@ class AgentRepository:
         if current.remote_memory != memory.remote_memory or current.fact != memory.fact:
             raise ValueError("agent memory ID is immutable")
         return current
+
+    async def list_memories(
+        self, organisation_id: str, agent: AgentKind
+    ) -> tuple[AgentMemory, ...]:
+        root = f"{FirestorePaths.organisation(organisation_id)}/agent-memory"
+        return tuple(
+            item for item in await self._catalog.list(root, AgentMemory) if item.agent is agent
+        )

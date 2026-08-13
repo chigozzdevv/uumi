@@ -1,6 +1,7 @@
 from typing import Any
 
 from contracts import PlaybookDraft
+from core.errors import ResourceNotFoundError
 from core.playbook import validate_definition
 from core.storage.paths import FirestorePaths
 from google.adk.agents.context import Context as ToolContext
@@ -88,11 +89,16 @@ async def select_strategy(tool_context: ToolContext) -> dict[str, Any]:
 async def bind_playbook(tool_context: ToolContext) -> dict[str, Any]:
     """Confirm that the assigned playbook and connections are still active and exact."""
     context = AgentContext(tool_context)
+    run = await context.run()
     selected = await select_strategy(tool_context)
     assignment = selected["assignment"]
     version = selected["version"]
-    if version.get("state") != "active":
-        raise ValueError("assigned playbook version is not active")
+    dry_run = isinstance(run.get("dry_run_id"), str)
+    if dry_run:
+        if not assignment.get("dry_run_only") or version.get("state") != "test-required":
+            raise ValueError("dry run is not bound to its test-required playbook")
+    elif assignment.get("dry_run_only") or version.get("state") != "active":
+        raise ValueError("production run is not bound to an active playbook")
     connections = []
     for connection_id in assignment.get("connection_ids", []):
         if isinstance(connection_id, str):
@@ -101,7 +107,7 @@ async def bind_playbook(tool_context: ToolContext) -> dict[str, Any]:
                     FirestorePaths.connection(context.organisation_id, connection_id)
                 )
             )
-    return {**selected, "connections": connections}
+    return {**selected, "connections": connections, "dry_run": dry_run}
 
 
 async def build_playbook(definition: dict[str, Any], tool_context: ToolContext) -> dict[str, Any]:
@@ -157,8 +163,13 @@ async def detect_interface_drift(step_id: str, tool_context: ToolContext) -> dic
     """Compare an immutable browser step with the latest sanitised browser checkpoint."""
     context = AgentContext(tool_context)
     execution = await execute_console_playbook(step_id, tool_context)
-    browser_id = _string(execution["run"], "browser_session_id")
-    session = await context.document(FirestorePaths.browser(context.organisation_id, browser_id))
+    browser_id = f"browser_{context.run_id.removeprefix('run_')}"
+    try:
+        session = await context.document(
+            FirestorePaths.browser(context.organisation_id, browser_id)
+        )
+    except ResourceNotFoundError:
+        session = None
     return {"expected_step": execution["step"], "browser_session": session}
 
 

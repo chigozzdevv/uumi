@@ -2,6 +2,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
+from connectors.base.errors import ConnectorError
 from connectors.google.rest import GoogleRestClient
 from contracts import AgentMemory, AgentRegistration, AgentSession
 
@@ -35,31 +36,45 @@ class AgentContinuityService:
             raise ValueError("managed Agent Runtime sessions require at least 24 hours TTL")
         parent = registration.deployment
         endpoint = _endpoint(registration.region)
-        operation = await self._google.request(
-            "POST",
-            f"{endpoint}/v1/{parent}/sessions",
-            params={"sessionId": _remote_id(session_id)},
-            json={
-                "displayName": purpose,
-                "userId": registration.organisation_id,
-                "ttl": f"{int(ttl.total_seconds())}s",
-                "labels": {
-                    "firekey-org": registration.organisation_id,
-                    "firekey-run": run_id,
-                    "firekey-agent": registration.kind.value,
-                },
-                "sessionState": {
-                    "organisation_id": registration.organisation_id,
-                    "run_id": run_id,
-                    "project_id": self._project,
-                    "firestore_database": self._database,
-                },
+        remote_id = _remote_id(session_id)
+        body = {
+            "displayName": purpose,
+            "userId": registration.organisation_id,
+            "ttl": f"{int(ttl.total_seconds())}s",
+            "labels": {
+                "firekey-org": registration.organisation_id,
+                "firekey-run": run_id,
+                "firekey-agent": registration.kind.value,
             },
-            expected=frozenset({200}),
-        )
-        response = await self._google.wait_operation(
-            _string(operation, "name"), base_url=f"{endpoint}/v1"
-        )
+            "sessionState": {
+                "organisation_id": registration.organisation_id,
+                "run_id": run_id,
+                "project_id": self._project,
+                "firestore_database": self._database,
+            },
+        }
+        try:
+            operation = await self._google.request(
+                "POST",
+                f"{endpoint}/v1/{parent}/sessions",
+                params={"sessionId": remote_id},
+                json=body,
+                expected=frozenset({200}),
+            )
+            response = await self._google.wait_operation(
+                _string(operation, "name"), base_url=f"{endpoint}/v1"
+            )
+        except ConnectorError as error:
+            if error.code != "google-api-409":
+                raise
+            response = await self._google.request(
+                "GET", f"{endpoint}/v1/{parent}/sessions/{remote_id}"
+            )
+            if (
+                response.get("userId") != registration.organisation_id
+                or response.get("sessionState") != body["sessionState"]
+            ):
+                raise ValueError("existing Agent Runtime session has different bindings") from error
         now = self._clock()
         session = AgentSession(
             id=session_id,
@@ -87,27 +102,44 @@ class AgentContinuityService:
             raise ValueError("agent memory requires provenance")
         _validate_fact(fact)
         endpoint = _endpoint(registration.region)
-        operation = await self._google.request(
-            "POST",
-            f"{endpoint}/v1beta1/{registration.deployment}/memories",
-            params={"memoryId": _remote_id(memory_id)},
-            json={
-                "displayName": memory_id,
-                "description": "Approved FireKey operational fact",
-                "fact": fact,
-                "scope": {
-                    "organisation": registration.organisation_id,
-                    "agent": registration.kind.value,
-                },
-                "revisionLabels": {"approved-by": approved_by},
-                "ttl": f"{int(ttl.total_seconds())}s",
-                "disableMemoryRevisions": False,
+        remote_id = _remote_id(memory_id)
+        body = {
+            "displayName": memory_id,
+            "description": "Approved FireKey operational fact",
+            "fact": fact,
+            "scope": {
+                "organisation": registration.organisation_id,
+                "agent": registration.kind.value,
             },
-            expected=frozenset({200}),
-        )
-        response = await self._google.wait_operation(
-            _string(operation, "name"), base_url=f"{endpoint}/v1beta1"
-        )
+            "revisionLabels": {"approved-by": approved_by},
+            "ttl": f"{int(ttl.total_seconds())}s",
+            "disableMemoryRevisions": False,
+        }
+        try:
+            operation = await self._google.request(
+                "POST",
+                f"{endpoint}/v1beta1/{registration.deployment}/memories",
+                params={"memoryId": remote_id},
+                json=body,
+                expected=frozenset({200}),
+            )
+            response = await self._google.wait_operation(
+                _string(operation, "name"), base_url=f"{endpoint}/v1beta1"
+            )
+        except ConnectorError as error:
+            if error.code != "google-api-409":
+                raise
+            response = await self._google.request(
+                "GET", f"{endpoint}/v1beta1/{registration.deployment}/memories/{remote_id}"
+            )
+            expected = (fact, body["scope"], body["revisionLabels"])
+            actual = (
+                response.get("fact"),
+                response.get("scope"),
+                response.get("revisionLabels"),
+            )
+            if actual != expected:
+                raise ValueError("existing Memory Bank record has different bindings") from error
         now = self._clock()
         memory = AgentMemory(
             id=memory_id,
@@ -146,7 +178,33 @@ class AgentContinuityService:
         memories = result.get("retrievedMemories", [])
         if not isinstance(memories, list):
             raise ValueError("Memory Bank returned an invalid response")
-        return tuple(item for item in memories if isinstance(item, dict))
+        approved = {
+            item.remote_memory: item
+            for item in await self._repository.list_memories(
+                registration.organisation_id, registration.kind
+            )
+            if item.expires_at > self._clock()
+        }
+        values = []
+        for item in memories:
+            if not isinstance(item, dict):
+                continue
+            raw = item.get("memory", item)
+            if not isinstance(raw, dict):
+                continue
+            name = raw.get("name")
+            fact = raw.get("fact")
+            local = approved.get(name) if isinstance(name, str) else None
+            if local is None or fact != local.fact:
+                continue
+            values.append(
+                {
+                    "fact": local.fact,
+                    "provenance": local.provenance,
+                    "approved_by": local.approved_by,
+                }
+            )
+        return tuple(values)
 
 
 def _endpoint(region: str) -> str:

@@ -24,22 +24,23 @@ class AgentRuntimeService:
         self._clock = clock
 
     async def execute(self, task: AgentTask) -> AgentResult:
-        registration = await self._fleet.resolve(task.organisation_id, task.agent, task.skill)
-        session = await self._continuity.create_session(
-            registration,
-            f"session_{task.id}",
-            task.run_id,
-            f"{task.skill}: {task.objective[:160]}",
-        )
-        client = vertexai.Client(project=self._project, location=registration.region)
-        engine = client.agent_engines.get(name=registration.deployment)
-        method = getattr(engine, "async_stream_query", None)
-        if not callable(method):
-            raise RuntimeError("Agent Runtime deployment does not expose async_stream_query")
-        events: list[dict[str, Any]] = []
         try:
+            registration = await self._fleet.resolve(task.organisation_id, task.agent, task.skill)
+            session = await self._continuity.create_session(
+                registration,
+                f"session_{task.id}",
+                task.run_id,
+                f"{task.skill}: {task.objective[:160]}",
+            )
+            memories = await self._continuity.retrieve(registration, task.objective, count=5)
+            client = vertexai.Client(project=self._project, location=registration.region)
+            engine = client.agent_engines.get(name=registration.deployment)
+            method = getattr(engine, "async_stream_query", None)
+            if not callable(method):
+                raise RuntimeError("Agent Runtime deployment does not expose async_stream_query")
+            events: list[dict[str, Any]] = []
             stream = method(
-                message=_prompt(task),
+                message=_prompt(task, memories),
                 user_id=task.organisation_id,
                 session_id=session.remote_session.rsplit("/", 1)[-1],
             )
@@ -61,12 +62,12 @@ class AgentRuntimeService:
                 agent=task.agent,
                 skill=task.skill,
                 succeeded=False,
-                error=str(error)[:1024],
+                error=f"{type(error).__name__}: {error}".replace("\n", " ")[:1024],
                 completed_at=self._clock(),
             )
 
 
-def _prompt(task: AgentTask) -> str:
+def _prompt(task: AgentTask, memories: tuple[dict[str, Any], ...] = ()) -> str:
     return json.dumps(
         {
             "task_id": task.id,
@@ -74,6 +75,7 @@ def _prompt(task: AgentTask) -> str:
             "objective": task.objective,
             "context": task.context,
             "evidence_ids": task.evidence_ids,
+            "approved_memory": memories,
         },
         separators=(",", ":"),
         sort_keys=True,

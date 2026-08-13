@@ -1,9 +1,13 @@
 from datetime import UTC, datetime
 
 import pytest
+from agents.continuity import AgentContinuityService
 from agents.fleet import AgentFleetService
 from agents.shared.context import redact
-from contracts import AgentKind, AgentRegistration, AgentStatus
+from connectors.base.errors import ConnectorError
+from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
+
+NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
 
 class Repository:
@@ -70,3 +74,94 @@ def test_agent_context_recursively_redacts_secret_material() -> None:
         "secret_value": "[redacted]",
         "nested": {"authorization": "[redacted]", "safe": 3},
     }
+
+
+@pytest.mark.anyio
+async def test_managed_session_retry_reconciles_exact_remote_binding() -> None:
+    repository = ContinuityRepository()
+    google = ExistingGoogle("session")
+    continuity = AgentContinuityService(
+        repository,  # type: ignore[arg-type]
+        google,  # type: ignore[arg-type]
+        "project-one",
+        "(default)",
+        lambda: NOW,
+    )
+
+    session = await continuity.create_session(
+        registration(), "session_task_one", "run_one", "plan rotation"
+    )
+
+    assert session.remote_session.endswith("/sessions/session-task-one")
+    assert repository.session == session
+
+
+@pytest.mark.anyio
+async def test_memory_retry_reconciles_exact_approved_fact() -> None:
+    repository = ContinuityRepository()
+    google = ExistingGoogle("memory")
+    continuity = AgentContinuityService(
+        repository,  # type: ignore[arg-type]
+        google,  # type: ignore[arg-type]
+        "project-one",
+        "(default)",
+        lambda: NOW,
+    )
+
+    memory = await continuity.remember(
+        registration(),
+        "memory_one",
+        "Provider key names may take ten seconds to appear.",
+        ("evidence_one",),
+        "administrator_one",
+    )
+
+    assert memory.remote_memory.endswith("/memories/memory-one")
+    assert repository.memory == memory
+
+
+class ContinuityRepository:
+    def __init__(self) -> None:
+        self.session: AgentSession | None = None
+        self.memory: AgentMemory | None = None
+
+    async def save_session(self, value: AgentSession) -> AgentSession:
+        self.session = value
+        return value
+
+    async def save_memory(self, value: AgentMemory) -> AgentMemory:
+        self.memory = value
+        return value
+
+
+class ExistingGoogle:
+    def __init__(self, resource: str) -> None:
+        self.resource = resource
+        self.body: dict[str, object] = {}
+
+    async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
+        if method == "POST":
+            body = kwargs.get("json")
+            assert isinstance(body, dict)
+            self.body = body
+            raise ConnectorError("google-api-409", "already exists")
+        assert method == "GET"
+        name = (
+            "projects/project-one/locations/us-central1/reasoningEngines/planner/"
+            f"{self.resource}s/{self.resource}-task-one"
+        )
+        if self.resource == "session":
+            return {
+                "name": name,
+                "userId": "org_acme",
+                "sessionState": self.body["sessionState"],
+            }
+        return {
+            "name": (
+                "projects/project-one/locations/us-central1/reasoningEngines/planner/"
+                "memories/memory-one"
+            ),
+            "fact": self.body["fact"],
+            "scope": self.body["scope"],
+            "revisionLabels": self.body["revisionLabels"],
+        }
