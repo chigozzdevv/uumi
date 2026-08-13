@@ -7,6 +7,8 @@ from core.errors import (
     FireKeyError,
     IdempotencyConflictError,
     LeaseConflictError,
+    ResourceConflictError,
+    ResourceNotFoundError,
     RevisionConflictError,
     RunNotFoundError,
     StorageIntegrityError,
@@ -17,7 +19,14 @@ from fastapi.responses import JSONResponse
 from policy import PolicyViolationError
 
 from api.deps import ApiServices, build_services
-from api.routes import health_router, runs_router
+from api.routes import (
+    approvals_router,
+    health_router,
+    incidents_router,
+    inventory_router,
+    playbooks_router,
+    runs_router,
+)
 
 ErrorHandler = Callable[[Request, Exception], Awaitable[JSONResponse]]
 
@@ -27,6 +36,10 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.state.services = services or build_services()
     app.include_router(health_router)
     app.include_router(runs_router)
+    app.include_router(inventory_router)
+    app.include_router(playbooks_router)
+    app.include_router(approvals_router)
+    app.include_router(incidents_router)
     app.add_exception_handler(FireKeyError, _firekey_error)
     app.add_exception_handler(PolicyViolationError, _policy_error)
     return app
@@ -38,7 +51,7 @@ async def _firekey_error(request: Request, error: Exception) -> JSONResponse:
         return _error(status.HTTP_401_UNAUTHORIZED, "unauthenticated", str(error))
     if isinstance(error, AuthorizationError):
         return _error(status.HTTP_403_FORBIDDEN, "forbidden", str(error))
-    if isinstance(error, RunNotFoundError):
+    if isinstance(error, RunNotFoundError | ResourceNotFoundError):
         return _error(status.HTTP_404_NOT_FOUND, "not-found", str(error))
     if isinstance(
         error,
@@ -47,6 +60,7 @@ async def _firekey_error(request: Request, error: Exception) -> JSONResponse:
             IdempotencyConflictError,
             LeaseConflictError,
             RevisionConflictError,
+            ResourceConflictError,
         ),
     ):
         return _error(status.HTTP_409_CONFLICT, "conflict", str(error))

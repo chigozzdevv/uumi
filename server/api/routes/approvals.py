@@ -1,0 +1,106 @@
+from contracts import (
+    Approval,
+    ApprovalDecision,
+    Contract,
+    Identifier,
+    ProtectedAction,
+)
+from core.auth import Permission
+from core.errors import ResourceConflictError
+from fastapi import APIRouter, Request, status
+from pydantic import AwareDatetime, Field
+
+from api.deps import Identity, required, services
+
+router = APIRouter(
+    prefix="/v1/organisations/{organisation_id}/approvals",
+    tags=["approvals"],
+)
+
+
+class ApprovalRequest(Contract):
+    id: Identifier
+    action: ProtectedAction
+    plan_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    evidence_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expires_at: AwareDatetime
+
+
+class ApprovalCapabilityResponse(Contract):
+    approval: Approval
+    token: str = Field(min_length=32)
+
+
+class DecisionRequest(Contract):
+    expected_revision: int = Field(ge=0)
+    decision: ApprovalDecision
+
+
+class ConsumeRequest(Contract):
+    token: str = Field(min_length=32)
+    action: ProtectedAction
+    plan_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    evidence_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+@router.post("", response_model=ApprovalCapabilityResponse, status_code=status.HTTP_201_CREATED)
+async def request_approval(
+    organisation_id: Identifier,
+    body: ApprovalRequest,
+    identity: Identity,
+    request: Request,
+) -> ApprovalCapabilityResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    if body.action.organisation_id != organisation_id:
+        raise ResourceConflictError("protected action crosses organisation boundary")
+    value = await required(api.approvals, "approvals").request(
+        body.id,
+        body.action,
+        body.plan_hash,
+        body.evidence_hash,
+        identity.actor_id,
+        body.expires_at,
+    )
+    return ApprovalCapabilityResponse(approval=value.approval, token=value.token)
+
+
+@router.post("/{approval_id}/decision", response_model=Approval)
+async def decide(
+    organisation_id: Identifier,
+    approval_id: Identifier,
+    body: DecisionRequest,
+    identity: Identity,
+    request: Request,
+) -> Approval:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.APPROVAL_DECIDE)
+    return await required(api.approvals, "approvals").decide(
+        organisation_id,
+        approval_id,
+        body.expected_revision,
+        body.decision,
+        identity.actor_id,
+    )
+
+
+@router.post("/{approval_id}/consume", response_model=Approval)
+async def consume(
+    organisation_id: Identifier,
+    approval_id: Identifier,
+    body: ConsumeRequest,
+    identity: Identity,
+    request: Request,
+) -> Approval:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.RUN_WRITE)
+    if body.action.organisation_id != organisation_id:
+        raise ResourceConflictError("protected action crosses organisation boundary")
+    return await required(api.approvals, "approvals").consume(
+        organisation_id,
+        approval_id,
+        body.token,
+        body.action,
+        body.plan_hash,
+        body.evidence_hash,
+    )

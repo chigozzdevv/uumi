@@ -12,17 +12,56 @@ from core.storage.paths import FirestorePaths
 class Permission(StrEnum):
     RUN_READ = "run.read"
     RUN_WRITE = "run.write"
+    INVENTORY_READ = "inventory.read"
+    INVENTORY_WRITE = "inventory.write"
+    PLAYBOOK_READ = "playbook.read"
+    PLAYBOOK_WRITE = "playbook.write"
+    PLAYBOOK_APPROVE = "playbook.approve"
+    APPROVAL_READ = "approval.read"
+    APPROVAL_DECIDE = "approval.decide"
+    INCIDENT_WRITE = "incident.write"
+    AUDIT_READ = "audit.read"
 
 
 class Role(StrEnum):
     VIEWER = "viewer"
     OPERATOR = "operator"
     ADMINISTRATOR = "administrator"
+    AUTOMATION = "automation"
 
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
-    Role.VIEWER: frozenset({Permission.RUN_READ}),
-    Role.OPERATOR: frozenset({Permission.RUN_READ, Permission.RUN_WRITE}),
+    Role.VIEWER: frozenset(
+        {
+            Permission.RUN_READ,
+            Permission.INVENTORY_READ,
+            Permission.PLAYBOOK_READ,
+            Permission.APPROVAL_READ,
+            Permission.AUDIT_READ,
+        }
+    ),
+    Role.OPERATOR: frozenset(
+        {
+            Permission.RUN_READ,
+            Permission.RUN_WRITE,
+            Permission.INVENTORY_READ,
+            Permission.PLAYBOOK_READ,
+            Permission.PLAYBOOK_WRITE,
+            Permission.APPROVAL_READ,
+            Permission.INCIDENT_WRITE,
+        }
+    ),
+    Role.AUTOMATION: frozenset(
+        {
+            Permission.RUN_READ,
+            Permission.RUN_WRITE,
+            Permission.INVENTORY_READ,
+            Permission.PLAYBOOK_READ,
+            Permission.PLAYBOOK_WRITE,
+            Permission.APPROVAL_READ,
+            Permission.INCIDENT_WRITE,
+        }
+    ),
     Role.ADMINISTRATOR: frozenset(Permission),
 }
 
