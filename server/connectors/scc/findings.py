@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -9,7 +10,6 @@ class SecurityCommandCenterFinding:
     def normalise(
         self,
         organisation_id: str,
-        message_id: str,
         payload: dict[str, Any],
         received_at: datetime,
     ) -> IngestionEvent:
@@ -32,8 +32,8 @@ class SecurityCommandCenterFinding:
             id=new_id("ingestion"),
             organisation_id=organisation_id,
             source="security-command-center",
-            source_event_id=message_id,
-            kind="credential-exposure-detected",
+            source_event_id=hashlib.sha256(name.encode()).hexdigest(),
+            kind=("credential-exposure-detected" if state == "ACTIVE" else "exposure-resolved"),
             observed_at=_datetime(finding.get("eventTime"), received_at),
             severity=_severity(severity),
             confidence=Confidence.HIGH if state == "ACTIVE" else Confidence.MEDIUM,

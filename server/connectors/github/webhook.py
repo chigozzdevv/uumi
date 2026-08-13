@@ -19,7 +19,6 @@ class GitHubWebhook:
     def normalise(
         self,
         organisation_id: str,
-        delivery_id: str,
         event_type: str,
         body: bytes,
         received_at: datetime,
@@ -40,7 +39,11 @@ class GitHubWebhook:
         alert_url = alert.get("html_url")
         secret_type = alert.get("secret_type_display_name") or alert.get("secret_type")
         alert_number = alert.get("number")
-        if not isinstance(repository_name, str) or not isinstance(alert_url, str):
+        if (
+            not isinstance(repository_name, str)
+            or not isinstance(alert_url, str)
+            or not isinstance(alert_number, int)
+        ):
             raise ValueError("GitHub webhook metadata is incomplete")
         provider = _provider(secret_type)
         observed = _datetime(alert.get("created_at"), received_at)
@@ -48,13 +51,13 @@ class GitHubWebhook:
             id=new_id("ingestion"),
             organisation_id=organisation_id,
             source="github-secret-scanning",
-            source_event_id=delivery_id,
+            source_event_id=f"{repository_name}#{alert_number}",
             kind="credential-exposure-detected" if action != "resolved" else "exposure-resolved",
             observed_at=observed,
             severity=Severity.CRITICAL if action != "resolved" else Severity.MEDIUM,
             confidence=Confidence.HIGH,
             resource=SourceResource(repository=repository_name, provider=provider),
-            source_reference=f"{alert_url}#{alert_number}",
+            source_reference=alert_url,
             received_at=received_at,
         )
 

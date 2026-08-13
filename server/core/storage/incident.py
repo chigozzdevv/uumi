@@ -50,6 +50,14 @@ class FirestoreIncidentRepository:
 
         return await apply(self._client.transaction(max_attempts=5))
 
+    async def get(self, organisation_id: str, incident_id: str) -> Incident:
+        snapshot = await self._client.document(
+            FirestorePaths.incident(organisation_id, incident_id)
+        ).get()
+        if not snapshot.exists:
+            raise ResourceNotFoundError(f"incident {incident_id} was not found")
+        return Incident.model_validate(_data(snapshot))
+
     async def correlate(
         self,
         organisation_id: str,
@@ -92,6 +100,41 @@ class FirestoreIncidentRepository:
                 "updated_at": updated_at,
             },
         )
+
+    async def advance_run(
+        self,
+        organisation_id: str,
+        run_id: str,
+        status: IncidentStatus,
+        updated_at: datetime,
+    ) -> tuple[Incident, ...]:
+        root = f"{FirestorePaths.organisation(organisation_id)}/incidents"
+        incidents = []
+        async for snapshot in self._client.collection(root).where("run_id", "==", run_id).stream():
+            current = Incident.model_validate(_data(snapshot))
+            if current.status is status or (
+                current.status is IncidentStatus.RESOLVED and status is IncidentStatus.CONTAINED
+            ):
+                incidents.append(current)
+                continue
+            allowed = (
+                current.status is IncidentStatus.ROTATING
+                if status is IncidentStatus.CONTAINED
+                else current.status in {IncidentStatus.ROTATING, IncidentStatus.CONTAINED}
+            )
+            if not allowed:
+                raise ResourceConflictError(
+                    f"incident {current.id} cannot advance from {current.status.value}"
+                )
+            incidents.append(
+                await self._update(
+                    organisation_id,
+                    current.id,
+                    current.revision,
+                    {"status": status, "updated_at": updated_at},
+                )
+            )
+        return tuple(incidents)
 
     async def _update(
         self,

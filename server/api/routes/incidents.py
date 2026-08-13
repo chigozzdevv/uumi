@@ -1,7 +1,8 @@
-from contracts import Contract, Identifier, Incident, IngestionEvent
+from contracts import Contract, Identifier, Incident, IngestionEvent, RotationRun
 from core.auth import Permission
 from core.errors import ResourceConflictError
 from fastapi import APIRouter, Request, Response, status
+from pydantic import AwareDatetime, Field
 
 from api.deps import IdempotencyKey, Identity, command_id, required, services
 
@@ -13,6 +14,24 @@ router = APIRouter(
 
 class IncidentResponse(Contract):
     incident: Incident
+    applied: bool
+
+
+class ConfirmRequest(Contract):
+    expected_revision: int = Field(ge=0)
+    credential_id: Identifier
+
+
+class RotationRequest(Contract):
+    policy_version: Identifier
+    reason: str = Field(min_length=1, max_length=1024)
+    urgency: str = Field(min_length=1, max_length=32)
+    received_at: AwareDatetime
+
+
+class RotationResponse(Contract):
+    incident: Incident
+    run: RotationRun
     applied: bool
 
 
@@ -33,3 +52,60 @@ async def ingest(
     incident, applied = await required(api.incidents, "incidents").ingest(incident_id, body)
     response.status_code = status.HTTP_201_CREATED if applied else status.HTTP_200_OK
     return IncidentResponse(incident=incident, applied=applied)
+
+
+@router.get("/{incident_id}", response_model=Incident)
+async def get_incident(
+    organisation_id: Identifier,
+    incident_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> Incident:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.incidents, "incidents").get(organisation_id, incident_id)
+
+
+@router.post("/{incident_id}/confirm", response_model=Incident)
+async def confirm(
+    organisation_id: Identifier,
+    incident_id: Identifier,
+    body: ConfirmRequest,
+    identity: Identity,
+    request: Request,
+) -> Incident:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INCIDENT_WRITE)
+    return await required(api.incidents, "incidents").confirm(
+        organisation_id,
+        incident_id,
+        body.expected_revision,
+        body.credential_id,
+    )
+
+
+@router.post("/{incident_id}/rotate", response_model=RotationResponse)
+async def rotate(
+    organisation_id: Identifier,
+    incident_id: Identifier,
+    body: RotationRequest,
+    identity: Identity,
+    key: IdempotencyKey,
+    request: Request,
+    response: Response,
+) -> RotationResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INCIDENT_WRITE)
+    await api.access.require(identity, organisation_id, Permission.RUN_WRITE)
+    incident, run, applied = await required(api.incidents, "incidents").start_rotation(
+        organisation_id,
+        incident_id,
+        command_id(identity, organisation_id, key),
+        identity.actor_id,
+        body.policy_version,
+        body.reason,
+        body.urgency,
+        body.received_at,
+    )
+    response.status_code = status.HTTP_201_CREATED if applied else status.HTTP_200_OK
+    return RotationResponse(incident=incident, run=run, applied=applied)
