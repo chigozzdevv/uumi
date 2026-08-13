@@ -42,3 +42,16 @@ module "storage" {
 
   depends_on = [module.project]
 }
+
+module "runtime" {
+  source = "../../modules/runtime"
+
+  project_id          = var.project_id
+  region              = var.region
+  api_service_account = module.identity.emails["firekey-api"]
+  workflow_member     = module.identity.members["firekey-workflow"]
+  oidc_audience       = var.oidc_audience
+  api_image           = var.api_image
+
+  depends_on = [module.project, module.storage]
+}

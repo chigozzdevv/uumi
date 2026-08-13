@@ -57,3 +57,24 @@ variable "workflow_organisations" {
     error_message = "Workflow organisation IDs must satisfy the FireKey identifier contract."
   }
 }
+
+variable "api_image" {
+  description = "Immutable FireKey API image reference; null bootstraps the registry only."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.api_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.api_image))
+    )
+    error_message = "api_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "oidc_audience" {
+  description = "Stable audience used by Cloud Run and FireKey token verification."
+  type        = string
+  default     = "https://api.firekey.internal"
+}
