@@ -249,7 +249,7 @@ class RuntimeGoogle:
 
     async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
         assert method == "POST"
-        assert url.endswith("/a2a/message:send")
+        assert url.endswith("/a2a/v1/message:send")
         body = kwargs.get("json")
         assert isinstance(body, dict)
         self.body = body

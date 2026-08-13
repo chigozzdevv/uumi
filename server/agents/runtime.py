@@ -138,4 +138,4 @@ def _a2a_endpoint(region: str, deployment: str) -> str:
     expected = f"projects/{deployment.split('/')[1]}/locations/{region}/reasoningEngines/"
     if not deployment.startswith(expected):
         raise ValueError("agent deployment does not match its registered project and region")
-    return f"https://{region}-aiplatform.googleapis.com/v1beta1/{deployment}/a2a/message:send"
+    return f"https://{region}-aiplatform.googleapis.com/v1beta1/{deployment}/a2a/v1/message:send"
