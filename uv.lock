@@ -152,7 +152,7 @@ requires-dist = [{ name = "firekey-contracts", editable = "packages/contracts" }
 [[package]]
 name = "firekey-server"
 version = "0.1.0"
-source = { virtual = "server" }
+source = { editable = "server" }
 dependencies = [
     { name = "fastapi" },
     { name = "firekey-contracts" },

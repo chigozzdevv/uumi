@@ -1,0 +1,123 @@
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from contracts import Failure, RotationRun, RunStatus, Stage, StageProof
+from core.errors import LeaseConflictError, RevisionConflictError, TransitionRejectedError
+from core.state import RotationMachine
+from policy import GatePolicy, PolicyViolationError
+from testkit import make_proof, make_run
+
+NOW = datetime.now(UTC)
+LEASE_END = NOW + timedelta(minutes=5)
+
+
+def start() -> tuple[RotationMachine, RotationRun]:
+    machine = RotationMachine()
+    run = machine.start(make_run(NOW), "worker_one", 0, LEASE_END, NOW)
+    return machine, run
+
+
+def test_start_assigns_first_fencing_token() -> None:
+    machine = RotationMachine()
+    run = machine.start(make_run(NOW), "worker_one", 0, LEASE_END, NOW)
+
+    assert run.status is RunStatus.RUNNING
+    assert run.lease is not None
+    assert run.lease.fencing_token == 1
+    assert run.revision == 1
+
+
+def test_start_rejects_stale_revision() -> None:
+    with pytest.raises(RevisionConflictError):
+        RotationMachine().start(make_run(NOW), "worker_one", 3, LEASE_END, NOW)
+
+
+def test_stage_rejects_stale_fencing_token() -> None:
+    machine, run = start()
+
+    with pytest.raises(LeaseConflictError, match="stale"):
+        machine.complete(run, make_proof(Stage.TRIGGER, NOW), 9, run.revision, NOW)
+
+
+def test_stage_rejects_proof_for_another_stage() -> None:
+    machine, run = start()
+
+    with pytest.raises(TransitionRejectedError, match="current stage"):
+        machine.complete(run, make_proof(Stage.PREFLIGHT, NOW), 1, run.revision, NOW)
+
+
+def test_stage_rejects_incomplete_evidence() -> None:
+    machine, run = start()
+    proof = StageProof(
+        run_id=run.id,
+        organisation_id=run.organisation_id,
+        stage=Stage.TRIGGER,
+        checks=frozenset({"request-authenticated"}),
+        evidence_ids=("evidence_one",),
+        actor_id="service_one",
+        recorded_at=NOW,
+    )
+
+    with pytest.raises(PolicyViolationError):
+        machine.complete(run, proof, 1, run.revision, NOW)
+
+
+def test_run_requires_every_stage_before_completion() -> None:
+    machine, run = start()
+
+    for stage in Stage:
+        assert run.stage is stage
+        assert run.status is RunStatus.RUNNING
+        assert run.lease is not None
+        run = machine.complete(
+            run,
+            make_proof(stage, NOW),
+            run.lease.fencing_token,
+            run.revision,
+            NOW,
+        )
+
+    assert run.stage is Stage.COMPLETE
+    assert run.status is RunStatus.COMPLETED
+    assert run.lease is None
+    assert run.revision == 13
+
+
+def test_resume_invalidates_queued_work() -> None:
+    machine, run = start()
+    run = machine.pause(run, 1, run.revision, NOW)
+    run = machine.resume(run, "worker_one", run.revision, LEASE_END, NOW)
+
+    assert run.lease is not None
+    assert run.lease.fencing_token == 2
+
+    with pytest.raises(LeaseConflictError, match="stale"):
+        machine.complete(run, make_proof(Stage.TRIGGER, NOW), 1, run.revision, NOW)
+
+
+def test_cleanup_can_recover_under_a_new_fence() -> None:
+    machine, run = start()
+    failure = Failure(
+        code="provider-response-lost",
+        message="creation result is ambiguous",
+        retryable=False,
+    )
+    run = machine.cleanup(run, failure, 1, run.revision, NOW)
+    run = machine.recover(
+        run,
+        "recovery_one",
+        run.revision,
+        LEASE_END + timedelta(minutes=5),
+        LEASE_END,
+    )
+
+    assert run.status is RunStatus.RECOVERING
+    assert run.failure is None
+    assert run.lease is not None
+    assert run.lease.fencing_token == 2
+
+
+def test_gate_policy_covers_all_twelve_stages() -> None:
+    policy = GatePolicy()
+
+    assert {stage for stage in Stage if policy.checks(stage)} == set(Stage)
