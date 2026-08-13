@@ -4,10 +4,15 @@ import pytest
 from contracts import (
     Approval,
     ApprovalDecision,
+    EventKind,
     MutationMode,
     MutationSemantics,
+    OutboxEvent,
     RotationPlan,
     RotationStrategy,
+    RunEvent,
+    RunStatus,
+    Stage,
 )
 from pydantic import ValidationError
 
@@ -70,3 +75,25 @@ def test_contracts_are_immutable() -> None:
 
     with pytest.raises(ValidationError, match="frozen"):
         setattr(mutation, "compensation", "retry")  # noqa: B010
+
+
+def test_outbox_lease_must_be_complete() -> None:
+    event = RunEvent(
+        id="event_one",
+        organisation_id="org_one",
+        run_id="run_one",
+        credential_id="cred_one",
+        kind=EventKind.RUN_CREATED,
+        revision=0,
+        stage=Stage.TRIGGER,
+        status=RunStatus.PENDING,
+        actor_id="service_one",
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(ValidationError, match="owner and expiry"):
+        OutboxEvent(
+            event=event,
+            available_at=NOW,
+            lease_owner="publisher_one",
+        )

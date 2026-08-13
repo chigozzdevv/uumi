@@ -1,6 +1,7 @@
 from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
+from contracts.evidence import StageProof
 from contracts.state import RunStatus, Stage
 
 
@@ -24,6 +25,22 @@ class Failure(Contract):
     message: str = Field(min_length=1, max_length=1024)
     retryable: bool
     evidence_ids: tuple[Identifier, ...] = ()
+
+
+class RunStep(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    run_id: Identifier
+    operation: str = Field(min_length=1, max_length=96)
+    command_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    actor_id: Identifier
+    before_stage: Stage | None = None
+    after_stage: Stage
+    before_status: RunStatus | None = None
+    after_status: RunStatus
+    revision: int = Field(ge=0)
+    proof: StageProof | None = None
+    recorded_at: AwareDatetime
 
 
 class RotationRun(Contract):
