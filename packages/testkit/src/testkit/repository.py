@@ -188,6 +188,6 @@ class MemoryRunRepository:
             self._runs[run_key] = updated
             self._steps[step_key] = step
             self._events[event_key] = event
-            if updated.status is RunStatus.COMPLETED:
+            if updated.status in {RunStatus.COMPLETED, RunStatus.COMPENSATED}:
                 del self._locks[lock_key]
             return MutationResult(run=updated, step=step, applied=True)

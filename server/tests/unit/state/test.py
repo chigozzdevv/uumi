@@ -1,7 +1,15 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from contracts import Failure, RotationRun, RunStatus, Stage, StageBindings, StageProof
+from contracts import (
+    Failure,
+    RecoveryMode,
+    RotationRun,
+    RunStatus,
+    Stage,
+    StageBindings,
+    StageProof,
+)
 from core.errors import LeaseConflictError, RevisionConflictError, TransitionRejectedError
 from core.state import RotationMachine
 from policy import GatePolicy, PolicyViolationError
@@ -141,6 +149,57 @@ def test_failed_run_recovery_preserves_fence_history() -> None:
     assert run.lease is not None
     assert run.lease.fencing_token == 2
     assert run.fencing_token == 2
+
+
+def test_retryable_recovery_reenters_the_same_stage() -> None:
+    machine, run = start()
+    failure = Failure(code="temporary-error", message="provider was unavailable", retryable=True)
+    run = machine.fail(run, failure, 1, run.revision, NOW)
+    run = machine.recover(run, "worker_one", run.revision, LEASE_END, NOW)
+    assert run.lease is not None
+
+    run = machine.complete_recovery(
+        run,
+        "recovery_one",
+        RecoveryMode.RETRY,
+        ("evidence_one",),
+        run.lease.fencing_token,
+        run.revision,
+        NOW,
+    )
+
+    assert run.status is RunStatus.RUNNING
+    assert run.stage is Stage.TRIGGER
+    assert run.recovery_stage is None
+    assert run.recovery_evidence_ids == ()
+
+
+def test_rollback_recovery_finishes_as_compensated() -> None:
+    machine, run = start()
+    failure = Failure(
+        code="candidate-failed",
+        message="candidate verification failed",
+        retryable=False,
+    )
+    run = machine.cleanup(run, failure, 1, run.revision, NOW)
+    run = machine.recover(run, "worker_one", run.revision, LEASE_END, NOW)
+    assert run.lease is not None
+
+    run = machine.complete_recovery(
+        run,
+        "recovery_one",
+        RecoveryMode.ROLLBACK,
+        ("evidence_one",),
+        run.lease.fencing_token,
+        run.revision,
+        NOW,
+    )
+
+    assert run.status is RunStatus.COMPENSATED
+    assert run.lease is None
+    assert run.recovery_stage is Stage.TRIGGER
+    assert run.recovery_mode is RecoveryMode.ROLLBACK
+    assert run.recovery_evidence_ids == ("evidence_one",)
 
 
 def test_gate_policy_covers_all_twelve_stages() -> None:

@@ -16,6 +16,7 @@ from contracts import (
     PlaybookStep,
     PlaybookVersion,
     RecoveryAction,
+    RecoveryBranch,
     Stage,
 )
 from core.audit import GENESIS, event_hash
@@ -253,7 +254,15 @@ def test_audit_hash_binds_sequence_and_previous_event() -> None:
 
 
 def _draft() -> PlaybookDraft:
-    stages = (Stage.CREATE, Stage.STORE, Stage.DEPLOY, Stage.VERIFY, Stage.REVOKE)
+    stages = (
+        Stage.CREATE,
+        Stage.STORE,
+        Stage.DEPLOY,
+        Stage.VERIFY,
+        Stage.ROLLOUT,
+        Stage.OBSERVE,
+        Stage.REVOKE,
+    )
     steps = tuple(
         PlaybookStep(
             id=f"step_{stage.value}",
@@ -274,7 +283,17 @@ def _draft() -> PlaybookDraft:
         required_connections=("provider_one", "secret_one", "runtime_one"),
         steps=steps,
         recovery={
-            "create": (RecoveryAction(tool="test.cleanup", operation="cleanup"),),
-            "deploy": (RecoveryAction(tool="test.rollback", operation="rollback"),),
+            stage.value: RecoveryBranch(
+                mode="rollforward" if stage is Stage.REVOKE else "rollback",
+                actions=(
+                    RecoveryAction(
+                        tool="test.recover",
+                        operation="recover",
+                        parameters={"connection_id": "runtime_one"},
+                    ),
+                ),
+                preserves_old_generation=stage is not Stage.REVOKE,
+            )
+            for stage in stages
         },
     )

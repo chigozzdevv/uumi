@@ -34,7 +34,15 @@ _SKILLS: dict[AgentKind, frozenset[str]] = {
     AgentKind.INVENTORY: frozenset(
         {"correlate_exposure", "resolve_consumers", "detect_stale_mapping"}
     ),
-    AgentKind.PLANNER: frozenset({"plan_rotation", "select_strategy", "bind_playbook"}),
+    AgentKind.PLANNER: frozenset(
+        {
+            "plan_rotation",
+            "select_strategy",
+            "bind_playbook",
+            "diagnose_failed_stage",
+            "recommend_authorised_recovery",
+        }
+    ),
     AgentKind.PLAYBOOK: frozenset({"build_playbook", "analyse_walkthrough", "generate_dry_run"}),
     AgentKind.OPERATOR: frozenset({"execute_console_playbook", "detect_interface_drift"}),
 }

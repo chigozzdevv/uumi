@@ -3,6 +3,7 @@ from enum import StrEnum
 from pydantic import Field, model_validator
 
 from contracts.base import Contract, Identifier
+from contracts.state import Stage
 
 
 class RotationStrategy(StrEnum):
@@ -24,7 +25,7 @@ class RotationPlan(Contract):
     consumer_ids: tuple[Identifier, ...] = Field(min_length=1)
     rollout: tuple[int, ...] = (5, 25, 50, 100)
     observation_seconds: int = Field(gt=0, le=604800)
-    recovery_id: Identifier
+    recovery_ids: dict[Stage, Identifier] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_rollout(self) -> "RotationPlan":

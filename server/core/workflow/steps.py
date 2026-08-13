@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from contracts import (
     CleanupRunCommand,
+    CompleteRecoveryCommand,
     CompleteStageCommand,
     CreateRunCommand,
     EventKind,
@@ -159,6 +160,22 @@ class RunWorkflow:
                 command.owner_id,
                 command.expected_revision,
                 command.expires_at,
+                now,
+            ),
+        )
+
+    async def complete_recovery(self, command: CompleteRecoveryCommand) -> MutationResult:
+        now = self._clock()
+        return await self._repository.mutate(
+            command,
+            EventKind.RECOVERY_COMPLETED,
+            lambda run: self._machine.complete_recovery(
+                run,
+                command.recovery_id,
+                command.mode,
+                command.evidence_ids,
+                command.fencing_token,
+                command.expected_revision,
                 now,
             ),
         )

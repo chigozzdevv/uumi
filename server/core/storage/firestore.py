@@ -10,6 +10,8 @@ from contracts import (
     PlaybookAssignment,
     PlaybookState,
     PlaybookVersion,
+    PolicyState,
+    PolicyVersion,
     RotationRun,
     RunCommand,
     RunStatus,
@@ -19,6 +21,7 @@ from contracts import (
 from google.cloud.firestore_v1 import AsyncClient
 from google.cloud.firestore_v1.async_transaction import AsyncTransaction, async_transactional
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from policy import GatePolicy, digest
 
 from core.errors import (
     ActiveRunConflictError,
@@ -65,6 +68,9 @@ class FirestoreRunRepository:
                 run.trigger.source,
                 run.trigger.event_id,
             )
+        )
+        policy_ref = self._client.document(
+            FirestorePaths.policy_version(run.organisation_id, run.policy_version)
         )
         request_hash = creation_hash(command)
         dryrun_ref = (
@@ -134,6 +140,17 @@ class FirestoreRunRepository:
                 raise IdempotencyConflictError(
                     f"command {command.id} already belongs to another run"
                 )
+            policy_snapshot = await policy_ref.get(transaction=transaction)
+            if not policy_snapshot.exists or policy_snapshot.to_dict() is None:
+                raise StorageIntegrityError("run policy version is missing")
+            policy = PolicyVersion.model_validate(policy_snapshot.to_dict())
+            if (
+                policy.organisation_id != run.organisation_id
+                or policy.id != run.policy_version
+                or policy.state is not PolicyState.ACTIVE
+                or policy.digest != digest(policy.definition)
+            ):
+                raise StorageIntegrityError("run policy version is not active and immutable")
             if (
                 dryrun_ref is not None
                 and dryrun_version_ref is not None
@@ -314,6 +331,21 @@ class FirestoreRunRepository:
                     raise StorageIntegrityError("dry-run playbook version disappeared")
                 version = PlaybookVersion.model_validate(_required_data(version_snapshot))
 
+            if proof is not None:
+                policy_ref = self._client.document(
+                    FirestorePaths.policy_version(run.organisation_id, run.policy_version)
+                )
+                policy_snapshot = await policy_ref.get(transaction=transaction)
+                if not policy_snapshot.exists or policy_snapshot.to_dict() is None:
+                    raise StorageIntegrityError("run policy version disappeared")
+                policy = PolicyVersion.model_validate(policy_snapshot.to_dict())
+                if policy.state not in {
+                    PolicyState.ACTIVE,
+                    PolicyState.SUPERSEDED,
+                } or policy.digest != digest(policy.definition):
+                    raise StorageIntegrityError("run policy version lost immutable authority")
+                GatePolicy(policy.definition.required_checks).validate(proof)
+
             updated = transition(run)
             validate_transition(run, updated, command.organisation_id)
 
@@ -370,7 +402,7 @@ class FirestoreRunRepository:
                     )
             transaction.set(step_ref, encode(step))
             transaction.set(outbox_ref, encode(event))
-            if updated.status is RunStatus.COMPLETED:
+            if updated.status in {RunStatus.COMPLETED, RunStatus.COMPENSATED}:
                 transaction.delete(lock_ref)
             return MutationResult(run=updated, step=step, applied=True)
 
@@ -451,6 +483,16 @@ def _advance_dryrun(
                 "checks": checks,
                 "evidence_ids": evidence_ids,
                 "failure": None,
+            }
+        )
+    if run.status is RunStatus.COMPENSATED:
+        return current.model_copy(
+            update={
+                "status": DryRunStatus.FAILED,
+                "checks": checks,
+                "evidence_ids": tuple(dict.fromkeys((*evidence_ids, *run.recovery_evidence_ids))),
+                "failure": "rotation changes were compensated after a failed stage",
+                "completed_at": run.updated_at,
             }
         )
     return current.model_copy(

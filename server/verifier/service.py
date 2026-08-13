@@ -16,8 +16,6 @@ from verifier.probes import ProbeExecutor
 
 
 class VerificationRepository(Protocol):
-    async def save_probe(self, definition: ProbeDefinition) -> ProbeDefinition: ...
-
     async def connection(self, organisation_id: str, connection_id: str) -> Connection: ...
 
     async def save_report(self, report: VerificationReport) -> VerificationReport: ...
@@ -52,7 +50,6 @@ class VerificationService:
         started_at = self._clock()
         results: list[ProbeResult] = []
         for definition in definitions:
-            await self._repository.save_probe(definition)
             connection = await self._repository.connection(
                 organisation_id, definition.connection_id
             )

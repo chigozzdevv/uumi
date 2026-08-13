@@ -18,6 +18,10 @@ from contracts import (
     PageCheckpoint,
     PlaybookDraft,
     PlaybookStep,
+    PolicyDefinition,
+    PolicyState,
+    PolicyVersion,
+    RecoveryMode,
     RotationPlan,
     RotationStrategy,
     RunEvent,
@@ -26,6 +30,7 @@ from contracts import (
     SelectorKind,
     Stage,
 )
+from policy import REQUIRED_CHECKS, digest
 from pydantic import ValidationError
 
 NOW = datetime.now(UTC)
@@ -56,7 +61,7 @@ def test_rollout_must_be_ordered_and_complete() -> None:
             consumer_ids=("service_one",),
             rollout=(25, 5, 100),
             observation_seconds=60,
-            recovery_id="recovery_one",
+            recovery_ids={Stage.DEPLOY: "recovery_one"},
         )
 
 
@@ -193,4 +198,34 @@ def test_terminal_dry_run_requires_completion() -> None:
             requested_by="actor_one",
             failure="checkpoint changed",
             started_at=NOW,
+        )
+
+
+def test_active_policy_requires_approval_and_all_stage_checks() -> None:
+    definition = PolicyDefinition(
+        required_checks=REQUIRED_CHECKS,
+        allowed_tools=frozenset({"provider.create", "verification.run"}),
+        allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
+        maximum_observation_seconds=1800,
+    )
+
+    with pytest.raises(ValidationError, match="require approval"):
+        PolicyVersion(
+            id="policy_version_one",
+            organisation_id="org_one",
+            policy_id="policy_one",
+            number=1,
+            definition=definition,
+            digest=digest(definition),
+            state=PolicyState.ACTIVE,
+            created_by="admin_one",
+            created_at=NOW,
+        )
+
+    with pytest.raises(ValidationError, match="at least 12 items"):
+        PolicyDefinition(
+            required_checks={Stage.TRIGGER: REQUIRED_CHECKS[Stage.TRIGGER]},
+            allowed_tools=frozenset({"provider.create", "verification.run"}),
+            allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
+            maximum_observation_seconds=1800,
         )

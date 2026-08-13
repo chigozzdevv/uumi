@@ -5,6 +5,7 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
 from contracts.command import StageBindings
+from contracts.recovery import RecoveryMode
 from contracts.state import Stage
 
 
@@ -12,6 +13,7 @@ class StageExecutionStatus(StrEnum):
     SUCCEEDED = "succeeded"
     PAUSED = "paused"
     FAILED = "failed"
+    RECOVERED = "recovered"
 
 
 class StageExecutionRequest(Contract):
@@ -31,17 +33,23 @@ class StageExecutionResult(Contract):
     checks: frozenset[str] = frozenset()
     evidence_ids: tuple[Identifier, ...] = ()
     bindings: StageBindings = StageBindings()
+    recovery_mode: RecoveryMode | None = None
     output: dict[str, Any] = Field(default_factory=dict)
     reason: str | None = Field(default=None, max_length=1024)
+    retryable: bool = False
     started_at: AwareDatetime
     completed_at: AwareDatetime
 
     @model_validator(mode="after")
     def validate_result(self) -> "StageExecutionResult":
-        if self.status is StageExecutionStatus.SUCCEEDED and (
-            not self.checks or not self.evidence_ids or self.reason is not None
-        ):
-            raise ValueError("successful stage execution requires checks and evidence")
-        if self.status is not StageExecutionStatus.SUCCEEDED and not self.reason:
+        completed = self.status in {
+            StageExecutionStatus.SUCCEEDED,
+            StageExecutionStatus.RECOVERED,
+        }
+        if completed and (not self.checks or not self.evidence_ids or self.reason is not None):
+            raise ValueError("completed stage execution requires checks and evidence")
+        if not completed and not self.reason:
             raise ValueError("paused and failed stage execution requires a reason")
+        if (self.status is StageExecutionStatus.RECOVERED) != (self.recovery_mode is not None):
+            raise ValueError("recovered execution requires exactly one recovery mode")
         return self

@@ -110,6 +110,32 @@ async def bind_playbook(tool_context: ToolContext) -> dict[str, Any]:
     return {**selected, "connections": connections, "dry_run": dry_run}
 
 
+async def diagnose_failed_stage(tool_context: ToolContext) -> dict[str, Any]:
+    """Load the failed run state and the exact precomputed recovery branch."""
+    context = AgentContext(tool_context)
+    run = await context.run()
+    plan_id = _string(run, "plan_id")
+    plan = await context.document(FirestorePaths.plan(context.organisation_id, plan_id))
+    stage = _string(run, "stage")
+    recovery_id = plan.get("recovery_ids", {}).get(stage)
+    if not isinstance(recovery_id, str):
+        raise ValueError("failed stage has no planned recovery branch")
+    recovery = await context.document(FirestorePaths.recovery(context.organisation_id, recovery_id))
+    return {"run": run, "plan": plan, "recovery": recovery}
+
+
+async def recommend_authorised_recovery(tool_context: ToolContext) -> dict[str, Any]:
+    """Return only the recovery branch already bound into the immutable rotation plan."""
+    context = await diagnose_failed_stage(tool_context)
+    recovery = context["recovery"]
+    return {
+        "recovery_id": recovery.get("id"),
+        "mode": recovery.get("mode"),
+        "failed_stage": recovery.get("failed_stage"),
+        "steps": recovery.get("steps", []),
+    }
+
+
 async def build_playbook(definition: dict[str, Any], tool_context: ToolContext) -> dict[str, Any]:
     """Validate a complete provider playbook against FireKey lifecycle invariants."""
     AgentContext(tool_context)

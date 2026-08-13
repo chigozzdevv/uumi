@@ -5,6 +5,7 @@ from pydantic import AwareDatetime, Field
 from contracts.base import Contract, Identifier
 from contracts.evidence import StageProof
 from contracts.playbook import DryRun
+from contracts.recovery import RecoveryMode
 from contracts.run import Failure, Trigger
 
 
@@ -83,3 +84,11 @@ class RecoverRunCommand(RunCommand):
     operation: Literal["recover"] = "recover"
     owner_id: Identifier
     expires_at: AwareDatetime
+
+
+class CompleteRecoveryCommand(RunCommand):
+    operation: Literal["complete-recovery"] = "complete-recovery"
+    fencing_token: int = Field(gt=0)
+    recovery_id: Identifier
+    mode: RecoveryMode
+    evidence_ids: tuple[Identifier, ...] = Field(min_length=1)

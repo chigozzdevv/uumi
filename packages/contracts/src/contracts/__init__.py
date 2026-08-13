@@ -27,6 +27,7 @@ from contracts.browser import (
 )
 from contracts.command import (
     CleanupRunCommand,
+    CompleteRecoveryCommand,
     CompleteStageCommand,
     CreateRunCommand,
     FailRunCommand,
@@ -77,20 +78,29 @@ from contracts.playbook import (
     PlaybookStep,
     PlaybookVersion,
     RecoveryAction,
+    RecoveryBranch,
     SecureField,
     Selector,
     SelectorKind,
     StepOutput,
 )
+from contracts.policy import Policy, PolicyDefinition, PolicyState, PolicyVersion
 from contracts.provider import ConnectorCapabilities, MutationMode, MutationSemantics
-from contracts.recovery import RecoveryMode, RecoveryPlan
+from contracts.recovery import RecoveryMode, RecoveryPlan, RecoveryResult
 from contracts.run import Failure, Lease, RotationRun, RunStep, Trigger
 from contracts.state import GenerationState, RunStatus, Stage
 from contracts.tool import ToolAttempt, ToolAttemptStatus, ToolRequest, ToolResult
 from contracts.verification import (
+    DownstreamConfirmation,
+    GenerationBinding,
+    Probe,
     ProbeDefinition,
     ProbeKind,
     ProbeResult,
+    ProbeState,
+    ProbeVersion,
+    TargetBinding,
+    TelemetryThresholds,
     VerificationReport,
     VerificationStatus,
 )
@@ -124,6 +134,7 @@ __all__ = [
     "BrowserSession",
     "BrowserStatus",
     "CleanupRunCommand",
+    "CompleteRecoveryCommand",
     "CompleteStageCommand",
     "Confidence",
     "Connection",
@@ -136,6 +147,7 @@ __all__ = [
     "CorrelationCandidate",
     "CreateRunCommand",
     "CredentialGeneration",
+    "DownstreamConfirmation",
     "DryRun",
     "DryRunStatus",
     "Environment",
@@ -144,6 +156,7 @@ __all__ = [
     "ExecutionMethod",
     "FailRunCommand",
     "Failure",
+    "GenerationBinding",
     "GenerationState",
     "Identifier",
     "Incident",
@@ -162,14 +175,23 @@ __all__ = [
     "PlaybookState",
     "PlaybookStep",
     "PlaybookVersion",
+    "Policy",
+    "PolicyDefinition",
+    "PolicyState",
+    "PolicyVersion",
+    "Probe",
     "ProbeDefinition",
     "ProbeKind",
     "ProbeResult",
+    "ProbeState",
+    "ProbeVersion",
     "ProtectedAction",
     "RecoverRunCommand",
     "RecoveryAction",
+    "RecoveryBranch",
     "RecoveryMode",
     "RecoveryPlan",
+    "RecoveryResult",
     "RenewLeaseCommand",
     "ReplayCheckpoint",
     "ResumeRunCommand",
@@ -194,6 +216,8 @@ __all__ = [
     "StageProof",
     "StartRunCommand",
     "StepOutput",
+    "TargetBinding",
+    "TelemetryThresholds",
     "TimedText",
     "ToolAttempt",
     "ToolAttemptStatus",

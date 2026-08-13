@@ -94,9 +94,76 @@ main:
             next: pause_run
           - condition: ${execution.body.status == "succeeded"}
             next: complete_stage
+          - condition: ${execution.body.status == "recovered"}
+            next: complete_recovery
           - condition: ${execution.body.status == "failed"}
-            next: fail_stage
+            next: recovery_check
         next: fail_unexpected
+    - recovery_check:
+        switch:
+          - condition: ${current.body.status != "recovering" and current.body.stage in ["create", "store", "deploy", "verify", "rollout", "observe", "revoke"]}
+            next: cleanup_stage
+        next: fail_stage
+    - cleanup_stage:
+        call: http.post
+        args:
+          url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/cleanup"}
+          auth:
+            type: OIDC
+            audience: ${audience}
+          headers:
+            Idempotency-Key: ${execution.body.id + "-cleanup"}
+          body:
+            expected_revision: ${current.body.revision}
+            fencing_token: ${current.body.fencing_token}
+            failure:
+              code: stage-execution-failed
+              message: ${execution.body.reason}
+              retryable: ${execution.body.retryable}
+              evidence_ids: ${execution.body.evidence_ids}
+        result: cleanup
+        retry: ${http.default_retry}
+    - start_recovery:
+        call: http.post
+        args:
+          url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/recover"}
+          auth:
+            type: OIDC
+            audience: ${audience}
+          headers:
+            Idempotency-Key: ${execution.body.id + "-recover"}
+          body:
+            expected_revision: ${cleanup.body.run.revision}
+            expires_at: ${time.format(sys.now() + 1800)}
+        result: recovered
+        retry: ${http.default_retry}
+    - bind_recovery:
+        assign:
+          - current:
+              body: ${recovered.body.run}
+        next: execute_stage
+    - complete_recovery:
+        call: http.post
+        args:
+          url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/recovery-complete"}
+          auth:
+            type: OIDC
+            audience: ${audience}
+          headers:
+            Idempotency-Key: ${execution.body.id + "-complete"}
+          body:
+            expected_revision: ${current.body.revision}
+            fencing_token: ${current.body.fencing_token}
+            recovery_id: ${execution.body.output.recovery_id}
+            mode: ${execution.body.recovery_mode}
+            evidence_ids: ${execution.body.evidence_ids}
+        result: recovery_completed
+        retry: ${http.default_retry}
+    - bind_recovery_completed:
+        assign:
+          - current:
+              body: ${recovery_completed.body.run}
+        next: terminal_check
     - fail_stage:
         call: http.post
         args:
@@ -112,7 +179,7 @@ main:
             failure:
               code: stage-execution-failed
               message: ${execution.body.reason}
-              retryable: false
+              retryable: ${execution.body.retryable}
               evidence_ids: ${execution.body.evidence_ids}
         result: stage_failed
         retry: ${http.default_retry}
@@ -168,6 +235,8 @@ main:
         switch:
           - condition: ${current.body.status == "completed"}
             next: completed
+          - condition: ${current.body.status == "compensated"}
+            next: compensated
           - condition: ${current.body.status in ["running", "recovering"]}
             next: renew_lease
         next: ignored
@@ -198,6 +267,13 @@ main:
           status: completed
           run_id: ${current.body.id}
           revision: ${current.body.revision}
+    - compensated:
+        return:
+          status: compensated
+          run_id: ${current.body.id}
+          failed_stage: ${current.body.recovery_stage}
+          recovery_mode: ${current.body.recovery_mode}
+          evidence_ids: ${current.body.recovery_evidence_ids}
     - ignored:
         return:
           status: ignored

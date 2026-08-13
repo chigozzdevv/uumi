@@ -27,6 +27,8 @@ from api.routes import (
     incidents_router,
     inventory_router,
     playbooks_router,
+    policies_router,
+    probes_router,
     runs_router,
     walkthroughs_router,
 )
@@ -41,6 +43,8 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.include_router(runs_router)
     app.include_router(inventory_router)
     app.include_router(playbooks_router)
+    app.include_router(policies_router)
+    app.include_router(probes_router)
     app.include_router(approvals_router)
     app.include_router(agents_router)
     app.include_router(browsers_router)

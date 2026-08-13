@@ -137,6 +137,11 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/probes/{_segment(probe_id)}"
 
     @staticmethod
+    def probe_version(organisation_id: str, version_id: str) -> str:
+        organisation = FirestorePaths.organisation(organisation_id)
+        return f"{organisation}/probe-versions/{_segment(version_id)}"
+
+    @staticmethod
     def report(organisation_id: str, report_id: str) -> str:
         return f"{FirestorePaths.organisation(organisation_id)}/reports/{_segment(report_id)}"
 
@@ -145,8 +150,22 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/plans/{_segment(plan_id)}"
 
     @staticmethod
+    def policy(organisation_id: str, policy_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/policies/{_segment(policy_id)}"
+
+    @staticmethod
+    def policy_version(organisation_id: str, version_id: str) -> str:
+        organisation = FirestorePaths.organisation(organisation_id)
+        return f"{organisation}/policy-versions/{_segment(version_id)}"
+
+    @staticmethod
     def recovery(organisation_id: str, recovery_id: str) -> str:
         return f"{FirestorePaths.organisation(organisation_id)}/recovery/{_segment(recovery_id)}"
+
+    @staticmethod
+    def recovery_result(organisation_id: str, recovery_id: str, result_id: str) -> str:
+        root = FirestorePaths.recovery(organisation_id, recovery_id)
+        return f"{root}/results/{_segment(result_id)}"
 
     @staticmethod
     def stage(organisation_id: str, execution_id: str) -> str:

@@ -28,15 +28,19 @@ from core.errors import AuthenticationError
 from core.incident import IncidentService
 from core.inventory import InventoryService
 from core.playbook import PlaybookService, WalkthroughService
+from core.policy import PolicyService
 from core.storage import (
     FirestoreApprovalRepository,
     FirestoreCatalog,
     FirestoreIncidentRepository,
     FirestoreInventoryRepository,
     FirestorePlaybookRepository,
+    FirestorePolicyRepository,
+    FirestoreProbeRepository,
     FirestoreRunRepository,
     FirestoreWalkthroughRepository,
 )
+from core.verification import ProbeService
 from core.workflow import RunWorkflow
 from fastapi import Depends, Header, Request
 from google.cloud.firestore_v1 import AsyncClient
@@ -56,6 +60,8 @@ class ApiServices:
     agent_repository: AgentRepository | None = None
     agent_continuity: AgentContinuityService | None = None
     walkthroughs: WalkthroughService | None = None
+    policies: PolicyService | None = None
+    probes: ProbeService | None = None
 
 
 def build_services(settings: Settings | None = None) -> ApiServices:
@@ -118,6 +124,8 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             configured.walkthrough_bucket,
             _now,
         ),
+        policies=PolicyService(FirestorePolicyRepository(client), _now),
+        probes=ProbeService(FirestoreProbeRepository(client), _now),
     )
 
 

@@ -1,6 +1,8 @@
+import asyncio
+import hashlib
 import json
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -43,8 +45,10 @@ class ProbeExecutor:
     ) -> ProbeResult:
         started_at = clock()
         try:
-            if definition.kind in {ProbeKind.HTTP, ProbeKind.EMAIL}:
+            if definition.kind is ProbeKind.HTTP:
                 observations, checks, raw = await self._http_probe(definition)
+            elif definition.kind is ProbeKind.EMAIL:
+                observations, checks, raw = await self._email_probe(definition)
             elif definition.kind is ProbeKind.SECRET:
                 observations, checks, raw = await self._secret_probe(definition)
             elif definition.kind in {ProbeKind.RUNTIME, ProbeKind.GENERATION}:
@@ -109,6 +113,7 @@ class ProbeExecutor:
             definition.method,
             definition.target,
             headers=definition.headers,
+            content=await self._body(definition),
             timeout=definition.timeout_seconds,
         )
         if response.status_code not in definition.expected_status:
@@ -159,6 +164,96 @@ class ProbeExecutor:
             "generation_id": observed_generation,
         }
         return observations, checks, _json(record)
+
+    async def _email_probe(
+        self, definition: ProbeDefinition
+    ) -> tuple[dict[str, str | int | float | bool | None], set[str], bytes]:
+        confirmation = definition.confirmation
+        if confirmation is None:
+            raise ConnectorError(
+                "verification-email-confirmation",
+                "email probe has no downstream confirmation contract",
+            )
+        response = await self._http.request(
+            definition.method,
+            definition.target,
+            headers=definition.headers,
+            content=await self._body(definition),
+            timeout=definition.timeout_seconds,
+        )
+        if response.status_code not in definition.expected_status:
+            raise ConnectorError(
+                "verification-email-submit",
+                f"email action returned HTTP {response.status_code}",
+            )
+        try:
+            submitted = response.json()
+        except ValueError as error:
+            raise ConnectorError(
+                "verification-email-receipt", "email action returned no JSON receipt"
+            ) from error
+        correlation = _field(submitted, confirmation.correlation_field)
+        if not isinstance(correlation, str) or not correlation:
+            raise ConnectorError(
+                "verification-email-receipt", "email action returned no correlation ID"
+            )
+        deadline = datetime.now(UTC) + timedelta(seconds=definition.timeout_seconds)
+        confirmed: dict[str, Any] | None = None
+        observed_status = 0
+        while datetime.now(UTC) < deadline:
+            target = confirmation.target.replace("{correlation_id}", correlation)
+            found = await self._http.request(
+                confirmation.method,
+                target,
+                headers=confirmation.headers,
+                timeout=min(definition.timeout_seconds, 30),
+            )
+            observed_status = found.status_code
+            if found.status_code in confirmation.expected_status:
+                try:
+                    value = found.json()
+                except ValueError:
+                    value = None
+                if isinstance(value, dict) and all(
+                    _field(value, path) == expected
+                    for path, expected in confirmation.required_fields.items()
+                ):
+                    confirmed = value
+                    break
+            await asyncio.sleep(confirmation.interval_seconds)
+        if confirmed is None:
+            raise ConnectorError(
+                "verification-email-downstream",
+                "controlled inbox did not confirm the expected business email",
+            )
+        generation = response.headers.get("x-firekey-generation-id")
+        if generation is None:
+            value = submitted.get("generation_id")
+            generation = value if isinstance(value, str) else None
+        if (
+            definition.expected_generation_id is not None
+            and generation != definition.expected_generation_id
+        ):
+            raise ConnectorError(
+                "verification-generation-mismatch",
+                "email action did not identify the expected credential generation",
+            )
+        record = {
+            "submit_status": response.status_code,
+            "confirmation_status": observed_status,
+            "correlation_digest": hashlib.sha256(correlation.encode()).hexdigest(),
+            "confirmation_digest": hashlib.sha256(_json(confirmed)).hexdigest(),
+        }
+        observations: dict[str, str | int | float | bool | None] = {
+            "http_status": response.status_code,
+            "generation_id": generation,
+            "downstream_confirmed": True,
+        }
+        return (
+            observations,
+            {"email-action-completed", "downstream-result-confirmed", "generation-identified"},
+            _json(record),
+        )
 
     async def _secret_probe(
         self, definition: ProbeDefinition
@@ -225,18 +320,39 @@ class ProbeExecutor:
             "generation_id": expected,
             "latest_ready_revision": _text(result.get("latest_ready_revision")),
         }
-        return observations, {"runtime-ready", "runtime-binding-inspected"}, _json(result)
+        checks = {"runtime-ready", "runtime-binding-inspected"}
+        if expected is not None:
+            checks.add("generation-identified")
+        return observations, checks, _json(result)
 
     async def _telemetry_probe(
         self, definition: ProbeDefinition
     ) -> tuple[dict[str, str | int | float | bool | None], set[str], bytes]:
         project = _project(definition.target)
+        thresholds = definition.telemetry
+        if thresholds is None:
+            raise ConnectorError(
+                "verification-telemetry-thresholds", "telemetry thresholds are missing"
+            )
+        expected = definition.expected_generation_id
+        if expected is None:
+            raise ConnectorError(
+                "verification-telemetry-generation", "telemetry probe has no generation binding"
+            )
+        since = datetime.now(UTC) - timedelta(seconds=thresholds.window_seconds)
+        generation_filter = (
+            'jsonPayload."firekey.credential_generation"="' + expected.replace('"', '\\"') + '"'
+        )
+        declared_filter = definition.headers.get("x-firekey-log-filter", "")
+        base_filter = (
+            f'({declared_filter}) AND {generation_filter} AND timestamp>="{since.isoformat()}"'
+        )
         response = await self._google.request(
             "POST",
             "https://logging.googleapis.com/v2/entries:list",
             json={
                 "resourceNames": [f"projects/{project}"],
-                "filter": definition.headers.get("x-firekey-log-filter", ""),
+                "filter": base_filter,
                 "orderBy": "timestamp desc",
                 "pageSize": 100,
             },
@@ -246,15 +362,54 @@ class ProbeExecutor:
             raise ConnectorError(
                 "verification-telemetry-response", "Logging returned invalid entries"
             )
-        expected_count = definition.required_fields.get("minimum_count", 1)
-        if not isinstance(expected_count, int) or len(entries) < expected_count:
+        if len(entries) < thresholds.minimum_count:
             raise ConnectorError("verification-telemetry-count", "insufficient matching telemetry")
+        error_count = 0
+        auth_failure_count = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            severity = str(entry.get("severity", "")).upper()
+            payload = entry.get("jsonPayload")
+            if severity in {"ERROR", "CRITICAL", "ALERT", "EMERGENCY"}:
+                error_count += 1
+            if isinstance(payload, dict) and payload.get("authentication_failure") is True:
+                auth_failure_count += 1
+        if error_count > thresholds.maximum_error_count:
+            raise ConnectorError("verification-telemetry-errors", "error threshold exceeded")
+        if auth_failure_count > thresholds.maximum_auth_failure_count:
+            raise ConnectorError(
+                "verification-telemetry-auth", "authentication failure threshold exceeded"
+            )
         record = {
             "entry_count": len(entries),
             "insert_ids": [entry.get("insertId") for entry in entries if isinstance(entry, dict)],
+            "generation_id": expected,
+            "error_count": error_count,
+            "auth_failure_count": auth_failure_count,
+            "window_seconds": thresholds.window_seconds,
         }
-        observations: dict[str, str | int | float | bool | None] = {"telemetry_count": len(entries)}
-        return observations, {"telemetry-query-executed", "telemetry-threshold-met"}, _json(record)
+        observations: dict[str, str | int | float | bool | None] = {
+            "telemetry_count": len(entries),
+            "generation_id": expected,
+            "error_count": error_count,
+            "authentication_failure_count": auth_failure_count,
+        }
+        return (
+            observations,
+            {
+                "telemetry-query-executed",
+                "telemetry-generation-bound",
+                "telemetry-threshold-met",
+            },
+            _json(record),
+        )
+
+    async def _body(self, definition: ProbeDefinition) -> bytes | None:
+        if definition.body_reference is None:
+            return None
+        with await SecretManagerConnector(self._google).access(definition.body_reference) as value:
+            return bytes(value.bytes())
 
     async def _provider_probe(
         self,

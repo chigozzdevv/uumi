@@ -65,6 +65,18 @@ class RecoveryAction(Contract):
     protected: bool = False
 
 
+class RecoveryBranch(Contract):
+    mode: str = Field(pattern=r"^(retry|rollback|rollforward|cleanup|escalate)$")
+    actions: tuple[RecoveryAction, ...] = Field(min_length=1)
+    preserves_old_generation: bool
+
+    @model_validator(mode="after")
+    def validate_retry(self) -> "RecoveryBranch":
+        if self.mode == "retry" and any(item.protected for item in self.actions):
+            raise ValueError("retry recovery cannot introduce protected mutations")
+        return self
+
+
 class PlaybookStep(Contract):
     id: Identifier
     stage: Stage
@@ -102,7 +114,7 @@ class PlaybookDraft(Contract):
     allowed_tools: frozenset[str] = Field(min_length=1)
     required_connections: tuple[Identifier, ...] = Field(min_length=1)
     steps: tuple[PlaybookStep, ...] = Field(min_length=1)
-    recovery: dict[str, tuple[RecoveryAction, ...]] = Field(default_factory=dict)
+    recovery: dict[str, RecoveryBranch] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_execution(self) -> "PlaybookDraft":

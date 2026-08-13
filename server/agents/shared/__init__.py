@@ -5,9 +5,11 @@ from agents.shared.tools import (
     correlate_exposure,
     detect_interface_drift,
     detect_stale_mapping,
+    diagnose_failed_stage,
     execute_console_playbook,
     generate_dry_run,
     plan_rotation,
+    recommend_authorised_recovery,
     resolve_consumers,
     select_strategy,
 )
@@ -19,9 +21,11 @@ __all__ = [
     "correlate_exposure",
     "detect_interface_drift",
     "detect_stale_mapping",
+    "diagnose_failed_stage",
     "execute_console_playbook",
     "generate_dry_run",
     "plan_rotation",
+    "recommend_authorised_recovery",
     "resolve_consumers",
     "select_strategy",
 ]

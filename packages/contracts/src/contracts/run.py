@@ -2,6 +2,7 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
 from contracts.evidence import StageProof
+from contracts.recovery import RecoveryMode
 from contracts.state import RunStatus, Stage
 
 
@@ -61,6 +62,11 @@ class RotationRun(Contract):
     current_generation_id: Identifier | None = None
     target_generation_id: Identifier | None = None
     failure: Failure | None = None
+    recovery_id: Identifier | None = None
+    recovery_stage: Stage | None = None
+    recovery_mode: RecoveryMode | None = None
+    recovery_failure: Failure | None = None
+    recovery_evidence_ids: tuple[Identifier, ...] = ()
     created_at: AwareDatetime
     updated_at: AwareDatetime
     revision: int = Field(default=0, ge=0)
@@ -78,4 +84,13 @@ class RotationRun(Contract):
             raise ValueError("failed and cleanup-required runs require failure details")
         if self.status not in problem_states and self.failure is not None:
             raise ValueError("failure details require a failed or cleanup-required run")
+        recovery_bound = self.status in {RunStatus.RECOVERING, RunStatus.COMPENSATED}
+        if recovery_bound != (self.recovery_stage is not None):
+            raise ValueError("recovery states require the failed stage binding")
+        if self.status is RunStatus.COMPENSATED and (
+            self.recovery_stage is None
+            or self.recovery_mode is None
+            or not self.recovery_evidence_ids
+        ):
+            raise ValueError("compensated runs require a complete recovery outcome")
         return self

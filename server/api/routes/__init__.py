@@ -5,6 +5,8 @@ from api.routes.health import router as health_router
 from api.routes.incidents import router as incidents_router
 from api.routes.inventory import router as inventory_router
 from api.routes.playbooks import router as playbooks_router
+from api.routes.policies import router as policies_router
+from api.routes.probes import router as probes_router
 from api.routes.runs import router as runs_router
 from api.routes.walkthroughs import router as walkthroughs_router
 
@@ -16,6 +18,8 @@ __all__ = [
     "incidents_router",
     "inventory_router",
     "playbooks_router",
+    "policies_router",
+    "probes_router",
     "runs_router",
     "walkthroughs_router",
 ]

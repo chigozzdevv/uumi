@@ -28,7 +28,15 @@ def registration() -> AgentRegistration:
         kind=AgentKind.PLANNER,
         display_name="Planner",
         version="1.0.0",
-        skills=frozenset({"plan_rotation", "select_strategy", "bind_playbook"}),
+        skills=frozenset(
+            {
+                "plan_rotation",
+                "select_strategy",
+                "bind_playbook",
+                "diagnose_failed_stage",
+                "recommend_authorised_recovery",
+            }
+        ),
         owner="FireKey",
         identity="planner@example.iam.gserviceaccount.com",
         endpoint="https://us-central1-aiplatform.googleapis.com",

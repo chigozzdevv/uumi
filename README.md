@@ -11,6 +11,11 @@ outbox publisher, MCP broker, stage coordinator, isolated browser worker, and IA
 gateway. Google Cloud Workflows owns the twelve-stage run loop; Firestore owns immutable
 versions, leases, fencing tokens, approvals, sessions, and the transactional state record.
 
+Every run is bound to an approved immutable policy version defining required checks, allowed and
+protected tools, observation limits, recovery modes, and generation-proof requirements. A failed
+planned stage enters a newly fenced recovery execution. Only its precomputed playbook branch may
+run, and successful compensation ends as `compensated`, never as a completed credential rotation.
+
 - `packages/contracts` contains canonical immutable models shared by every component.
 - `packages/policy` contains deterministic stage, evidence, and approval gates.
 - `packages/telemetry` contains secret-safe generation telemetry.
@@ -25,6 +30,9 @@ versions, leases, fencing tokens, approvals, sessions, and the transactional sta
   secret-store credentials.
 - `server/coordinator` executes exact immutable playbook steps and independently verifies each
   stage before Workflows can advance it.
+- `server/verifier` executes approved immutable probe versions, binds provider and secret targets
+  to the run generation, confirms real downstream effects, and evaluates generation-scoped
+  telemetry windows and error thresholds.
 - `server/browser` contains the one-run VM manager, Gemini Computer Use worker, Playwright
   validation, live view, takeover gateway, and sanitised replay recorder.
 - `server/capture` performs declared-field transfer directly into Secret Manager while model

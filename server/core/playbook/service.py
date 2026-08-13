@@ -261,7 +261,15 @@ def validate_definition(definition: PlaybookDraft) -> None:
     if undeclared:
         names = ", ".join(sorted(undeclared))
         raise PlaybookError(f"playbook uses undeclared tools: {names}")
-    required = {Stage.CREATE, Stage.STORE, Stage.DEPLOY, Stage.VERIFY, Stage.REVOKE}
+    required = {
+        Stage.CREATE,
+        Stage.STORE,
+        Stage.DEPLOY,
+        Stage.VERIFY,
+        Stage.ROLLOUT,
+        Stage.OBSERVE,
+        Stage.REVOKE,
+    }
     missing = required.difference(step.stage for step in definition.steps)
     if missing:
         names = ", ".join(sorted(stage.value for stage in missing))
@@ -269,8 +277,25 @@ def validate_definition(definition: PlaybookDraft) -> None:
     revoke = tuple(step for step in definition.steps if step.stage is Stage.REVOKE)
     if not revoke or not all(step.protected for step in revoke):
         raise PlaybookError("every revocation step must be protected")
-    if not definition.recovery:
-        raise PlaybookError("playbook requires explicit recovery branches")
+    recoverable = {
+        Stage.CREATE,
+        Stage.STORE,
+        Stage.DEPLOY,
+        Stage.VERIFY,
+        Stage.ROLLOUT,
+        Stage.OBSERVE,
+        Stage.REVOKE,
+    }
+    invalid_recovery = set(definition.recovery).difference(stage.value for stage in Stage)
+    missing_recovery = recoverable.difference(
+        Stage(name) for name in definition.recovery if name in {stage.value for stage in Stage}
+    )
+    if invalid_recovery:
+        names = ", ".join(sorted(invalid_recovery))
+        raise PlaybookError(f"playbook has invalid recovery stages: {names}")
+    if missing_recovery:
+        names = ", ".join(sorted(stage.value for stage in missing_recovery))
+        raise PlaybookError(f"playbook is missing recovery branches: {names}")
     if definition.execution is ExecutionMethod.COMPUTER:
         create = tuple(step for step in definition.steps if step.stage is Stage.CREATE)
         if not any(step.protected for step in create):

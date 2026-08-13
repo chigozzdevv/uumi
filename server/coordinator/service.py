@@ -29,12 +29,16 @@ from contracts import (
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
+    PolicyState,
+    PolicyVersion,
     ProbeDefinition,
     ProbeKind,
+    ProbeState,
+    ProbeVersion,
     ProtectedAction,
-    RecoveryAction,
     RecoveryMode,
     RecoveryPlan,
+    RecoveryResult,
     RotationPlan,
     RotationRun,
     RotationStrategy,
@@ -62,6 +66,12 @@ from coordinator.broker import McpBrokerClient
 from coordinator.browser import BrowserPauseError, BrowserStepExecutor
 
 
+class StageExecutionError(ValueError):
+    def __init__(self, message: str, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
 class StageCoordinator:
     def __init__(
         self,
@@ -86,7 +96,7 @@ class StageCoordinator:
         self._evidence = evidence
         self._audit = audit
         self._clock = clock
-        self._policy = GatePolicy()
+        self._policies: dict[tuple[str, str], tuple[PolicyVersion, GatePolicy]] = {}
 
     async def execute(self, request: StageExecutionRequest) -> StageExecutionResult:
         started = self._clock()
@@ -106,7 +116,13 @@ class StageCoordinator:
         )
         self._validate_request(request, run)
         try:
-            checks, evidence_ids, bindings, output = await self._dispatch(run)
+            _, policy = await self._policy(run)
+            recovering = run.status is RunStatus.RECOVERING
+            recovery_mode = None
+            if recovering:
+                checks, evidence_ids, bindings, output, recovery_mode = await self._recover(run)
+            else:
+                checks, evidence_ids, bindings, output = await self._dispatch(run)
             proof_evidence = await self._stage_evidence(run, checks, output)
             all_evidence = tuple(dict.fromkeys((*evidence_ids, *proof_evidence)))
             result = StageExecutionResult(
@@ -114,25 +130,29 @@ class StageCoordinator:
                 organisation_id=run.organisation_id,
                 run_id=run.id,
                 stage=run.stage,
-                status=StageExecutionStatus.SUCCEEDED,
+                status=(
+                    StageExecutionStatus.RECOVERED if recovering else StageExecutionStatus.SUCCEEDED
+                ),
                 checks=checks,
                 evidence_ids=all_evidence,
                 bindings=bindings,
+                recovery_mode=recovery_mode,
                 output=output,
                 started_at=started,
                 completed_at=self._clock(),
             )
-            self._policy.validate(
-                StageProof(
-                    run_id=run.id,
-                    organisation_id=run.organisation_id,
-                    stage=run.stage,
-                    checks=result.checks,
-                    evidence_ids=result.evidence_ids,
-                    actor_id="coordinator_one",
-                    recorded_at=result.completed_at,
+            if not recovering:
+                policy.validate(
+                    StageProof(
+                        run_id=run.id,
+                        organisation_id=run.organisation_id,
+                        stage=run.stage,
+                        checks=result.checks,
+                        evidence_ids=result.evidence_ids,
+                        actor_id="coordinator_one",
+                        recorded_at=result.completed_at,
+                    )
                 )
-            )
         except BrowserPauseError as pause:
             result = StageExecutionResult(
                 id=execution_id,
@@ -142,6 +162,21 @@ class StageCoordinator:
                 status=StageExecutionStatus.PAUSED,
                 output=pause.output,
                 reason=str(pause),
+                started_at=started,
+                completed_at=self._clock(),
+            )
+        except Exception as error:
+            reason = f"{type(error).__name__}: {error}".replace("\n", " ")[:1024]
+            evidence_ids = await self._failure_evidence(run, reason)
+            result = StageExecutionResult(
+                id=execution_id,
+                organisation_id=run.organisation_id,
+                run_id=run.id,
+                stage=run.stage,
+                status=StageExecutionStatus.FAILED,
+                evidence_ids=evidence_ids,
+                reason=reason,
+                retryable=isinstance(error, StageExecutionError) and error.retryable,
                 started_at=started,
                 completed_at=self._clock(),
             )
@@ -162,6 +197,144 @@ class StageCoordinator:
         )
         await self._catalog.create(path, result)
         return result
+
+    async def _recover(
+        self, run: RotationRun
+    ) -> tuple[
+        frozenset[str],
+        tuple[str, ...],
+        StageBindings,
+        dict[str, Any],
+        RecoveryMode,
+    ]:
+        if run.plan_id is None or run.recovery_stage is not run.stage:
+            raise ValueError("recovery is not bound to a planned failed stage")
+        plan = await self._catalog.get(
+            FirestorePaths.plan(run.organisation_id, run.plan_id), RotationPlan
+        )
+        recovery_id = plan.recovery_ids.get(run.stage)
+        if recovery_id is None:
+            raise ValueError(f"rotation plan has no recovery branch for {run.stage.value}")
+        recovery = await self._catalog.get(
+            FirestorePaths.recovery(run.organisation_id, recovery_id), RecoveryPlan
+        )
+        if (
+            recovery.run_id != run.id
+            or recovery.failed_stage is not run.stage
+            or (recovery.preserves_old_generation and run.current_generation_id is None)
+        ):
+            raise ValueError("recovery plan binding is invalid")
+        policy_version, _ = await self._policy(run)
+        if recovery.mode not in policy_version.definition.allowed_recovery_modes:
+            raise ValueError("recovery mode is forbidden by the bound policy")
+        recommendation = await self._agents.execute(
+            AgentTask(
+                id=_id("task", run.id, run.stage.value, "recovery"),
+                organisation_id=run.organisation_id,
+                run_id=run.id,
+                agent=AgentKind.PLANNER,
+                skill="recommend_authorised_recovery",
+                objective=(
+                    "Evaluate only the pre-authorised recovery branch and confirm whether its "
+                    "declared actions remain eligible. Do not propose new tools or mutations."
+                ),
+                context={
+                    "recovery_id": recovery.id,
+                    "failed_stage": recovery.failed_stage.value,
+                    "mode": recovery.mode.value,
+                    "actions": [
+                        {"tool": item.tool, "operation": item.operation} for item in recovery.steps
+                    ],
+                },
+                requested_at=self._clock(),
+            )
+        )
+        if not recommendation.succeeded:
+            raise ValueError("recovery agent could not evaluate the authorised branch")
+        if (
+            recommendation.output.get("decision") != "recovery"
+            or recommendation.output.get("recovery_id") != recovery.id
+            or recommendation.output.get("recovery_mode") != recovery.mode.value
+            or recommendation.output.get("eligible") is not True
+        ):
+            raise ValueError("recovery agent changed or rejected the authorised branch")
+        context = await self._step_context(run)
+        outputs: list[dict[str, Any]] = []
+        evidence: list[str] = list(recommendation.evidence_ids)
+        for index, action in enumerate(recovery.steps):
+            if action.tool not in policy_version.definition.allowed_tools:
+                raise ValueError(f"recovery tool {action.tool} is forbidden by policy")
+            if action.tool in policy_version.definition.protected_tools and not action.protected:
+                raise ValueError(f"policy requires protected recovery for {action.tool}")
+            payload = _resolve(action.parameters, context)
+            if not isinstance(payload, dict):
+                raise ValueError("recovery action parameters are invalid")
+            connection_id = payload.pop("connection_id", None)
+            if not isinstance(connection_id, str):
+                raise ValueError(f"recovery action {action.tool} has no connection_id")
+            approval = None
+            if action.protected:
+                step = PlaybookStep(
+                    id=_id("recovery-step", recovery.id, str(index)),
+                    stage=run.stage,
+                    tool=action.tool,
+                    operation=action.operation,
+                    objective=f"Execute authorised {recovery.mode.value} recovery",
+                    parameters=payload,
+                    protected=True,
+                    evidence_checks=frozenset({"recovery-authorised"}),
+                )
+                approval = await self._approval_for_step(run, step, payload)
+            result = await self._broker.execute(
+                run,
+                _id("recovery-tool", recovery.id, str(index)),
+                connection_id,
+                action.tool,
+                payload,
+                approval.id if approval is not None else None,
+            )
+            if not result.succeeded:
+                raise ValueError(
+                    f"recovery tool {action.tool} failed: {result.error_code or 'unknown'}"
+                )
+            outputs.append(result.result)
+            evidence.extend(result.evidence_ids)
+        checks = frozenset(
+            {
+                "recovery-plan-bound",
+                "recovery-agent-approved",
+                "recovery-actions-completed",
+                "recovery-evidence-recorded",
+            }
+        )
+        result_id = _id("recovery-result", run.id, str(run.revision))
+        stored = RecoveryResult(
+            id=result_id,
+            organisation_id=run.organisation_id,
+            run_id=run.id,
+            recovery_id=recovery.id,
+            failed_stage=run.stage,
+            mode=recovery.mode,
+            checks=checks,
+            evidence_ids=tuple(dict.fromkeys(evidence)),
+        )
+        if not stored.evidence_ids:
+            raise ValueError("recovery actions returned no independently stored evidence")
+        await self._create_once(
+            FirestorePaths.recovery_result(run.organisation_id, recovery.id, stored.id), stored
+        )
+        return (
+            checks,
+            stored.evidence_ids,
+            StageBindings(),
+            {
+                "recovery_id": recovery.id,
+                "mode": recovery.mode.value,
+                "actions": outputs,
+                "recommendation": recommendation.output,
+            },
+            recovery.mode,
+        )
 
     def _validate_request(self, request: StageExecutionRequest, run: RotationRun) -> None:
         if run.revision != request.expected_revision or run.stage is not request.stage:
@@ -295,7 +468,7 @@ class StageCoordinator:
             "agent": agent.output,
         }
         return (
-            self._policy.checks(Stage.PREFLIGHT),
+            self._checks(run, Stage.PREFLIGHT),
             agent.evidence_ids,
             StageBindings(
                 playbook_version=version.id,
@@ -322,6 +495,8 @@ class StageCoordinator:
         agent = await self._agents.execute(task)
         if not agent.succeeded:
             raise ValueError("rotation planner agent failed")
+        if agent.output.get("decision") != "plan":
+            raise ValueError("rotation planner did not return a plan decision")
         strategy_value = agent.output.get("strategy")
         if not isinstance(strategy_value, str):
             raise ValueError("rotation planner returned no valid strategy")
@@ -331,24 +506,25 @@ class StageCoordinator:
             raise ValueError("rotation planner returned no valid strategy") from error
         if strategy is RotationStrategy.IMMEDIATE and len(credential.consumer_ids) > 1:
             raise ValueError("immediate rotation is invalid for multiple consumers")
-        recovery = RecoveryPlan(
-            id=_id("recovery", run.id, version.id),
-            organisation_id=run.organisation_id,
-            run_id=run.id,
-            failed_stage=Stage.DEPLOY,
-            mode=RecoveryMode.ROLLBACK,
-            steps=version.definition.recovery.get(
-                "deploy",
-                (
-                    RecoveryAction(
-                        tool="runtime.rollback",
-                        operation="rollback",
-                    ),
-                ),
-            ),
-            preserves_old_generation=True,
-            requires_approval=False,
-        )
+        recovery_ids: dict[Stage, str] = {}
+        recoveries: list[RecoveryPlan] = []
+        for stage_name, branch in version.definition.recovery.items():
+            try:
+                failed_stage = Stage(stage_name)
+            except ValueError as error:
+                raise ValueError(f"playbook recovery stage {stage_name} is invalid") from error
+            recovery = RecoveryPlan(
+                id=_id("recovery", run.id, version.id, failed_stage.value),
+                organisation_id=run.organisation_id,
+                run_id=run.id,
+                failed_stage=failed_stage,
+                mode=RecoveryMode(branch.mode),
+                steps=branch.actions,
+                preserves_old_generation=branch.preserves_old_generation,
+                requires_approval=any(item.protected for item in branch.actions),
+            )
+            recovery_ids[failed_stage] = recovery.id
+            recoveries.append(recovery)
         plan = RotationPlan(
             id=_id("plan", run.id, version.id),
             organisation_id=run.organisation_id,
@@ -360,13 +536,25 @@ class StageCoordinator:
             target_scopes=credential.scopes,
             consumer_ids=credential.consumer_ids,
             observation_seconds=_integer(agent.output.get("observation_seconds"), 300),
-            recovery_id=recovery.id,
+            recovery_ids=recovery_ids,
         )
-        await self._create_once(FirestorePaths.recovery(run.organisation_id, recovery.id), recovery)
+        policy_version, _ = await self._policy(run)
+        if plan.observation_seconds > policy_version.definition.maximum_observation_seconds:
+            raise ValueError("planned observation exceeds the bound policy maximum")
+        if policy_version.definition.preserve_old_generation and any(
+            not item.preserves_old_generation
+            for item in recoveries
+            if item.failed_stage is not Stage.REVOKE
+        ):
+            raise ValueError("playbook recovery violates old-generation preservation policy")
+        for recovery in recoveries:
+            await self._create_once(
+                FirestorePaths.recovery(run.organisation_id, recovery.id), recovery
+            )
         await self._create_once(FirestorePaths.plan(run.organisation_id, plan.id), plan)
         checksum = digest(plan)
         return (
-            self._policy.checks(Stage.PLAYBOOK),
+            self._checks(run, Stage.PLAYBOOK),
             agent.evidence_ids,
             StageBindings(plan_id=plan.id, plan_hash=checksum),
             {"plan": plan.model_dump(mode="json"), "plan_hash": checksum},
@@ -398,7 +586,7 @@ class StageCoordinator:
         )
         await self._generations.create(generation)
         return (
-            self._policy.checks(Stage.CREATE),
+            self._checks(run, Stage.CREATE),
             evidence,
             StageBindings(target_generation_id=generation.id),
             {"generation": generation.model_dump(mode="json")},
@@ -425,7 +613,7 @@ class StageCoordinator:
             tuple(item.id for item in bindings),
         )
         return (
-            self._policy.checks(Stage.STORE),
+            self._checks(run, Stage.STORE),
             evidence,
             StageBindings(),
             {
@@ -447,7 +635,7 @@ class StageCoordinator:
             raise ValueError("deployment returned no candidate or rollback revision")
         if _find_optional(flat, "generation_id") != run.target_generation_id:
             raise ValueError("runtime candidate does not carry the target generation")
-        return self._policy.checks(Stage.DEPLOY), evidence, StageBindings(), {"steps": outputs}
+        return self._checks(run, Stage.DEPLOY), evidence, StageBindings(), {"steps": outputs}
 
     async def _verify(
         self, run: RotationRun
@@ -464,7 +652,7 @@ class StageCoordinator:
             tuple(item.id for item in bindings),
         )
         return (
-            self._policy.checks(Stage.VERIFY),
+            self._checks(run, Stage.VERIFY),
             report.evidence_ids,
             StageBindings(),
             {"report": report.model_dump(mode="json")},
@@ -487,7 +675,7 @@ class StageCoordinator:
             tuple(item.id for item in bindings),
         )
         return (
-            self._policy.checks(Stage.ROLLOUT),
+            self._checks(run, Stage.ROLLOUT),
             tuple(dict.fromkeys((*evidence, *report.evidence_ids))),
             StageBindings(),
             {"steps": outputs, "active_generation": run.target_generation_id},
@@ -500,7 +688,7 @@ class StageCoordinator:
         if report.status is not VerificationStatus.PASSED:
             raise ValueError("observation probes failed")
         return (
-            self._policy.checks(Stage.OBSERVE),
+            self._checks(run, Stage.OBSERVE),
             report.evidence_ids,
             StageBindings(),
             {"report": report.model_dump(mode="json")},
@@ -525,7 +713,7 @@ class StageCoordinator:
         if not approvals:
             raise ValueError("revocation has no protected action approval")
         return (
-            self._policy.checks(Stage.APPROVAL),
+            self._checks(run, Stage.APPROVAL),
             (),
             StageBindings(),
             {
@@ -551,7 +739,7 @@ class StageCoordinator:
         )
         await self._incidents.advance_run(run.organisation_id, run.id, IncidentStatus.CONTAINED)
         return (
-            self._policy.checks(Stage.REVOKE),
+            self._checks(run, Stage.REVOKE),
             tuple(dict.fromkeys((*evidence, *report.evidence_ids))),
             StageBindings(),
             {"steps": outputs, "report": report.model_dump(mode="json")},
@@ -576,7 +764,7 @@ class StageCoordinator:
         report = await self._latest_report(run, run.current_generation_id)
         await self._incidents.advance_run(run.organisation_id, run.id, IncidentStatus.RESOLVED)
         return (
-            self._policy.checks(Stage.COMPLETE),
+            self._checks(run, Stage.COMPLETE),
             tuple(dict.fromkeys((*report.evidence_ids, audit_evidence))),
             StageBindings(),
             {"active_generation": credential.active_generation_id, "audit_valid": True},
@@ -593,9 +781,14 @@ class StageCoordinator:
         if not steps:
             raise ValueError(f"playbook has no {stage.value} execution step")
         context = await self._step_context(run)
+        policy_version, _ = await self._policy(run)
         outputs = []
         evidence: list[str] = []
         for step in steps:
+            if step.tool not in policy_version.definition.allowed_tools:
+                raise ValueError(f"playbook tool {step.tool} is forbidden by policy")
+            if step.tool in policy_version.definition.protected_tools and not step.protected:
+                raise ValueError(f"policy requires protected execution for {step.tool}")
             if step.tool == "verification.run":
                 continue
             payload = _resolve(step.parameters, context)
@@ -628,7 +821,10 @@ class StageCoordinator:
                 approval.id if approval is not None else None,
             )
             if not result.succeeded:
-                raise ValueError(f"playbook tool {step.tool} failed: {result.error_code}")
+                raise StageExecutionError(
+                    f"playbook tool {step.tool} failed: {result.error_code}",
+                    retryable=result.result.get("retryable") is True,
+                )
             outputs.append(result.result)
             evidence.extend(result.evidence_ids)
         return outputs, tuple(dict.fromkeys(evidence))
@@ -845,12 +1041,35 @@ class StageCoordinator:
             raise ValueError(f"stage {run.stage.value} declares no deterministic probes")
         resolved = []
         for item in ids:
-            resolved.append(
-                await self._catalog.get(
-                    FirestorePaths.probe(run.organisation_id, item), ProbeDefinition
-                )
+            probe_version = await self._catalog.get(
+                FirestorePaths.probe_version(run.organisation_id, item), ProbeVersion
             )
+            if probe_version.state not in {
+                ProbeState.ACTIVE,
+                ProbeState.SUPERSEDED,
+            } or probe_version.digest != digest(probe_version.definition):
+                raise ValueError(f"probe version {item} is not immutable and authorised")
+            resolved.append(await self._bind_probe(run, probe_version.definition, negative))
         values = tuple(resolved)
+        if run.stage is Stage.VERIFY:
+            bound_kinds = {
+                ProbeKind.PROVIDER,
+                ProbeKind.SECRET,
+                ProbeKind.RUNTIME,
+                ProbeKind.HTTP,
+                ProbeKind.EMAIL,
+                ProbeKind.TELEMETRY,
+                ProbeKind.GENERATION,
+            }
+            unbound = [
+                item.id
+                for item in values
+                if item.kind in bound_kinds and item.expected_generation_id is None
+            ]
+            if unbound:
+                raise ValueError(
+                    "verification probes are not generation-bound: " + ", ".join(unbound)
+                )
         expected_negative = {ProbeKind.PROVIDER, ProbeKind.SECRET} if negative else set()
         if negative and not expected_negative.issubset(
             {item.kind for item in values if item.negative}
@@ -863,10 +1082,11 @@ class StageCoordinator:
                 ProbeKind.PROVIDER,
                 ProbeKind.SECRET,
                 ProbeKind.RUNTIME,
-                ProbeKind.HTTP,
                 ProbeKind.TELEMETRY,
             }
-            if not required.issubset({item.kind for item in values}):
+            kinds = {item.kind for item in values}
+            functional = ProbeKind.HTTP in kinds or ProbeKind.EMAIL in kinds
+            if not required.issubset(kinds) or not functional:
                 raise ValueError("verification probe coverage is incomplete")
         return values
 
@@ -879,9 +1099,46 @@ class StageCoordinator:
         if not ids:
             raise ValueError("playbook has no deterministic verification probes")
         for probe_id in ids:
-            await self._catalog.get(
-                FirestorePaths.probe(run.organisation_id, probe_id), ProbeDefinition
+            probe_version = await self._catalog.get(
+                FirestorePaths.probe_version(run.organisation_id, probe_id), ProbeVersion
             )
+            if probe_version.state is not ProbeState.ACTIVE or probe_version.digest != digest(
+                probe_version.definition
+            ):
+                raise ValueError(f"probe version {probe_id} is not active and immutable")
+
+    async def _bind_probe(
+        self,
+        run: RotationRun,
+        definition: ProbeDefinition,
+        negative: bool,
+    ) -> ProbeDefinition:
+        from contracts import GenerationBinding, TargetBinding
+
+        if definition.negative != negative:
+            raise ValueError("probe polarity does not match the verification stage")
+        generation_id = None
+        if definition.generation_binding is GenerationBinding.TARGET:
+            generation_id = _required(run.target_generation_id, "target generation")
+        elif definition.generation_binding is GenerationBinding.CURRENT:
+            generation_id = _required(run.current_generation_id, "current generation")
+        if definition.expected_generation_id not in {None, generation_id}:
+            raise ValueError("probe generation binding changed after activation")
+        target = definition.target
+        if definition.target_binding is not TargetBinding.STATIC:
+            bound = await self._catalog.get(
+                FirestorePaths.generation(
+                    run.organisation_id, _required(generation_id, "probe generation")
+                ),
+                CredentialGeneration,
+            )
+            if definition.target_binding is TargetBinding.PROVIDER_ID:
+                target = _required(bound.provider_id, "provider generation ID")
+            else:
+                target = _required(bound.secret_reference, "generation secret reference")
+        return definition.model_copy(
+            update={"target": target, "expected_generation_id": generation_id}
+        )
 
     async def _credential(self, run: RotationRun) -> ManagedCredential:
         return await self._catalog.get(
@@ -1049,6 +1306,22 @@ class StageCoordinator:
         )
         return (stored.id,)
 
+    async def _failure_evidence(self, run: RotationRun, reason: str) -> tuple[str, ...]:
+        content = json.dumps(
+            {"stage": run.stage.value, "reason": reason},
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+        stored = await self._evidence.store(
+            run.organisation_id,
+            run.id,
+            f"stage-{run.stage.value}-failure",
+            content,
+            "application/json",
+            self._clock(),
+        )
+        return (stored.id,)
+
     async def _create_once(self, path: str, value: Any) -> None:
         from core.errors import ResourceConflictError
 
@@ -1058,6 +1331,31 @@ class StageCoordinator:
             current = await self._catalog.get(path, type(value))
             if current != value:
                 raise
+
+    async def _policy(self, run: RotationRun) -> tuple[PolicyVersion, GatePolicy]:
+        key = (run.organisation_id, run.policy_version)
+        current = self._policies.get(key)
+        if current is not None:
+            return current
+        version = await self._catalog.get(
+            FirestorePaths.policy_version(run.organisation_id, run.policy_version),
+            PolicyVersion,
+        )
+        if version.state not in {
+            PolicyState.ACTIVE,
+            PolicyState.SUPERSEDED,
+        } or version.digest != digest(version.definition):
+            raise ValueError("run policy version is not immutable and authorised")
+        policy = GatePolicy(version.definition.required_checks)
+        current = (version, policy)
+        self._policies[key] = current
+        return current
+
+    def _checks(self, run: RotationRun, stage: Stage) -> frozenset[str]:
+        current = self._policies.get((run.organisation_id, run.policy_version))
+        if current is None:
+            raise RuntimeError("run policy was not loaded before stage execution")
+        return current[1].checks(stage)
 
 
 def _execution_id(request: StageExecutionRequest) -> str:

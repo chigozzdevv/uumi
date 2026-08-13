@@ -24,3 +24,14 @@ class RecoveryPlan(Contract):
     steps: tuple[RecoveryAction, ...] = Field(min_length=1)
     preserves_old_generation: bool
     requires_approval: bool
+
+
+class RecoveryResult(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    run_id: Identifier
+    recovery_id: Identifier
+    failed_stage: Stage
+    mode: RecoveryMode
+    checks: frozenset[str] = Field(min_length=1)
+    evidence_ids: tuple[Identifier, ...] = Field(min_length=1)

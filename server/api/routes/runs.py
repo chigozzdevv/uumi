@@ -1,5 +1,6 @@
 from contracts import (
     CleanupRunCommand,
+    CompleteRecoveryCommand,
     CompleteStageCommand,
     Contract,
     CreateRunCommand,
@@ -8,6 +9,7 @@ from contracts import (
     Identifier,
     PauseRunCommand,
     RecoverRunCommand,
+    RecoveryMode,
     RenewLeaseCommand,
     ResumeRunCommand,
     RotationRun,
@@ -81,6 +83,12 @@ class FailureRequest(FencedRequest):
 
 class LeaseRequest(RevisionRequest):
     expires_at: AwareDatetime
+
+
+class RecoveryCompleteRequest(FencedRequest):
+    recovery_id: Identifier
+    mode: RecoveryMode
+    evidence_ids: tuple[Identifier, ...] = Field(min_length=1)
 
 
 class MutationResponse(Contract):
@@ -344,6 +352,33 @@ async def recover_run(
             expected_revision=body.expected_revision,
             owner_id=identity.actor_id,
             expires_at=body.expires_at,
+        )
+    )
+    return _response(result)
+
+
+@router.post("/{run_id}/recovery-complete", response_model=MutationResponse)
+async def complete_recovery(
+    organisation_id: OrganisationId,
+    run_id: RunId,
+    body: RecoveryCompleteRequest,
+    identity: Identity,
+    key: IdempotencyKey,
+    request: Request,
+) -> MutationResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.RUN_WRITE)
+    result = await api.workflow.complete_recovery(
+        CompleteRecoveryCommand(
+            id=command_id(identity, organisation_id, key),
+            organisation_id=organisation_id,
+            run_id=run_id,
+            actor_id=identity.actor_id,
+            expected_revision=body.expected_revision,
+            fencing_token=body.fencing_token,
+            recovery_id=body.recovery_id,
+            mode=body.mode,
+            evidence_ids=body.evidence_ids,
         )
     )
     return _response(result)

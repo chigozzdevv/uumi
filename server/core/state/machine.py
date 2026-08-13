@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from contracts import Failure, Lease, RotationRun, RunStatus, Stage, StageBindings, StageProof
+from contracts import (
+    Failure,
+    Lease,
+    RecoveryMode,
+    RotationRun,
+    RunStatus,
+    Stage,
+    StageBindings,
+    StageProof,
+)
 from contracts.state import STAGES
 from policy import GatePolicy
 
@@ -175,13 +184,22 @@ class RotationMachine:
         self._control(run, fencing_token, expected_revision, now)
         if run.status in {RunStatus.COMPLETED, RunStatus.FAILED}:
             raise TransitionRejectedError("terminal work cannot fail again")
-        return self._update(
-            run,
-            now,
-            status=RunStatus.FAILED,
-            failure=failure,
-            lease=None,
-        )
+        changes: dict[str, object] = {
+            "status": RunStatus.FAILED,
+            "failure": failure,
+            "lease": None,
+        }
+        if run.status is RunStatus.RECOVERING:
+            changes.update(
+                {
+                    "recovery_id": None,
+                    "recovery_stage": None,
+                    "recovery_mode": None,
+                    "recovery_failure": None,
+                    "recovery_evidence_ids": (),
+                }
+            )
+        return self._update(run, now, **changes)
 
     def recover(
         self,
@@ -192,7 +210,7 @@ class RotationMachine:
         now: datetime,
     ) -> RotationRun:
         self._revision(run, expected_revision)
-        if run.status not in {RunStatus.FAILED, RunStatus.CLEANUP, RunStatus.PAUSED}:
+        if run.status not in {RunStatus.FAILED, RunStatus.CLEANUP}:
             raise TransitionRejectedError("only interrupted work can recover")
         if run.lease and run.lease.expires_at > now and run.lease.owner_id != owner_id:
             raise LeaseConflictError("an active lease belongs to another worker")
@@ -204,8 +222,48 @@ class RotationMachine:
             now,
             status=RunStatus.RECOVERING,
             failure=None,
+            recovery_stage=run.stage,
+            recovery_failure=run.failure,
             lease=lease,
             fencing_token=token,
+        )
+
+    def complete_recovery(
+        self,
+        run: RotationRun,
+        recovery_id: str,
+        mode: RecoveryMode,
+        evidence_ids: tuple[str, ...],
+        fencing_token: int,
+        expected_revision: int,
+        now: datetime,
+    ) -> RotationRun:
+        self._control(run, fencing_token, expected_revision, now)
+        if run.status is not RunStatus.RECOVERING or run.recovery_stage is not run.stage:
+            raise TransitionRejectedError("only an active bound recovery can complete")
+        if not evidence_ids:
+            raise TransitionRejectedError("recovery completion requires evidence")
+        if mode is RecoveryMode.RETRY:
+            if run.recovery_failure is None or not run.recovery_failure.retryable:
+                raise TransitionRejectedError("a non-retryable failure cannot re-enter its stage")
+            return self._update(
+                run,
+                now,
+                status=RunStatus.RUNNING,
+                recovery_id=None,
+                recovery_stage=None,
+                recovery_mode=None,
+                recovery_failure=None,
+                recovery_evidence_ids=(),
+            )
+        return self._update(
+            run,
+            now,
+            status=RunStatus.COMPENSATED,
+            lease=None,
+            recovery_id=recovery_id,
+            recovery_mode=mode,
+            recovery_evidence_ids=evidence_ids,
         )
 
     @staticmethod
