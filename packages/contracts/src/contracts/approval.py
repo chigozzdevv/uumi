@@ -22,11 +22,15 @@ class Approval(Contract):
     plan_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     evidence_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     generation_id: Identifier
+    requested_by: Identifier
+    capability_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     decision: ApprovalDecision = ApprovalDecision.PENDING
     approver_id: Identifier | None = None
     expires_at: AwareDatetime
+    created_at: AwareDatetime
     decided_at: AwareDatetime | None = None
     consumed_at: AwareDatetime | None = None
+    revision: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def validate_decision(self) -> "Approval":
@@ -35,4 +39,6 @@ class Approval(Contract):
             raise ValueError("a decision requires an approver and decision time")
         if self.consumed_at is not None and self.decision is not ApprovalDecision.APPROVED:
             raise ValueError("only an approved action can be consumed")
+        if self.decided_at is not None and self.decided_at > self.expires_at:
+            raise ValueError("an approval decision cannot be recorded after expiry")
         return self

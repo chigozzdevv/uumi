@@ -1,0 +1,109 @@
+from enum import StrEnum
+
+from pydantic import AwareDatetime, Field, model_validator
+
+from contracts.base import Contract, Identifier
+
+
+class BrowserStatus(StrEnum):
+    PROVISIONING = "provisioning"
+    READY = "ready"
+    RUNNING = "running"
+    PAUSED = "paused"
+    TAKEOVER = "human-takeover"
+    CAPTURING = "secure-capture"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    TERMINATED = "terminated"
+
+
+class BrowserActionKind(StrEnum):
+    NAVIGATE = "navigate"
+    CLICK = "click"
+    TYPE = "type"
+    SELECT = "select"
+    SCROLL = "scroll"
+    KEY = "key"
+    WAIT = "wait"
+
+
+class BrowserAction(Contract):
+    id: Identifier
+    session_id: Identifier
+    kind: BrowserActionKind
+    selector: str | None = Field(default=None, max_length=1024)
+    value: str | None = Field(default=None, max_length=4096)
+    url: str | None = Field(default=None, max_length=2048)
+    protected: bool = False
+    expected_url: str | None = Field(default=None, max_length=2048)
+    expected_text: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "BrowserAction":
+        if self.kind is BrowserActionKind.NAVIGATE and not self.url:
+            raise ValueError("navigation requires a URL")
+        if (
+            self.kind in {BrowserActionKind.CLICK, BrowserActionKind.TYPE, BrowserActionKind.SELECT}
+            and not self.selector
+        ):
+            raise ValueError("interactive actions require a selector")
+        if self.kind in {BrowserActionKind.TYPE, BrowserActionKind.SELECT} and self.value is None:
+            raise ValueError("input actions require a value")
+        return self
+
+
+class BrowserPolicy(Contract):
+    allowed_domains: tuple[str, ...] = Field(min_length=1)
+    allowed_actions: frozenset[BrowserActionKind] = Field(min_length=1)
+    protected_operations: frozenset[str] = frozenset()
+    max_steps: int = Field(default=40, ge=1, le=200)
+    allow_downloads: bool = False
+    allow_uploads: bool = False
+    allow_clipboard: bool = False
+
+
+class BrowserSession(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    run_id: Identifier
+    playbook_version: Identifier
+    worker_instance: str | None = Field(default=None, max_length=512)
+    internal_address: str | None = Field(default=None, max_length=128)
+    status: BrowserStatus
+    policy: BrowserPolicy
+    step_count: int = Field(default=0, ge=0)
+    model_paused: bool = True
+    recording_paused: bool = True
+    takeover_subject: str | None = Field(default=None, max_length=512)
+    replay_reference: str | None = Field(default=None, max_length=1024)
+    created_at: AwareDatetime
+    expires_at: AwareDatetime
+    updated_at: AwareDatetime
+    terminated_at: AwareDatetime | None = None
+    revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> "BrowserSession":
+        if self.step_count > self.policy.max_steps:
+            raise ValueError("browser session exceeded its step budget")
+        if self.status is BrowserStatus.CAPTURING and (
+            not self.model_paused or not self.recording_paused
+        ):
+            raise ValueError("secure capture requires model and recording barriers")
+        if self.status is BrowserStatus.TERMINATED and self.terminated_at is None:
+            raise ValueError("terminated browser sessions require a termination time")
+        return self
+
+
+class ReplayCheckpoint(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    session_id: Identifier
+    sequence: int = Field(ge=0)
+    url: str = Field(min_length=1, max_length=2048)
+    action: str = Field(min_length=1, max_length=128)
+    image_reference: str = Field(min_length=1, max_length=1024)
+    image_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    safety: tuple[str, ...] = ()
+    human_takeover: bool = False
+    recorded_at: AwareDatetime

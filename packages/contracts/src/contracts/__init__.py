@@ -1,7 +1,25 @@
 from contracts.action import ProtectedAction
+from contracts.agent import (
+    AgentKind,
+    AgentMemory,
+    AgentRegistration,
+    AgentResult,
+    AgentSession,
+    AgentStatus,
+    AgentTask,
+)
 from contracts.approval import Approval, ApprovalDecision
+from contracts.audit import AuditEvent, Evidence
 from contracts.base import Contract, Identifier
 from contracts.binding import ConsumerBinding
+from contracts.browser import (
+    BrowserAction,
+    BrowserActionKind,
+    BrowserPolicy,
+    BrowserSession,
+    BrowserStatus,
+    ReplayCheckpoint,
+)
 from contracts.command import (
     CleanupRunCommand,
     CompleteStageCommand,
@@ -18,38 +36,116 @@ from contracts.credential import ManagedCredential
 from contracts.event import EventKind, OutboxEvent, RunEvent
 from contracts.evidence import StageProof
 from contracts.generation import CredentialGeneration
+from contracts.incident import (
+    Confidence,
+    CorrelationCandidate,
+    Incident,
+    IncidentStatus,
+    IngestionEvent,
+    Severity,
+    SourceResource,
+)
+from contracts.inventory import (
+    Application,
+    Connection,
+    ConnectionKind,
+    ConnectionStatus,
+    ConsumerService,
+    Environment,
+)
 from contracts.plan import RotationPlan, RotationStrategy
+from contracts.playbook import (
+    DryRun,
+    DryRunStatus,
+    ExecutionMethod,
+    PageCheckpoint,
+    Playbook,
+    PlaybookAssignment,
+    PlaybookDraft,
+    PlaybookState,
+    PlaybookStep,
+    PlaybookVersion,
+    SecureField,
+    Selector,
+    SelectorKind,
+)
 from contracts.provider import ConnectorCapabilities, MutationMode, MutationSemantics
 from contracts.recovery import RecoveryPlan
 from contracts.run import Failure, Lease, RotationRun, RunStep, Trigger
 from contracts.state import GenerationState, RunStatus, Stage
 from contracts.tool import ToolRequest, ToolResult
+from contracts.verification import (
+    ProbeDefinition,
+    ProbeKind,
+    ProbeResult,
+    VerificationReport,
+    VerificationStatus,
+)
 
 __all__ = [
+    "AgentKind",
+    "AgentMemory",
+    "AgentRegistration",
+    "AgentResult",
+    "AgentSession",
+    "AgentStatus",
+    "AgentTask",
+    "Application",
     "Approval",
     "ApprovalDecision",
+    "AuditEvent",
+    "BrowserAction",
+    "BrowserActionKind",
+    "BrowserPolicy",
+    "BrowserSession",
+    "BrowserStatus",
     "CleanupRunCommand",
     "CompleteStageCommand",
+    "Confidence",
+    "Connection",
+    "ConnectionKind",
+    "ConnectionStatus",
     "ConnectorCapabilities",
     "ConsumerBinding",
+    "ConsumerService",
     "Contract",
+    "CorrelationCandidate",
     "CreateRunCommand",
     "CredentialGeneration",
+    "DryRun",
+    "DryRunStatus",
+    "Environment",
     "EventKind",
+    "Evidence",
+    "ExecutionMethod",
     "FailRunCommand",
     "Failure",
     "GenerationState",
     "Identifier",
+    "Incident",
+    "IncidentStatus",
+    "IngestionEvent",
     "Lease",
     "ManagedCredential",
     "MutationMode",
     "MutationSemantics",
     "OutboxEvent",
+    "PageCheckpoint",
     "PauseRunCommand",
+    "Playbook",
+    "PlaybookAssignment",
+    "PlaybookDraft",
+    "PlaybookState",
+    "PlaybookStep",
+    "PlaybookVersion",
+    "ProbeDefinition",
+    "ProbeKind",
+    "ProbeResult",
     "ProtectedAction",
     "RecoverRunCommand",
     "RecoveryPlan",
     "RenewLeaseCommand",
+    "ReplayCheckpoint",
     "ResumeRunCommand",
     "RotationPlan",
     "RotationRun",
@@ -58,10 +154,17 @@ __all__ = [
     "RunEvent",
     "RunStatus",
     "RunStep",
+    "SecureField",
+    "Selector",
+    "SelectorKind",
+    "Severity",
+    "SourceResource",
     "Stage",
     "StageProof",
     "StartRunCommand",
     "ToolRequest",
     "ToolResult",
     "Trigger",
+    "VerificationReport",
+    "VerificationStatus",
 ]

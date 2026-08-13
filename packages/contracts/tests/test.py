@@ -4,14 +4,25 @@ import pytest
 from contracts import (
     Approval,
     ApprovalDecision,
+    BrowserActionKind,
+    BrowserPolicy,
+    BrowserSession,
+    BrowserStatus,
+    DryRun,
+    DryRunStatus,
     EventKind,
+    ExecutionMethod,
     MutationMode,
     MutationSemantics,
     OutboxEvent,
+    PlaybookDraft,
+    PlaybookStep,
     RotationPlan,
     RotationStrategy,
     RunEvent,
     RunStatus,
+    Selector,
+    SelectorKind,
     Stage,
 )
 from pydantic import ValidationError
@@ -59,9 +70,12 @@ def test_approval_consumption_requires_approved_decision() -> None:
             plan_hash=DIGEST,
             evidence_hash=DIGEST,
             generation_id="generation_one",
+            requested_by="service_one",
+            capability_hash=DIGEST,
             decision=ApprovalDecision.REJECTED,
             approver_id="user_one",
             expires_at=NOW + timedelta(minutes=10),
+            created_at=NOW,
             decided_at=NOW,
             consumed_at=NOW,
         )
@@ -115,3 +129,59 @@ def test_outbox_publication_requires_provider_receipt() -> None:
 
     with pytest.raises(ValidationError, match="message ID"):
         OutboxEvent(event=event, available_at=NOW, published_at=NOW)
+
+
+def test_computer_playbook_requires_secure_capture() -> None:
+    with pytest.raises(ValidationError, match="secure capture"):
+        PlaybookDraft(
+            name="Vendor rotation",
+            provider="vendor",
+            execution=ExecutionMethod.COMPUTER,
+            allowed_domains=("vendor.example.com",),
+            allowed_tools=frozenset({"browser.click"}),
+            required_connections=("connection_one",),
+            steps=(
+                PlaybookStep(
+                    id="step_one",
+                    stage=Stage.CREATE,
+                    tool="browser.click",
+                    operation="click",
+                    selectors=(Selector(kind=SelectorKind.ROLE, value="button", name="Create"),),
+                    evidence_checks=frozenset({"page-confirmed"}),
+                ),
+            ),
+        )
+
+
+def test_secure_capture_session_requires_both_barriers() -> None:
+    with pytest.raises(ValidationError, match="barriers"):
+        BrowserSession(
+            id="session_one",
+            organisation_id="org_one",
+            run_id="run_one",
+            playbook_version="playbook_one",
+            status=BrowserStatus.CAPTURING,
+            policy=BrowserPolicy(
+                allowed_domains=("vendor.example.com",),
+                allowed_actions=frozenset({BrowserActionKind.CLICK}),
+            ),
+            model_paused=False,
+            recording_paused=True,
+            created_at=NOW,
+            updated_at=NOW,
+            expires_at=NOW + timedelta(minutes=30),
+        )
+
+
+def test_terminal_dry_run_requires_completion() -> None:
+    with pytest.raises(ValidationError, match="completion time"):
+        DryRun(
+            id="dryrun_one",
+            organisation_id="org_one",
+            playbook_id="playbook_one",
+            version_id="version_one",
+            status=DryRunStatus.FAILED,
+            environment_id="test_one",
+            failure="checkpoint changed",
+            started_at=NOW,
+        )
