@@ -17,6 +17,7 @@ dependencies = [
     "playwright>=1.55,<2",
     "pydantic-settings>=2.10,<3",
     "uvicorn[standard]>=0.35,<1",
+    "mcp>=2,<3",
 ]
 
 [tool.uv.sources]

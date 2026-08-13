@@ -6,6 +6,7 @@ import httpx
 import pytest
 from broker import BrokerService, CapabilityClaims, CapabilitySigner, ConnectorRegistry
 from broker.capability import request_digest
+from broker.server import server as mcp_server
 from connectors import ConnectorContext, ConnectorResponse, SecretValue
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
@@ -316,3 +317,26 @@ def _connection(
         created_at=NOW,
         updated_at=NOW,
     )
+
+
+def test_mcp_broker_exposes_only_capability_scoped_connector_tools() -> None:
+    tools = {tool.name: tool for tool in mcp_server._tool_manager.list_tools()}
+
+    assert set(tools) == {
+        "provider.listCredentialMetadata",
+        "provider.getCredentialStatus",
+        "provider.createCredential",
+        "provider.revokeCredential",
+        "secretStore.getVersion",
+        "secretStore.disableVersion",
+        "secretStore.destroyVersion",
+        "runtime.inspectSecretBindings",
+        "runtime.deployCandidate",
+        "runtime.shiftTraffic",
+        "runtime.rollback",
+    }
+    assert all("capability" not in str(tool.parameters).lower() for tool in tools.values())
+    revoke = tools["provider.revokeCredential"].annotations
+    status = tools["provider.getCredentialStatus"].annotations
+    assert revoke is not None and revoke.destructive_hint is True
+    assert status is not None and status.read_only_hint is True
