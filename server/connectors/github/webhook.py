@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Any
 
 from contracts import Confidence, IngestionEvent, Severity, SourceResource
-from core.ids import new_id
 
 
 class GitHubWebhook:
@@ -47,12 +46,17 @@ class GitHubWebhook:
             raise ValueError("GitHub webhook metadata is incomplete")
         provider = _provider(secret_type)
         observed = _datetime(alert.get("created_at"), received_at)
+        occurrence = alert.get("updated_at") or alert.get("created_at")
+        if not isinstance(occurrence, str) or not occurrence:
+            raise ValueError("GitHub webhook has no stable alert occurrence time")
+        source_event_id = f"{repository_name}#{alert_number}:{occurrence}"
+        kind = "credential-exposure-detected" if action != "resolved" else "exposure-resolved"
         return IngestionEvent(
-            id=new_id("ingestion"),
+            id=_id(organisation_id, "github-secret-scanning", source_event_id, kind),
             organisation_id=organisation_id,
             source="github-secret-scanning",
-            source_event_id=f"{repository_name}#{alert_number}",
-            kind="credential-exposure-detected" if action != "resolved" else "exposure-resolved",
+            source_event_id=source_event_id,
+            kind=kind,
             observed_at=observed,
             severity=Severity.CRITICAL if action != "resolved" else Severity.MEDIUM,
             confidence=Confidence.HIGH,
@@ -83,3 +87,8 @@ def _datetime(value: Any, fallback: datetime) -> datetime:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return fallback
+
+
+def _id(organisation_id: str, source: str, event_id: str, kind: str) -> str:
+    value = hashlib.sha256(f"{organisation_id}\0{source}\0{event_id}\0{kind}".encode()).hexdigest()
+    return f"ingestion_{value[:40]}"

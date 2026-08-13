@@ -249,6 +249,10 @@ class IncidentService:
             score = 0
             exact = False
             reason_values: list[str] = []
+            if event.resource.credential_id == credential.id:
+                score += 200
+                exact = True
+                reason_values.append("managed credential identifier matches exactly")
             if event.resource.provider == credential.provider:
                 score += 20
                 reason_values.append("provider matches inventory")
@@ -264,6 +268,13 @@ class IncidentService:
                 for item in by_credential.get(credential.id, [])
                 if item.service_id in services
             ]
+            if event.resource.provider_id is not None and any(
+                _secret_resource(item.secret_reference) == event.resource.provider_id
+                for item in by_credential.get(credential.id, [])
+            ):
+                score += 100
+                exact = True
+                reason_values.append("secret resource matches consumer binding exactly")
             if event.resource.repository and any(
                 item.repository == event.resource.repository for item in consumers
             ):
@@ -302,3 +313,8 @@ class IncidentService:
                 )
             )
         return tuple(values)
+
+
+def _secret_resource(reference: str) -> str:
+    marker = "/versions/"
+    return reference.partition(marker)[0] if marker in reference else reference

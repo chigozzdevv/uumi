@@ -30,6 +30,7 @@ class IncidentStatus(StrEnum):
 
 
 class SourceResource(Contract):
+    credential_id: Identifier | None = None
     repository: str | None = Field(default=None, max_length=256)
     project: str | None = Field(default=None, max_length=256)
     service: str | None = Field(default=None, max_length=256)
@@ -50,6 +51,9 @@ class IngestionEvent(Contract):
     resource: SourceResource
     source_reference: str = Field(min_length=1, max_length=1024)
     received_at: AwareDatetime
+
+    def stable_payload(self) -> dict[str, object]:
+        return self.model_dump(mode="json", exclude={"received_at"})
 
 
 class CorrelationCandidate(Contract):

@@ -3,6 +3,7 @@ from enum import StrEnum
 from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
+from contracts.incident import Confidence
 from contracts.recovery import RecoveryMode
 from contracts.state import Stage
 
@@ -22,6 +23,9 @@ class PolicyDefinition(Contract):
     preserve_old_generation: bool = True
     require_functional_probe: bool = True
     require_generation_telemetry: bool = True
+    automatic_triggers: frozenset[str] = frozenset()
+    emergency_triggers: frozenset[str] = frozenset()
+    minimum_automatic_confidence: Confidence = Confidence.VERIFIED
 
     @model_validator(mode="after")
     def validate_coverage(self) -> "PolicyDefinition":
@@ -31,6 +35,8 @@ class PolicyDefinition(Contract):
             raise ValueError("protected tools must also be allowed")
         if self.require_generation_telemetry and "verification.run" not in self.allowed_tools:
             raise ValueError("generation telemetry policy requires verification.run")
+        if not self.emergency_triggers.issubset(self.automatic_triggers):
+            raise ValueError("emergency triggers must also be automatic triggers")
         return self
 
 

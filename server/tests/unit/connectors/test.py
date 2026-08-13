@@ -11,6 +11,7 @@ from connectors.base import ConnectorContext
 from connectors.base.errors import AmbiguousMutationError
 from connectors.github import GitHubWebhook
 from connectors.google import GoogleRestClient
+from connectors.scc import SecurityCommandCenterFinding
 from connectors.secrets import SecretManagerConnector
 from connectors.sendgrid import SendGridConnector
 from contracts import (
@@ -253,7 +254,7 @@ async def test_sendgrid_stale_reconcile_cleans_provider_and_secret_orphans() -> 
             transport=httpx.MockTransport(sendgrid_handler),
         ),
     )
-    payload = {
+    payload: dict[str, Any] = {
         "name": "rotate",
         "scopes": ["mail.send"],
         "secret_resource": "projects/project-one/secrets/key",
@@ -275,6 +276,69 @@ def test_github_webhook_rejects_modified_payload() -> None:
     webhook.verify(body, signature, b"hook-secret")
     with pytest.raises(ValueError, match="invalid"):
         webhook.verify(body + b" ", signature, b"hook-secret")
+
+
+def test_github_retry_is_stable_but_reopened_occurrence_is_distinct() -> None:
+    webhook = GitHubWebhook()
+    payload: dict[str, Any] = {
+        "action": "created",
+        "alert": {
+            "number": 7,
+            "html_url": "https://github.com/example/mailer/security/secret-scanning/7",
+            "secret_type_display_name": "SendGrid API Key",
+            "created_at": NOW.isoformat(),
+            "updated_at": NOW.isoformat(),
+        },
+        "repository": {"full_name": "example/mailer"},
+    }
+
+    first = webhook.normalise("org_one", "secret_scanning_alert", json.dumps(payload).encode(), NOW)
+    retry = webhook.normalise("org_one", "secret_scanning_alert", json.dumps(payload).encode(), NOW)
+    payload["action"] = "reopened"
+    alert = payload["alert"]
+    assert isinstance(alert, dict)
+    alert["updated_at"] = NOW.replace(minute=1).isoformat()
+    reopened = webhook.normalise(
+        "org_one", "secret_scanning_alert", json.dumps(payload).encode(), NOW
+    )
+
+    assert first.id == retry.id
+    assert first.id != reopened.id
+
+
+def test_scc_retry_is_stable_but_new_occurrence_is_distinct() -> None:
+    payload = {
+        "finding": {
+            "name": "organizations/123/sources/456/findings/finding-one",
+            "category": "LEAKED_CREDENTIAL",
+            "severity": "CRITICAL",
+            "state": "ACTIVE",
+            "eventTime": NOW.isoformat(),
+        },
+        "resource": {
+            "name": "//cloudresourcemanager.googleapis.com/projects/project-one",
+            "projectDisplayName": "project-one",
+            "service": "iam.googleapis.com",
+        },
+    }
+    connector = SecurityCommandCenterFinding()
+
+    first = connector.normalise("org_one", payload, NOW)
+    retry = connector.normalise("org_one", payload, NOW)
+    updated = connector.normalise(
+        "org_one",
+        {
+            **payload,
+            "finding": {
+                **payload["finding"],
+                "eventTime": (NOW.replace(minute=1)).isoformat(),
+            },
+        },
+        NOW,
+    )
+
+    assert first.id == retry.id
+    assert first.id != updated.id
 
 
 def _google(handler: Any) -> GoogleRestClient:

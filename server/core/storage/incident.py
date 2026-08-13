@@ -33,9 +33,15 @@ class FirestoreIncidentRepository:
             event_snapshot = await event_ref.get(transaction=transaction)
             incident_snapshot = await incident_ref.get(transaction=transaction)
             if event_snapshot.exists:
-                incident_id = _data(event_snapshot).get("incident_id")
+                existing_event = _data(event_snapshot)
+                incident_id = existing_event.get("incident_id")
                 if not isinstance(incident_id, str):
                     raise StorageIntegrityError("ingestion dedupe record has no incident")
+                stored_event = IngestionEvent.model_validate(existing_event)
+                if stored_event.stable_payload() != event.stable_payload():
+                    raise ResourceConflictError(
+                        "ingestion event identity was replayed with changes"
+                    )
                 existing = await self._client.document(
                     FirestorePaths.incident(event.organisation_id, incident_id)
                 ).get(transaction=transaction)

@@ -198,6 +198,33 @@ async def test_ambiguous_repository_match_requires_explicit_confirmation() -> No
     assert sum(item.confidence is Confidence.VERIFIED for item in confirmed.candidates) == 1
 
 
+@pytest.mark.anyio
+async def test_secret_resource_exactly_correlates_through_consumer_binding() -> None:
+    repository = Incidents()
+    service = IncidentService(
+        repository,
+        lambda: NOW,
+        Inventory((_credential("credential_one", "provider-key-one"),)),
+    )
+    event = _event(None).model_copy(
+        update={
+            "source": "secret-manager",
+            "source_event_id": "message-one",
+            "kind": "credential-rotation-due",
+            "resource": SourceResource(
+                provider="google-secret-manager",
+                provider_id="projects/project-one/secrets/mailer",
+            ),
+        }
+    )
+
+    incident, _ = await service.ingest("incident_one", event)
+
+    assert incident.status is IncidentStatus.ACTION
+    assert incident.credential_id == "credential_one"
+    assert incident.candidates[0].confidence is Confidence.VERIFIED
+
+
 def _credential(credential_id: str, provider_id: str) -> ManagedCredential:
     return ManagedCredential(
         id=credential_id,

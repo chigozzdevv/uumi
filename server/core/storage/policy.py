@@ -137,3 +137,14 @@ class FirestorePolicyRepository:
             return active
 
         return await apply(self._client.transaction(max_attempts=5))
+
+    async def get_version(self, organisation_id: str, version_id: str) -> PolicyVersion:
+        snapshot = await self._client.document(
+            FirestorePaths.policy_version(organisation_id, version_id)
+        ).get()
+        if not snapshot.exists or snapshot.to_dict() is None:
+            raise ResourceNotFoundError(f"policy version {version_id} was not found")
+        version = PolicyVersion.model_validate(snapshot.to_dict())
+        if version.organisation_id != organisation_id:
+            raise StorageIntegrityError("policy version belongs to another organisation")
+        return version

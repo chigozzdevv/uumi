@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Any
 
 from contracts import Confidence, IngestionEvent, Severity, SourceResource
-from core.ids import new_id
 
 
 class SecurityCommandCenterFinding:
@@ -28,12 +27,17 @@ class SecurityCommandCenterFinding:
         resource_name = resource.get("name")
         project = resource.get("projectDisplayName") or resource.get("project")
         service = resource.get("service")
+        occurrence = finding.get("eventTime") or finding.get("updateTime")
+        if not isinstance(occurrence, str) or not occurrence:
+            raise ValueError("SCC finding has no stable occurrence time")
+        source_event_id = hashlib.sha256(f"{name}\0{occurrence}".encode()).hexdigest()
+        kind = "credential-exposure-detected" if state == "ACTIVE" else "exposure-resolved"
         return IngestionEvent(
-            id=new_id("ingestion"),
+            id=_id(organisation_id, "security-command-center", source_event_id, kind),
             organisation_id=organisation_id,
             source="security-command-center",
-            source_event_id=hashlib.sha256(name.encode()).hexdigest(),
-            kind=("credential-exposure-detected" if state == "ACTIVE" else "exposure-resolved"),
+            source_event_id=source_event_id,
+            kind=kind,
             observed_at=_datetime(finding.get("eventTime"), received_at),
             severity=_severity(severity),
             confidence=Confidence.HIGH if state == "ACTIVE" else Confidence.MEDIUM,
@@ -64,3 +68,8 @@ def _datetime(value: Any, fallback: datetime) -> datetime:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return fallback
+
+
+def _id(organisation_id: str, source: str, event_id: str, kind: str) -> str:
+    value = hashlib.sha256(f"{organisation_id}\0{source}\0{event_id}\0{kind}".encode()).hexdigest()
+    return f"ingestion_{value[:40]}"
