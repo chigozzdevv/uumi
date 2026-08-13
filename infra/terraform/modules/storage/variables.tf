@@ -38,9 +38,49 @@ variable "principals" {
       length(grant.roles) > 0 &&
       alltrue([
         for role in grant.roles :
-        contains(["viewer", "operator", "administrator"], role)
+        contains(["viewer", "operator", "administrator", "automation"], role)
       ])
     ])
     error_message = "Principal grants require a valid organisation, subject, and supported role."
   }
+}
+
+variable "evidence_users" {
+  description = "IAM members allowed to append and read immutable evidence objects."
+  type        = map(string)
+  default     = {}
+}
+
+variable "agent_staging_user" {
+  description = "Managed Agent Runtime IAM member allowed to use its staging bucket and CMEK."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.agent_staging_user == null ||
+      startswith(var.agent_staging_user, "serviceAccount:")
+    )
+    error_message = "Agent staging user must be a service account IAM member."
+  }
+}
+
+variable "secret_accessors" {
+  description = "IAM members allowed to read the capability signing key."
+  type        = map(string)
+  default     = {}
+}
+
+variable "github_organisations" {
+  description = "FireKey organisations receiving signed GitHub webhooks."
+  type        = set(string)
+  default     = []
+}
+
+variable "github_secret_accessor" {
+  description = "IAM member allowed to verify organisation GitHub webhook signatures."
+  type        = string
+  default     = null
+  nullable    = true
 }

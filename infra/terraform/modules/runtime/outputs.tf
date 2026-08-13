@@ -17,3 +17,18 @@ output "publisher_uri" {
   description = "Private Cloud Run publisher URI, or null until an image is deployed."
   value       = try(google_cloud_run_v2_service.publisher["publisher"].uri, null)
 }
+
+output "ingestion_uri" {
+  description = "Public transport endpoint for authenticated incident ingestion."
+  value       = try(google_cloud_run_v2_service.ingestion["ingestion"].uri, null)
+}
+
+output "broker_uri" {
+  description = "Private MCP broker URI."
+  value       = try(google_cloud_run_v2_service.broker["broker"].uri, null)
+}
+
+output "coordinator_uri" {
+  description = "Private stage coordinator URI."
+  value       = try(google_cloud_run_v2_service.coordinator["coordinator"].uri, null)
+}

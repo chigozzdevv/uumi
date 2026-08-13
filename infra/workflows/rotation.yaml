@@ -1,0 +1,204 @@
+main:
+  params: [cloud_event]
+  steps:
+    - decode_event:
+        assign:
+          - event: ${json.decode(base64.decode(cloud_event.data.message.data))}
+          - api_url: ${sys.get_env("FIREKEY_API_URL")}
+          - coordinator_url: ${sys.get_env("FIREKEY_COORDINATOR_URL")}
+          - audience: ${sys.get_env("FIREKEY_OIDC_AUDIENCE")}
+    - accept_event:
+        switch:
+          - condition: ${event.kind in ["run.created", "run.resumed", "run.recovery-started"]}
+            next: load_run
+        next: ignored
+    - load_run:
+        call: http.get
+        args:
+          url: ${api_url + "/v1/organisations/" + event.organisation_id + "/runs/" + event.run_id}
+          auth:
+            type: OIDC
+            audience: ${audience}
+        result: current
+        retry: ${http.default_retry}
+    - acquire_lease:
+        switch:
+          - condition: ${current.body.status == "pending"}
+            next: start_run
+          - condition: ${current.body.status in ["running", "recovering"]}
+            next: execute_stage
+          - condition: ${current.body.status == "completed"}
+            next: completed
+        next: ignored
+    - start_run:
+        call: http.post
+        args:
+          url: ${api_url + "/v1/organisations/" + event.organisation_id + "/runs/" + event.run_id + "/start"}
+          auth:
+            type: OIDC
+            audience: ${audience}
+          headers:
+            Idempotency-Key: ${event.id + "-start"}
+          body:
+            expected_revision: ${current.body.revision}
+            expires_at: ${time.format(sys.now() + 1800)}
+        result: started
+        retry: ${http.default_retry}
+    - bind_started:
+        assign:
+          - current:
+              body: ${started.body.run}
+    - execute_stage:
+        try:
+          call: http.post
+          args:
+            url: ${coordinator_url + "/v1/stages/execute"}
+            auth:
+              type: OIDC
+              audience: ${audience}
+            body:
+              organisation_id: ${current.body.organisation_id}
+              run_id: ${current.body.id}
+              stage: ${current.body.stage}
+              expected_revision: ${current.body.revision}
+              fencing_token: ${current.body.fencing_token}
+          result: execution
+        retry: ${http.default_retry}
+        except:
+          as: error
+          steps:
+            - fail_run:
+                call: http.post
+                args:
+                  url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/fail"}
+                  auth:
+                    type: OIDC
+                    audience: ${audience}
+                  headers:
+                    Idempotency-Key: ${current.body.id + "-" + current.body.stage + "-fail-" + string(current.body.revision)}
+                  body:
+                    expected_revision: ${current.body.revision}
+                    fencing_token: ${current.body.fencing_token}
+                    failure:
+                      code: stage-execution-failed
+                      message: ${text.substring(json.encode_to_string(error), 0, 1000)}
+                      retryable: false
+                      evidence_ids: []
+                result: failed_run
+                retry: ${http.default_retry}
+            - failed:
+                return: ${failed_run.body.run}
+    - execution_status:
+        switch:
+          - condition: ${execution.body.status == "paused"}
+            next: pause_run
+          - condition: ${execution.body.status == "succeeded"}
+            next: complete_stage
+          - condition: ${execution.body.status == "failed"}
+            next: fail_stage
+        next: fail_unexpected
+    - fail_stage:
+        call: http.post
+        args:
+          url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/fail"}
+          auth:
+            type: OIDC
+            audience: ${audience}
+          headers:
+            Idempotency-Key: ${execution.body.id + "-fail"}
+          body:
+            expected_revision: ${current.body.revision}
+            fencing_token: ${current.body.fencing_token}
+            failure:
+              code: stage-execution-failed
+              message: ${execution.body.reason}
+              retryable: false
+              evidence_ids: ${execution.body.evidence_ids}
+        result: stage_failed
+        retry: ${http.default_retry}
+    - failed_stage:
+        return:
+          status: failed
+          run: ${stage_failed.body.run}
+    - pause_run:
+        call: http.post
+        args:
+          url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/pause"}
+          auth:
+            type: OIDC
+            audience: ${audience}
+          headers:
+            Idempotency-Key: ${execution.body.id + "-pause"}
+          body:
+            expected_revision: ${current.body.revision}
+            fencing_token: ${current.body.fencing_token}
+        result: paused
+        retry: ${http.default_retry}
+    - wait_for_resume:
+        return:
+          status: paused
+          run: ${paused.body.run}
+          reason: ${execution.body.reason}
+    - complete_stage:
+        call: http.post
+        args:
+          url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/complete"}
+          auth:
+            type: OIDC
+            audience: ${audience}
+          headers:
+            Idempotency-Key: ${execution.body.id + "-complete"}
+          body:
+            expected_revision: ${current.body.revision}
+            fencing_token: ${current.body.fencing_token}
+            bindings: ${execution.body.bindings}
+            proof:
+              stage: ${current.body.stage}
+              checks: ${execution.body.checks}
+              evidence_ids: ${execution.body.evidence_ids}
+              recorded_at: ${execution.body.completed_at}
+        result: advanced
+        retry: ${http.default_retry}
+    - advance:
+        assign:
+          - current:
+              body: ${advanced.body.run}
+        next: terminal_check
+    - terminal_check:
+        switch:
+          - condition: ${current.body.status == "completed"}
+            next: completed
+          - condition: ${current.body.status in ["running", "recovering"]}
+            next: renew_lease
+        next: ignored
+    - renew_lease:
+        call: http.post
+        args:
+          url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/renew"}
+          auth:
+            type: OIDC
+            audience: ${audience}
+          headers:
+            Idempotency-Key: ${current.body.id + "-renew-" + string(current.body.revision)}
+          body:
+            expected_revision: ${current.body.revision}
+            fencing_token: ${current.body.fencing_token}
+            expires_at: ${time.format(sys.now() + 1800)}
+        result: renewed
+        retry: ${http.default_retry}
+    - bind_renewed:
+        assign:
+          - current:
+              body: ${renewed.body.run}
+        next: execute_stage
+    - fail_unexpected:
+        raise: ${"unexpected coordinator status " + execution.body.status}
+    - completed:
+        return:
+          status: completed
+          run_id: ${current.body.id}
+          revision: ${current.body.revision}
+    - ignored:
+        return:
+          status: ignored
+          event_kind: ${event.kind}

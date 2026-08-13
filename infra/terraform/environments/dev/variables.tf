@@ -88,6 +88,110 @@ variable "publisher_image" {
   }
 }
 
+variable "ingestion_image" {
+  description = "Immutable FireKey incident ingestion image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.ingestion_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.ingestion_image))
+    )
+    error_message = "ingestion_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "scc_sources" {
+  description = "SCC organisation sources keyed by FireKey organisation ID."
+  type = map(object({
+    cloud_organisation_id = string
+    filter                = string
+    location              = optional(string, "global")
+  }))
+  default = {}
+}
+
+variable "broker_image" {
+  description = "Immutable FireKey MCP broker image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.broker_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.broker_image))
+    )
+    error_message = "broker_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "coordinator_image" {
+  description = "Immutable FireKey stage coordinator image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.coordinator_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.coordinator_image))
+    )
+    error_message = "coordinator_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "browser_image" {
+  description = "Immutable FireKey browser worker image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.browser_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.browser_image))
+    )
+    error_message = "browser_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "gateway_image" {
+  description = "Immutable FireKey browser gateway image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.gateway_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.gateway_image))
+    )
+    error_message = "gateway_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "capability_secret_version" {
+  description = "Capability signing Secret Manager version; defaults to version 1."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "zone" {
+  description = "Zone for one-run Computer Use VMs."
+  type        = string
+  default     = "us-east1-b"
+}
+
+variable "gateway_users" {
+  description = "IAM users and groups allowed to view and take over browser sessions."
+  type        = set(string)
+  default     = []
+}
+
 variable "oidc_audience" {
   description = "Stable audience used by Cloud Run and FireKey token verification."
   type        = string

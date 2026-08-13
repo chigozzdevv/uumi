@@ -18,6 +18,32 @@ variable "publisher_service_account" {
   type        = string
 }
 
+variable "broker_service_account" {
+  description = "Service account email assigned to the MCP broker."
+  type        = string
+}
+
+variable "coordinator_service_account" {
+  description = "Service account email assigned to the stage coordinator."
+  type        = string
+}
+
+variable "ingestion_service_account" {
+  description = "Service account email assigned to the incident ingestion revision."
+  type        = string
+}
+
+variable "scc_push_service_account" {
+  description = "Service account email asserted on SCC Pub/Sub push requests."
+  type        = string
+}
+
+
+variable "coordinator_member" {
+  description = "Coordinator IAM member allowed to invoke the MCP broker."
+  type        = string
+}
+
 variable "event_member" {
   description = "Event delivery IAM member allowed to invoke the publisher."
   type        = string
@@ -82,4 +108,101 @@ variable "publisher_image" {
     )
     error_message = "publisher_image must be null or an immutable sha256 image reference."
   }
+}
+
+variable "ingestion_image" {
+  description = "Immutable incident ingestion image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.ingestion_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.ingestion_image))
+    )
+    error_message = "ingestion_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "broker_image" {
+  description = "Immutable MCP broker image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.broker_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.broker_image))
+    )
+    error_message = "broker_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "coordinator_image" {
+  description = "Immutable stage coordinator image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.coordinator_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.coordinator_image))
+    )
+    error_message = "coordinator_image must be null or an immutable sha256 image reference."
+  }
+}
+
+
+variable "browser_image" {
+  description = "Immutable browser worker image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.browser_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.browser_image))
+    )
+    error_message = "browser_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "browser_gateway_url" {
+  description = "IAP protected browser gateway URL exposed in short-lived access grants."
+  type        = string
+  default     = "https://browser-gateway.disabled.invalid"
+}
+
+variable "evidence_bucket" {
+  description = "Locked evidence bucket name."
+  type        = string
+}
+
+variable "capability_secret_version" {
+  description = "Full Secret Manager version holding the capability signing key."
+  type        = string
+}
+
+variable "browser_template" {
+  description = "Ephemeral browser VM instance template."
+  type        = string
+}
+
+variable "browser_zone" {
+  description = "Zone used for ephemeral browser VMs."
+  type        = string
+}
+
+variable "network" {
+  description = "VPC network used by coordinator and browser workers."
+  type        = string
+}
+
+variable "subnetwork" {
+  description = "Private VPC subnetwork used by coordinator and browser workers."
+  type        = string
 }

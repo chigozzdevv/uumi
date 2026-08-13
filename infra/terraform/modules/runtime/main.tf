@@ -1,6 +1,113 @@
 locals {
   api       = var.api_image == null ? {} : { api = var.api_image }
   publisher = var.publisher_image == null ? {} : { publisher = var.publisher_image }
+  broker    = var.broker_image == null ? {} : { broker = var.broker_image }
+  ingestion = var.ingestion_image == null ? {} : { ingestion = var.ingestion_image }
+  coordinator = (
+    var.coordinator_image == null || var.browser_image == null || var.broker_image == null
+    ? {}
+    : { coordinator = var.coordinator_image }
+  )
+}
+
+resource "google_cloud_run_v2_service" "ingestion" {
+  for_each = local.ingestion
+
+  project             = var.project_id
+  location            = var.region
+  name                = "firekey-ingestion"
+  description         = "Authenticated GitHub and Security Command Center incident intake."
+  deletion_protection = true
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  custom_audiences    = [var.oidc_audience]
+
+  template {
+    service_account                  = var.ingestion_service_account
+    timeout                          = "60s"
+    max_instance_request_concurrency = 40
+    execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 20
+    }
+
+    containers {
+      name  = "ingestion"
+      image = each.value
+
+      ports {
+        name           = "http1"
+        container_port = 8080
+      }
+
+      env {
+        name  = "FIREKEY_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "FIREKEY_FIRESTORE_DATABASE"
+        value = "(default)"
+      }
+      env {
+        name  = "FIREKEY_OIDC_AUDIENCE"
+        value = var.oidc_audience
+      }
+      env {
+        name  = "FIREKEY_SCC_PUSH_SERVICE_ACCOUNT"
+        value = var.scc_push_service_account
+      }
+      env {
+        name  = "FIREKEY_GITHUB_SECRET_PROJECT"
+        value = var.project_id
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+        cpu_idle          = true
+        startup_cpu_boost = true
+      }
+
+      startup_probe {
+        initial_delay_seconds = 0
+        timeout_seconds       = 2
+        period_seconds        = 2
+        failure_threshold     = 15
+
+        http_get {
+          path = "/health/live"
+          port = 8080
+        }
+      }
+
+      liveness_probe {
+        initial_delay_seconds = 10
+        timeout_seconds       = 2
+        period_seconds        = 10
+        failure_threshold     = 3
+
+        http_get {
+          path = "/health/live"
+          port = 8080
+        }
+      }
+    }
+  }
+
+  depends_on = [google_artifact_registry_repository.runtime]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "ingestion" {
+  for_each = google_cloud_run_v2_service.ingestion
+
+  project  = each.value.project
+  location = each.value.location
+  name     = each.value.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }
 
 resource "google_artifact_registry_repository" "runtime" {
@@ -64,6 +171,16 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "FIREKEY_OIDC_AUDIENCE"
         value = var.oidc_audience
+      }
+
+      env {
+        name  = "FIREKEY_CAPABILITY_SECRET"
+        value = var.capability_secret_version
+      }
+
+      env {
+        name  = "FIREKEY_BROWSER_GATEWAY_URL"
+        value = var.browser_gateway_url
       }
 
       resources {
@@ -210,4 +327,195 @@ resource "google_cloud_run_v2_service_iam_member" "event_invoker" {
   name     = each.value.name
   role     = "roles/run.invoker"
   member   = var.event_member
+}
+
+resource "google_cloud_run_v2_service" "broker" {
+  for_each = local.broker
+
+  project             = var.project_id
+  location            = var.region
+  name                = "firekey-broker"
+  description         = "Private capability-scoped MCP Tool Broker."
+  deletion_protection = true
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+
+  template {
+    service_account                  = var.broker_service_account
+    timeout                          = "300s"
+    max_instance_request_concurrency = 20
+    execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 30
+    }
+
+    containers {
+      name  = "broker"
+      image = each.value
+
+      ports {
+        name           = "http1"
+        container_port = 8080
+      }
+
+      env {
+        name  = "FIREKEY_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "FIREKEY_REGION"
+        value = var.region
+      }
+      env {
+        name  = "FIREKEY_EVIDENCE_BUCKET"
+        value = var.evidence_bucket
+      }
+      env {
+        name  = "FIREKEY_CAPABILITY_SECRET"
+        value = var.capability_secret_version
+      }
+
+      resources {
+        limits = {
+          cpu    = "2"
+          memory = "1Gi"
+        }
+        cpu_idle          = true
+        startup_cpu_boost = true
+      }
+
+      startup_probe {
+        initial_delay_seconds = 0
+        timeout_seconds       = 3
+        period_seconds        = 3
+        failure_threshold     = 20
+        http_get {
+          path = "/health/live"
+          port = 8080
+        }
+      }
+    }
+  }
+}
+
+resource "google_cloud_run_v2_service_iam_member" "coordinator_broker" {
+  for_each = google_cloud_run_v2_service.broker
+
+  project  = each.value.project
+  location = each.value.location
+  name     = each.value.name
+  role     = "roles/run.invoker"
+  member   = var.coordinator_member
+}
+
+resource "google_cloud_run_v2_service" "coordinator" {
+  for_each = local.coordinator
+
+  project             = var.project_id
+  location            = var.region
+  name                = "firekey-coordinator"
+  description         = "Private deterministic stage execution service."
+  deletion_protection = true
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  custom_audiences    = [var.oidc_audience]
+
+  template {
+    service_account                  = var.coordinator_service_account
+    timeout                          = "900s"
+    max_instance_request_concurrency = 4
+    execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 20
+    }
+
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+      network_interfaces {
+        network    = var.network
+        subnetwork = var.subnetwork
+        tags       = ["firekey-coordinator"]
+      }
+    }
+
+    containers {
+      name  = "coordinator"
+      image = each.value
+
+      ports {
+        name           = "http1"
+        container_port = 8080
+      }
+
+      env {
+        name  = "FIREKEY_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "FIREKEY_REGION"
+        value = var.region
+      }
+      env {
+        name  = "FIREKEY_ZONE"
+        value = var.browser_zone
+      }
+      env {
+        name  = "FIREKEY_EVIDENCE_BUCKET"
+        value = var.evidence_bucket
+      }
+      env {
+        name  = "FIREKEY_CAPABILITY_SECRET"
+        value = var.capability_secret_version
+      }
+      env {
+        name  = "FIREKEY_BROWSER_TEMPLATE"
+        value = var.browser_template
+      }
+      env {
+        name  = "FIREKEY_BROWSER_IMAGE"
+        value = var.browser_image
+      }
+      env {
+        name  = "FIREKEY_OIDC_AUDIENCE"
+        value = var.oidc_audience
+      }
+      env {
+        name  = "FIREKEY_BROKER_URL"
+        value = try(google_cloud_run_v2_service.broker["broker"].uri, "")
+      }
+      resources {
+        limits = {
+          cpu    = "4"
+          memory = "4Gi"
+        }
+        cpu_idle          = false
+        startup_cpu_boost = true
+      }
+
+      startup_probe {
+        initial_delay_seconds = 0
+        timeout_seconds       = 3
+        period_seconds        = 3
+        failure_threshold     = 30
+        http_get {
+          path = "/health/live"
+          port = 8080
+        }
+      }
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_service.broker]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "workflow_coordinator" {
+  for_each = google_cloud_run_v2_service.coordinator
+
+  project  = each.value.project
+  location = each.value.location
+  name     = each.value.name
+  role     = "roles/run.invoker"
+  member   = var.workflow_member
 }
