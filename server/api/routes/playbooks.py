@@ -116,6 +116,11 @@ async def build_version(
 ) -> BuildVersionResponse:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    sources = await required(api.walkthroughs, "walkthroughs").ready(
+        organisation_id,
+        playbook_id,
+        body.source_ids,
+    )
     task_id = command_id(identity, organisation_id, key).replace("cmd_", "task_", 1)
     result = await required(api.agents, "agents").execute(
         AgentTask(
@@ -129,6 +134,13 @@ async def build_version(
                 f"evidence IDs: {', '.join(body.source_ids)}."
             ),
             evidence_ids=body.source_ids,
+            context={
+                "walkthroughs": tuple(
+                    source.analysis.model_dump(mode="json")
+                    for source in sources
+                    if source.analysis is not None
+                )
+            },
             requested_at=datetime.now(UTC),
         )
     )

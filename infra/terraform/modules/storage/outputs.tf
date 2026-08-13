@@ -13,6 +13,11 @@ output "evidence_bucket" {
   value       = google_storage_bucket.evidence.name
 }
 
+output "walkthrough_bucket" {
+  description = "Short-retention bucket for non-production teaching walkthroughs."
+  value       = google_storage_bucket.walkthroughs.name
+}
+
 output "agent_bucket" {
   description = "Agent Runtime source staging bucket URI."
   value       = "gs://${google_storage_bucket.agents.name}"

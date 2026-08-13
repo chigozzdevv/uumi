@@ -51,6 +51,21 @@ variable "evidence_users" {
   default     = {}
 }
 
+variable "walkthrough_user" {
+  description = "IAM member allowed to create and inspect teaching walkthrough objects."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.walkthrough_user == null ||
+      startswith(var.walkthrough_user, "serviceAccount:")
+    )
+    error_message = "Walkthrough user must be a service account IAM member."
+  }
+}
+
 variable "agent_staging_user" {
   description = "Managed Agent Runtime IAM member allowed to use its staging bucket and CMEK."
   type        = string

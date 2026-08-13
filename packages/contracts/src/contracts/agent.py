@@ -45,7 +45,7 @@ class AgentTask(Contract):
     agent: AgentKind
     skill: str = Field(min_length=1, max_length=96)
     objective: str = Field(min_length=1, max_length=2048)
-    context: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
     evidence_ids: tuple[Identifier, ...] = ()
     requested_at: AwareDatetime
 

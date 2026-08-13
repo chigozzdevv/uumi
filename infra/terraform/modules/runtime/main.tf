@@ -183,6 +183,11 @@ resource "google_cloud_run_v2_service" "api" {
         value = var.browser_gateway_url
       }
 
+      env {
+        name  = "FIREKEY_WALKTHROUGH_BUCKET"
+        value = var.walkthrough_bucket
+      }
+
       resources {
         limits = {
           cpu    = "1"

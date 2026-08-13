@@ -8,6 +8,7 @@ from core.storage.inventory import FirestoreInventoryRepository
 from core.storage.outbox import FirestoreOutboxRepository
 from core.storage.playbook import FirestorePlaybookRepository
 from core.storage.repository import MutationResult, RunRepository
+from core.storage.walkthrough import FirestoreWalkthroughRepository
 
 __all__ = [
     "FirestoreApprovalRepository",
@@ -19,6 +20,7 @@ __all__ = [
     "FirestoreOutboxRepository",
     "FirestorePlaybookRepository",
     "FirestoreRunRepository",
+    "FirestoreWalkthroughRepository",
     "MutationResult",
     "RunRepository",
 ]

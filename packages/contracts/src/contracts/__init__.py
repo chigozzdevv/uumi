@@ -92,6 +92,13 @@ from contracts.verification import (
     VerificationReport,
     VerificationStatus,
 )
+from contracts.walkthrough import (
+    TimedText,
+    VideoShot,
+    WalkthroughAnalysis,
+    WalkthroughSource,
+    WalkthroughStatus,
+)
 
 __all__ = [
     "AgentKind",
@@ -183,6 +190,7 @@ __all__ = [
     "StageExecutionStatus",
     "StageProof",
     "StartRunCommand",
+    "TimedText",
     "ToolAttempt",
     "ToolAttemptStatus",
     "ToolRequest",
@@ -190,4 +198,8 @@ __all__ = [
     "Trigger",
     "VerificationReport",
     "VerificationStatus",
+    "VideoShot",
+    "WalkthroughAnalysis",
+    "WalkthroughSource",
+    "WalkthroughStatus",
 ]

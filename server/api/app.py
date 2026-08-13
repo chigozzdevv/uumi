@@ -28,6 +28,7 @@ from api.routes import (
     inventory_router,
     playbooks_router,
     runs_router,
+    walkthroughs_router,
 )
 
 ErrorHandler = Callable[[Request, Exception], Awaitable[JSONResponse]]
@@ -44,6 +45,7 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.include_router(agents_router)
     app.include_router(browsers_router)
     app.include_router(incidents_router)
+    app.include_router(walkthroughs_router)
     app.add_exception_handler(FireKeyError, _firekey_error)
     app.add_exception_handler(PolicyViolationError, _policy_error)
     return app

@@ -104,11 +104,18 @@ resource "google_project_service_identity" "aiplatform" {
   service  = "aiplatform.googleapis.com"
 }
 
+resource "google_project_service_identity" "video" {
+  provider = google-beta
+  project  = var.project_id
+  service  = "videointelligence.googleapis.com"
+}
+
 resource "google_kms_crypto_key_iam_member" "service_crypto" {
   for_each = {
     storage       = google_project_service_identity.storage.member
     secretmanager = google_project_service_identity.secretmanager.member
     aiplatform    = google_project_service_identity.aiplatform.member
+    video         = google_project_service_identity.video.member
   }
 
   crypto_key_id = google_kms_crypto_key.evidence.id
@@ -172,6 +179,68 @@ resource "google_storage_bucket" "agents" {
   lifecycle {
     prevent_destroy = true
   }
+}
+
+resource "google_storage_bucket" "walkthroughs" {
+  project                     = var.project_id
+  name                        = "${var.project_id}-firekey-walkthroughs"
+  location                    = var.location
+  force_destroy               = false
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  storage_class               = "STANDARD"
+
+  versioning {
+    enabled = true
+  }
+
+  retention_policy {
+    retention_period = 86400
+  }
+
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.evidence.id
+  }
+
+  lifecycle_rule {
+    condition {
+      age = 30
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_storage_bucket_iam_member" "walkthrough_create" {
+  count = var.walkthrough_user == null ? 0 : 1
+
+  bucket = google_storage_bucket.walkthroughs.name
+  role   = "roles/storage.objectCreator"
+  member = var.walkthrough_user
+}
+
+resource "google_storage_bucket_iam_member" "walkthrough_view" {
+  for_each = merge(
+    var.walkthrough_user == null ? {} : { api = var.walkthrough_user },
+    { video = google_project_service_identity.video.member },
+  )
+
+  bucket = google_storage_bucket.walkthroughs.name
+  role   = "roles/storage.objectViewer"
+  member = each.value
+}
+
+resource "google_kms_crypto_key_iam_member" "walkthrough_crypto" {
+  for_each = var.walkthrough_user == null ? {} : { api = var.walkthrough_user }
+
+  crypto_key_id = google_kms_crypto_key.evidence.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = each.value
 }
 
 resource "google_storage_bucket_iam_member" "agents" {

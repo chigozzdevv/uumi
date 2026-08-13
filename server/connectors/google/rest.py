@@ -35,6 +35,33 @@ class GoogleRestClient:
         params: dict[str, str] | None = None,
         expected: frozenset[int] = frozenset({200}),
     ) -> dict[str, Any]:
+        response = await self.response(
+            method,
+            url,
+            json=json,
+            content=content,
+            headers=headers,
+            params=params,
+            expected=expected,
+        )
+        if not response.content:
+            return {}
+        value = response.json()
+        if not isinstance(value, dict):
+            raise ConnectorError("google-api-response", "Google API returned a non-object response")
+        return value
+
+    async def response(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: Any | None = None,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
+        params: dict[str, str] | None = None,
+        expected: frozenset[int] = frozenset({200}),
+    ) -> httpx.Response:
         token = await self._token()
         request_headers = {
             "Authorization": f"Bearer {token}",
@@ -56,12 +83,7 @@ class GoogleRestClient:
                 f"Google API returned HTTP {response.status_code}",
                 retryable=retryable,
             )
-        if not response.content:
-            return {}
-        value = response.json()
-        if not isinstance(value, dict):
-            raise ConnectorError("google-api-response", "Google API returned a non-object response")
-        return value
+        return response
 
     async def wait_operation(
         self,

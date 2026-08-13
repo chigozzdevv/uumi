@@ -69,6 +69,11 @@ class FirestorePaths:
         return f"{root}/versions/{_segment(version_id)}"
 
     @staticmethod
+    def walkthrough(organisation_id: str, playbook_id: str, source_id: str) -> str:
+        root = FirestorePaths.playbook(organisation_id, playbook_id)
+        return f"{root}/walkthroughs/{_segment(source_id)}"
+
+    @staticmethod
     def dryrun(organisation_id: str, playbook_id: str, run_id: str) -> str:
         root = FirestorePaths.playbook(organisation_id, playbook_id)
         return f"{root}/dryruns/{_segment(run_id)}"

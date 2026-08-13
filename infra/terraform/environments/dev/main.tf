@@ -93,6 +93,7 @@ module "storage" {
     coordinator = module.identity.members["firekey-coordinator"]
     browser     = module.identity.members["firekey-browser"]
   }
+  walkthrough_user   = module.identity.members["firekey-api"]
   agent_staging_user = module.identity.members["firekey-agents"]
   secret_accessors = {
     api         = module.identity.members["firekey-api"]
@@ -185,6 +186,7 @@ module "runtime" {
   browser_image               = var.browser_image
   browser_gateway_url         = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
   evidence_bucket             = module.storage.evidence_bucket
+  walkthrough_bucket          = module.storage.walkthrough_bucket
   capability_secret_version   = local.capability_secret_version
   browser_template            = module.browser.template
   browser_zone                = var.zone

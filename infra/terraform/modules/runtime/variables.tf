@@ -182,6 +182,11 @@ variable "evidence_bucket" {
   type        = string
 }
 
+variable "walkthrough_bucket" {
+  description = "Short-retention bucket receiving teaching walkthrough uploads."
+  type        = string
+}
+
 variable "capability_secret_version" {
   description = "Full Secret Manager version holding the capability signing key."
   type        = string

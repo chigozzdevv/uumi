@@ -13,6 +13,8 @@ from browser.service import BrowserService
 from browser.storage import FirestoreBrowserRepository
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
+from connectors.storage import GcsUploadConnector
+from connectors.video import VideoIntelligenceConnector
 from core.approval import ApprovalService
 from core.auth import (
     AccessControl,
@@ -25,7 +27,7 @@ from core.config import Settings
 from core.errors import AuthenticationError
 from core.incident import IncidentService
 from core.inventory import InventoryService
-from core.playbook import PlaybookService
+from core.playbook import PlaybookService, WalkthroughService
 from core.storage import (
     FirestoreApprovalRepository,
     FirestoreCatalog,
@@ -33,6 +35,7 @@ from core.storage import (
     FirestoreInventoryRepository,
     FirestorePlaybookRepository,
     FirestoreRunRepository,
+    FirestoreWalkthroughRepository,
 )
 from core.workflow import RunWorkflow
 from fastapi import Depends, Header, Request
@@ -52,6 +55,7 @@ class ApiServices:
     agents: AgentRuntimeService | None = None
     agent_repository: AgentRepository | None = None
     agent_continuity: AgentContinuityService | None = None
+    walkthroughs: WalkthroughService | None = None
 
 
 def build_services(settings: Settings | None = None) -> ApiServices:
@@ -107,6 +111,13 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         ),
         agent_repository=agent_repository,
         agent_continuity=continuity,
+        walkthroughs=WalkthroughService(
+            FirestoreWalkthroughRepository(client),
+            GcsUploadConnector(google, configured.walkthrough_bucket),
+            VideoIntelligenceConnector(google),
+            configured.walkthrough_bucket,
+            _now,
+        ),
     )
 
 

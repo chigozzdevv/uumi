@@ -21,6 +21,7 @@ locals {
     "secretmanager.googleapis.com",
     "serviceusage.googleapis.com",
     "storage.googleapis.com",
+    "videointelligence.googleapis.com",
     "workflowexecutions.googleapis.com",
     "workflows.googleapis.com",
   ])

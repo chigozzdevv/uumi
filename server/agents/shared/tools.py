@@ -118,13 +118,20 @@ async def build_playbook(definition: dict[str, Any], tool_context: ToolContext) 
     return draft.model_dump(mode="json")
 
 
-async def analyse_walkthrough(source_id: str, tool_context: ToolContext) -> dict[str, Any]:
+async def analyse_walkthrough(
+    playbook_id: str, source_id: str, tool_context: ToolContext
+) -> dict[str, Any]:
     """Load one sanitised walkthrough evidence record for playbook analysis."""
     context = AgentContext(tool_context)
-    evidence = await context.document(FirestorePaths.evidence(context.organisation_id, source_id))
-    if evidence.get("kind") not in {"sanitised-replay", "walkthrough"}:
-        raise ValueError("source is not sanitised walkthrough evidence")
-    return evidence
+    source = await context.document(
+        FirestorePaths.walkthrough(context.organisation_id, playbook_id, source_id)
+    )
+    if source.get("status") != "ready" or not isinstance(source.get("analysis"), dict):
+        raise ValueError("walkthrough analysis is not ready")
+    analysis = source["analysis"]
+    if not isinstance(analysis, dict):
+        raise ValueError("walkthrough analysis is invalid")
+    return analysis
 
 
 async def generate_dry_run(
