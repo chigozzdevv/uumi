@@ -40,6 +40,7 @@ class OutboxEvent(Contract):
     lease_owner: Identifier | None = None
     lease_expires_at: AwareDatetime | None = None
     published_at: AwareDatetime | None = None
+    publisher_message_id: str | None = Field(default=None, min_length=1, max_length=256)
     last_error: str | None = Field(default=None, max_length=1024)
 
     @model_validator(mode="after")
@@ -48,4 +49,6 @@ class OutboxEvent(Contract):
             raise ValueError("outbox lease owner and expiry must be set together")
         if self.published_at is not None and self.lease_owner is not None:
             raise ValueError("a published event cannot remain leased")
+        if (self.published_at is None) != (self.publisher_message_id is None):
+            raise ValueError("published time and publisher message ID must be set together")
         return self

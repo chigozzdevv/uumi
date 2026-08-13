@@ -97,3 +97,21 @@ def test_outbox_lease_must_be_complete() -> None:
             available_at=NOW,
             lease_owner="publisher_one",
         )
+
+
+def test_outbox_publication_requires_provider_receipt() -> None:
+    event = RunEvent(
+        id="event_one",
+        organisation_id="org_one",
+        run_id="run_one",
+        credential_id="cred_one",
+        kind=EventKind.RUN_CREATED,
+        revision=0,
+        stage=Stage.TRIGGER,
+        status=RunStatus.PENDING,
+        actor_id="service_one",
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(ValidationError, match="message ID"):
+        OutboxEvent(event=event, available_at=NOW, published_at=NOW)

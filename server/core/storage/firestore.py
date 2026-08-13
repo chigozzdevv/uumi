@@ -1,9 +1,7 @@
 from collections.abc import Mapping
-from enum import Enum
 from typing import Any
 
 from contracts import (
-    Contract,
     CreateRunCommand,
     EventKind,
     RotationRun,
@@ -23,6 +21,7 @@ from core.errors import (
     RunNotFoundError,
     StorageIntegrityError,
 )
+from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 from core.storage.repository import (
     MutationResult,
@@ -114,9 +113,9 @@ class FirestoreRunRepository:
                 },
             )
 
-            transaction.set(run_ref, _encode(run))
-            transaction.set(step_ref, _encode(step))
-            transaction.set(outbox_ref, _encode(event))
+            transaction.set(run_ref, encode(run))
+            transaction.set(step_ref, encode(step))
+            transaction.set(outbox_ref, encode(event))
             transaction.set(
                 lock_ref,
                 {
@@ -238,9 +237,9 @@ class FirestoreRunRepository:
                 },
             )
 
-            transaction.set(run_ref, _encode(updated))
-            transaction.set(step_ref, _encode(step))
-            transaction.set(outbox_ref, _encode(event))
+            transaction.set(run_ref, encode(updated))
+            transaction.set(step_ref, encode(step))
+            transaction.set(outbox_ref, encode(event))
             if updated.status is RunStatus.COMPLETED:
                 transaction.delete(lock_ref)
             return MutationResult(run=updated, step=step, applied=True)
@@ -287,21 +286,4 @@ def _required_string(data: Mapping[str, Any], key: str) -> str:
     value = data.get(key)
     if not isinstance(value, str):
         raise StorageIntegrityError(f"stored field {key} is missing or invalid")
-    return value
-
-
-def _encode(contract: Contract) -> dict[str, Any]:
-    value = _normalise(contract.model_dump(mode="python"))
-    if not isinstance(value, dict):
-        raise TypeError("a Firestore contract must encode to a mapping")
-    return value
-
-
-def _normalise(value: Any) -> Any:
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, Mapping):
-        return {str(key): _normalise(item) for key, item in value.items()}
-    if isinstance(value, tuple | list | set | frozenset):
-        return [_normalise(item) for item in value]
     return value

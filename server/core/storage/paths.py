@@ -20,6 +20,10 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/outbox/{_segment(event_id)}"
 
     @staticmethod
+    def delivery(organisation_id: str, run_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/deliveries/{_segment(run_id)}"
+
+    @staticmethod
     def lock(organisation_id: str, credential_id: str) -> str:
         organisation = FirestorePaths.organisation(organisation_id)
         return f"{organisation}/credentials/{_segment(credential_id)}/locks/rotation"
