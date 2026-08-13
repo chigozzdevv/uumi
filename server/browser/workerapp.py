@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 from collections.abc import AsyncIterator
@@ -5,19 +6,23 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from broker import CapabilitySigner
+from broker import CapabilityClaims, CapabilitySigner
 from broker.capability import request_digest
 from broker.evidence import GcsEvidenceSink
 from capture import SecureCapture
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
 from contracts import (
+    Approval,
+    ApprovalDecision,
     BrowserAction,
+    BrowserActionKind,
     BrowserSession,
     BrowserStatus,
     Contract,
     PlaybookStep,
     PlaybookVersion,
+    ProtectedAction,
     RotationRun,
     SecureCaptureResult,
     Selector,
@@ -31,11 +36,12 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi import FastAPI, Header, Request, WebSocket
 from google.cloud.firestore_v1 import AsyncClient
 from playwright.async_api import Browser, Playwright, async_playwright
+from policy import digest
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from browser.driver import BrowserDriver
-from browser.model import ComputerUseClient
+from browser.model import ComputerProposal, ComputerUseClient
 from browser.replay import ReplayRecorder
 from browser.service import BrowserService
 from browser.storage import FirestoreBrowserRepository
@@ -60,6 +66,10 @@ class ProposeRequest(Contract):
     objective: str = Field(min_length=1, max_length=2048)
 
 
+class NavigateRequest(Contract):
+    step: PlaybookStep
+
+
 class ProposeResponse(Contract):
     done: bool
     action: BrowserAction | None = None
@@ -75,6 +85,7 @@ class ExecuteRequest(Contract):
 class ExecuteResponse(Contract):
     session: BrowserSession
     capture: SecureCaptureResult | None = None
+    paused_reason: str | None = Field(default=None, max_length=256)
 
 
 class WorkerRuntime:
@@ -105,6 +116,7 @@ class WorkerRuntime:
         self.masked_selectors = masked_selectors
         self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
         self.pending: dict[str, tuple[ProposedBrowserAction, PlaybookStep]] = {}
+        self.continuations: dict[str, tuple[ComputerProposal, dict[str, str | int | bool]]] = {}
 
     async def close(self) -> None:
         await self.browser.close()
@@ -118,11 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = WorkerSettings()  # type: ignore[call-arg]
     firestore = AsyncClient(project=settings.project_id, database=settings.firestore_database)
     catalog = FirestoreCatalog(firestore)
-    session = await catalog.get(
-        FirestorePaths.browser(settings.organisation_id, settings.session_id), BrowserSession
-    )
-    if session.status not in {BrowserStatus.READY, BrowserStatus.RUNNING}:
-        raise RuntimeError("browser session is not ready for its worker")
+    session = await _wait_session(catalog, settings.organisation_id, settings.session_id)
     google = GoogleRestClient()
     capability = await SecretManagerConnector(google).access(settings.capability_key_version)
     try:
@@ -204,16 +212,26 @@ async def propose(
     request: Request,
 ) -> ProposeResponse:
     runtime: WorkerRuntime = request.app.state.runtime
-    session, _ = await _authorise(
+    session, _, _ = await _authorise(
         runtime,
         capability,
         "browser.operate",
         {"objective": body.objective, "step": body.step.model_dump(mode="json")},
     )
+    await _validate_step(runtime, session, body.step)
     worker: ComputerUseWorker = request.app.state.worker
-    proposed = await worker.propose(session, body.step, body.objective)
+    continuation = runtime.continuations.get(body.step.id)
+    proposed = await worker.propose(
+        session,
+        body.step,
+        body.objective,
+        continuation[0] if continuation is not None else None,
+        continuation[1] if continuation is not None else None,
+    )
     if proposed is None:
+        runtime.continuations.pop(body.step.id, None)
         return ProposeResponse(done=True)
+    runtime.pending.clear()
     runtime.pending[proposed.action.id] = (proposed, body.step)
     return ProposeResponse(
         done=False,
@@ -230,7 +248,7 @@ async def execute(
     request: Request,
 ) -> ExecuteResponse:
     runtime: WorkerRuntime = request.app.state.runtime
-    session, _ = await _authorise(
+    session, _, claims = await _authorise(
         runtime,
         capability,
         "browser.execute",
@@ -240,6 +258,7 @@ async def execute(
     if pending is None:
         raise ResourceConflictError("browser proposal is missing or was already consumed")
     proposal, step = pending
+    await _validate_approval(runtime, claims, step)
     worker: ComputerUseWorker = request.app.state.worker
     if step.secure_field is not None:
         changed, capture = await worker.execute_protected_capture(
@@ -249,6 +268,13 @@ async def execute(
         changed = await worker.execute(session, proposal, body.confirmed)
         capture = None
     runtime.session = changed
+    outcome: dict[str, str | int | bool] = {
+        "status": "succeeded" if changed.status is BrowserStatus.RUNNING else "paused",
+        "url": runtime.driver.url,
+    }
+    if proposal.model.requires_confirmation and body.confirmed:
+        outcome["safety_acknowledgement"] = "true"
+    runtime.continuations[step.id] = (proposal.model, outcome)
     if not changed.recording_paused:
         await runtime.replay.record(
             changed,
@@ -256,7 +282,70 @@ async def execute(
             runtime.masked_selectors,
             ("computer-use",),
         )
-    return ExecuteResponse(session=changed, capture=capture)
+    paused_reason = None
+    if step.secure_field is not None and capture is None:
+        paused_reason = "secure capture requires human-assisted transfer"
+    return ExecuteResponse(
+        session=changed,
+        capture=capture,
+        paused_reason=paused_reason,
+    )
+
+
+@app.post("/v1/steps/navigate", response_model=ExecuteResponse)
+async def navigate(
+    body: NavigateRequest,
+    capability: Capability,
+    request: Request,
+) -> ExecuteResponse:
+    runtime: WorkerRuntime = request.app.state.runtime
+    payload = {"step": body.step.model_dump(mode="json")}
+    session, _, claims = await _authorise(runtime, capability, "browser.navigate", payload)
+    await _validate_step(runtime, session, body.step)
+    if (
+        body.step.operation != "navigate"
+        or body.step.secure_field is not None
+        or body.step.selectors
+    ):
+        raise ResourceConflictError("deterministic navigation requires a selector-free URL step")
+    await _validate_approval(runtime, claims, body.step)
+    url = body.step.parameters.get("url")
+    if not isinstance(url, str):
+        raise ResourceConflictError("deterministic navigation step has no URL")
+    action = BrowserAction(
+        id=new_id("browser-action"),
+        session_id=session.id,
+        kind=BrowserActionKind.NAVIGATE,
+        url=url,
+        protected=body.step.protected,
+        expected_url=body.step.checkpoint.url_pattern if body.step.checkpoint else None,
+        expected_text=body.step.checkpoint.required_text if body.step.checkpoint else (),
+        forbidden_text=(body.step.checkpoint.forbidden_text if body.step.checkpoint else ()),
+        fencing_token=session.fencing_token,
+    )
+    authorised = await runtime.sessions.authorize_action(
+        session.organisation_id, session.id, session.revision, action
+    )
+    try:
+        await runtime.driver.execute(action)
+    except Exception as error:
+        await runtime.sessions.finish_action(
+            session.organisation_id,
+            session.id,
+            action.id,
+            False,
+            f"{type(error).__name__}: {error}"[:1024],
+        )
+        raise
+    await runtime.sessions.finish_action(session.organisation_id, session.id, action.id, True)
+    runtime.session = authorised
+    await runtime.replay.record(
+        authorised,
+        action.kind.value,
+        runtime.masked_selectors,
+        ("deterministic-navigation",),
+    )
+    return ExecuteResponse(session=authorised)
 
 
 @app.websocket("/v1/live")
@@ -283,7 +372,7 @@ async def live_browser(websocket: WebSocket) -> None:
             BrowserSession,
         )
         if kind == "frame":
-            if session.model_paused or session.recording_paused:
+            if session.recording_paused:
                 await websocket.send_json({"type": "paused", "status": session.status.value})
             else:
                 await websocket.send_bytes(
@@ -350,7 +439,7 @@ async def _authorise(
     capability: str,
     tool: str,
     payload: dict[str, Any],
-) -> tuple[BrowserSession, RotationRun]:
+) -> tuple[BrowserSession, RotationRun, CapabilityClaims]:
     catalog = FirestoreCatalog(runtime.firestore)
     session = await catalog.get(
         FirestorePaths.browser(runtime.session.organisation_id, runtime.session.id),
@@ -380,7 +469,70 @@ async def _authorise(
     )
     if actual != expected:
         raise CapabilityError("worker capability does not bind the exact browser operation")
-    return session, run
+    return session, run, claims
+
+
+async def _validate_approval(
+    runtime: WorkerRuntime,
+    claims: CapabilityClaims,
+    step: PlaybookStep,
+) -> None:
+    if step.protected and claims.approval_id is None:
+        raise CapabilityError("protected browser action has no consumed approval")
+    if claims.approval_id is None:
+        return
+    catalog = FirestoreCatalog(runtime.firestore)
+    approval = await catalog.get(
+        FirestorePaths.approval(runtime.session.organisation_id, claims.approval_id), Approval
+    )
+    action = await catalog.get(
+        FirestorePaths.action(runtime.session.organisation_id, approval.action_id), ProtectedAction
+    )
+    if (
+        approval.decision is not ApprovalDecision.APPROVED
+        or approval.consumed_at is None
+        or approval.expires_at <= _now()
+    ):
+        raise CapabilityError("protected browser approval is not active")
+    if action.run_id != runtime.session.run_id or action.kind != step.tool:
+        raise CapabilityError("protected browser approval belongs to another action")
+    if claims.action_digest != digest(action) or approval.action_digest != digest(action):
+        raise CapabilityError("protected browser action digest changed")
+
+
+async def _validate_step(
+    runtime: WorkerRuntime,
+    session: BrowserSession,
+    step: PlaybookStep,
+) -> None:
+    version = await FirestoreCatalog(runtime.firestore).get(
+        FirestorePaths.playbook_version(
+            session.organisation_id,
+            session.playbook_id,
+            session.playbook_version,
+        ),
+        PlaybookVersion,
+    )
+    matches = tuple(item for item in version.definition.steps if item.id == step.id)
+    if len(matches) != 1 or matches[0] != step:
+        raise CapabilityError("browser step differs from the immutable playbook")
+
+
+async def _wait_session(
+    catalog: FirestoreCatalog,
+    organisation_id: str,
+    session_id: str,
+) -> BrowserSession:
+    for _ in range(90):
+        session = await catalog.get(
+            FirestorePaths.browser(organisation_id, session_id), BrowserSession
+        )
+        if session.status in {BrowserStatus.READY, BrowserStatus.RUNNING}:
+            return session
+        if session.status is not BrowserStatus.PROVISIONING:
+            raise RuntimeError(f"browser worker cannot start from {session.status.value}")
+        await asyncio.sleep(2)
+    raise RuntimeError("browser session did not become ready before worker startup timeout")
 
 
 def _now() -> datetime:

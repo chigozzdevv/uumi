@@ -7,6 +7,7 @@ from contracts import (
     BrowserActionKind,
     BrowserPolicy,
     BrowserSession,
+    PlaybookStep,
     Selector,
     SelectorKind,
 )
@@ -84,6 +85,16 @@ class BrowserDriver:
         if not inside:
             raise ResourceConflictError("model coordinate does not hit the approved control")
 
+    async def validate_step(self, step: PlaybookStep) -> None:
+        if step.checkpoint is None:
+            raise ResourceConflictError("browser step has no deterministic checkpoint")
+        self.validate_url(self._page.url)
+        if not fnmatch.fnmatchcase(self._page.url, step.checkpoint.url_pattern):
+            raise ResourceConflictError("browser URL does not match the approved checkpoint")
+        for selector in step.selectors:
+            await self.locator(selector)
+        await self._validate_text(step.checkpoint.required_text, step.checkpoint.forbidden_text)
+
     async def locator(self, selector: Selector, require_unique: bool = True) -> Locator:
         if selector.kind is SelectorKind.ROLE:
             locator = self._page.get_by_role(
@@ -134,9 +145,15 @@ class BrowserDriver:
         self.validate_url(self._page.url)
         if action.expected_url and not fnmatch.fnmatchcase(self._page.url, action.expected_url):
             raise ResourceConflictError("browser URL does not match the approved checkpoint")
-        for text in action.expected_text:
+        await self._validate_text(action.expected_text, action.forbidden_text)
+
+    async def _validate_text(self, required: tuple[str, ...], forbidden: tuple[str, ...]) -> None:
+        for text in required:
             if await self._page.get_by_text(text, exact=True).count() == 0:
                 raise ResourceConflictError(f"browser checkpoint text is missing: {text}")
+        for text in forbidden:
+            if await self._page.get_by_text(text, exact=True).count() != 0:
+                raise ResourceConflictError(f"browser checkpoint contains forbidden text: {text}")
 
 
 def _selector(action: BrowserAction) -> Selector:

@@ -54,6 +54,7 @@ class ComputerUseWorker:
         frame = await self._driver.screenshot(session)
         proposal = await self._model.propose(objective, frame, previous, outcome)
         if proposal is None:
+            await self._driver.validate_step(step)
             return None
         action = await self._bind(session, step, proposal)
         return ProposedBrowserAction(
@@ -150,13 +151,7 @@ class ComputerUseWorker:
         kind: BrowserActionKind
         value: str | None = None
         url: str | None = None
-        if proposal.name == "navigate":
-            kind = BrowserActionKind.NAVIGATE
-            url = _argument(proposal.arguments, "url", str)
-            if parameters.get("url") != url:
-                raise ResourceConflictError("model navigation differs from the approved URL")
-            self._driver.validate_url(url)
-        elif proposal.name == "click":
+        if proposal.name == "click":
             kind = BrowserActionKind.CLICK
             if selector is None:
                 raise ResourceConflictError("approved click has no selector")
@@ -170,6 +165,8 @@ class ComputerUseWorker:
             value = _argument(proposal.arguments, "text", str)
             if parameters.get("value") != value or selector is None:
                 raise ResourceConflictError("model input differs from the approved value")
+            if proposal.arguments.get("press_enter") not in {None, False}:
+                raise ResourceConflictError("model input cannot add an undeclared Enter key")
         elif proposal.name == "press_key":
             kind = BrowserActionKind.KEY
             value = _argument(proposal.arguments, "key", str)
@@ -177,6 +174,13 @@ class ComputerUseWorker:
                 raise ResourceConflictError("model key differs from the approved key")
         elif proposal.name == "scroll":
             kind = BrowserActionKind.SCROLL
+            if selector is None:
+                raise ResourceConflictError("approved scroll has no selector")
+            await self._driver.validate_coordinate(
+                selector,
+                _argument(proposal.arguments, "x", int),
+                _argument(proposal.arguments, "y", int),
+            )
             magnitude = _argument(proposal.arguments, "magnitude_in_pixels", int, 300)
             direction = _argument(proposal.arguments, "direction", str)
             if direction not in {"up", "down"}:
@@ -197,6 +201,7 @@ class ComputerUseWorker:
             protected=step.protected,
             expected_url=step.checkpoint.url_pattern if step.checkpoint else None,
             expected_text=step.checkpoint.required_text if step.checkpoint else (),
+            forbidden_text=step.checkpoint.forbidden_text if step.checkpoint else (),
             fencing_token=session.fencing_token,
         )
 

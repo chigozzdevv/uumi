@@ -6,13 +6,14 @@ from core.auth.access import (
     Role,
 )
 from core.auth.identity import AuthenticatedIdentity
-from core.auth.tokens import GoogleTokenVerifier, IdentityTokenVerifier
+from core.auth.tokens import GoogleTokenVerifier, IapTokenVerifier, IdentityTokenVerifier
 
 __all__ = [
     "AccessControl",
     "AuthenticatedIdentity",
     "FirestoreAccessRepository",
     "GoogleTokenVerifier",
+    "IapTokenVerifier",
     "IdentityTokenVerifier",
     "Permission",
     "PrincipalGrant",

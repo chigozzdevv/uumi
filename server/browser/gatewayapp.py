@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from broker import CapabilitySigner
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
-from core.auth import AccessControl, FirestoreAccessRepository, GoogleTokenVerifier
+from core.auth import AccessControl, FirestoreAccessRepository, IapTokenVerifier
 from fastapi import FastAPI, WebSocket
 from google.cloud.firestore_v1 import AsyncClient
 from pydantic import Field
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.gateway = BrowserSessionGateway(
         FirestoreGatewayRepository(firestore),
         AccessControl(FirestoreAccessRepository(firestore)),
-        GoogleTokenVerifier(settings.iap_audience),
+        IapTokenVerifier(settings.iap_audience),
         signer,
     )
     yield

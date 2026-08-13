@@ -1,9 +1,15 @@
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
+from broker import CapabilitySigner
+from browser.access import BrowserAccessService
 from browser.driver import BrowserDriver
+from browser.model import ComputerUseClient
 from browser.service import BrowserService
+from connectors.base.errors import ConnectorError
 from contracts import (
+    BrowserAccessMode,
     BrowserAction,
     BrowserActionKind,
     BrowserActionRecord,
@@ -12,9 +18,12 @@ from contracts import (
     BrowserSession,
     BrowserStatus,
     ReplayCheckpoint,
+    RotationRun,
+    RunStatus,
     SecureCaptureResult,
     Selector,
     SelectorKind,
+    Trigger,
 )
 from core.errors import ResourceConflictError
 
@@ -149,6 +158,110 @@ async def test_stale_browser_action_is_rejected_before_authorisation() -> None:
     assert repository.actions == {}
 
 
+@pytest.mark.anyio
+async def test_browser_input_value_is_not_persisted_in_action_history() -> None:
+    repository = Repository()
+    service = BrowserService(repository, lambda: NOW)
+    session = await service.create(_session())
+    session = await service.attach(
+        "org_one", session.id, session.revision, "instances/worker", "10.2.0.4"
+    )
+    session = await service.start("org_one", session.id, session.revision)
+    action = BrowserAction(
+        id="action_one",
+        session_id=session.id,
+        kind=BrowserActionKind.TYPE,
+        selector=Selector(kind=SelectorKind.LABEL, value="Account name"),
+        value="operator-supplied-value",
+        fencing_token=session.fencing_token,
+    )
+
+    await service.authorize_action("org_one", session.id, session.revision, action)
+
+    assert repository.actions[action.id].action.value == "<redacted>"
+
+
+@pytest.mark.anyio
+async def test_takeover_capability_is_identity_bound_and_releases_to_a_safe_pause() -> None:
+    repository = Repository()
+    sessions = BrowserService(repository, lambda: NOW)
+    session = await sessions.create(_session())
+    session = await sessions.attach(
+        "org_one", session.id, session.revision, "instances/worker", "10.2.0.4"
+    )
+    session = await sessions.start("org_one", session.id, session.revision)
+    session = await sessions.freeze("org_one", session.id, session.revision)
+    run = RotationRun(
+        id="run_one",
+        organisation_id="org_one",
+        credential_id="credential_one",
+        trigger=Trigger(
+            source="incident",
+            event_id="event_one",
+            actor_id="actor_one",
+            reason="credential exposure",
+            urgency="high",
+            received_at=NOW,
+        ),
+        policy_version="policy_one",
+        status=RunStatus.PAUSED,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    catalog = Catalog(repository, run)
+    signer = CapabilitySigner(b"x" * 32)
+
+    async def load_signer() -> CapabilitySigner:
+        return signer
+
+    access = BrowserAccessService(
+        catalog,
+        sessions,
+        load_signer,
+        "https://browser.example.com",
+        lambda: NOW,
+    )
+    grant = await access.issue(
+        "org_one", session.id, BrowserAccessMode.TAKEOVER, "operator-subject"
+    )
+    claims = signer.verify(grant.capability, NOW)
+
+    assert grant.session.status is BrowserStatus.TAKEOVER
+    assert grant.session.takeover_subject == "operator-subject"
+    assert claims.tool == "browser.takeover"
+    assert claims.agent_id.startswith("actor_")
+
+    released = await access.release("org_one", session.id, "operator-subject")
+    rebound = await sessions.rebind_fence("org_one", session.id, released.revision, 4)
+
+    assert released.status is BrowserStatus.PAUSED
+    assert released.recording_paused is True
+    assert rebound.fencing_token == 4
+
+
+@pytest.mark.anyio
+async def test_computer_use_enables_injection_detection_and_parses_supported_action() -> None:
+    google = ComputerGoogle("click")
+    client = ComputerUseClient(google, "project-one")  # type: ignore[arg-type]
+
+    proposal = await client.propose("click the approved control", b"image")
+
+    assert proposal is not None
+    assert proposal.name == "click"
+    assert proposal.requires_confirmation is True
+    computer = google.body["tools"][0]["computerUse"]
+    assert computer["enablePromptInjectionDetection"] is True
+    assert "navigate" not in computer["excludedPredefinedFunctions"]
+
+
+@pytest.mark.anyio
+async def test_computer_use_rejects_model_navigation() -> None:
+    client = ComputerUseClient(ComputerGoogle("navigate"), "project-one")  # type: ignore[arg-type]
+
+    with pytest.raises(ConnectorError, match="unsupported browser action"):
+        await client.propose("go to an approved URL", b"image")
+
+
 def test_browser_domain_allowlist_does_not_accept_lookalikes() -> None:
     driver = BrowserDriver(None, _session().policy)  # type: ignore[arg-type]
 
@@ -182,3 +295,55 @@ def _session() -> BrowserSession:
         updated_at=NOW,
         expires_at=NOW + timedelta(minutes=30),
     )
+
+
+class Catalog:
+    def __init__(self, repository: Repository, run: RotationRun) -> None:
+        self._repository = repository
+        self._run = run
+
+    async def get[T](self, path: str, model: type[T]) -> T:
+        if model is BrowserSession:
+            assert self._repository.session is not None
+            return self._repository.session  # type: ignore[return-value]
+        if model is RotationRun:
+            return self._run  # type: ignore[return-value]
+        raise AssertionError(f"unexpected catalog model for {path}")
+
+
+class ComputerGoogle:
+    def __init__(self, action: str) -> None:
+        self.action = action
+        self.body: dict[str, Any] = {}
+
+    async def request(self, method: str, url: str, **kwargs: object) -> dict[str, Any]:
+        assert method == "POST"
+        assert url.endswith(":generateContent")
+        body = kwargs.get("json")
+        assert isinstance(body, dict)
+        self.body = body
+        return {
+            "candidates": [
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": self.action,
+                                    "args": {
+                                        "x": 500,
+                                        "y": 500,
+                                        "url": "https://vendor.example.com",
+                                        "safety_decision": {
+                                            "decision": "require_confirmation",
+                                            "explanation": "confirm the browser action",
+                                        },
+                                    },
+                                }
+                            }
+                        ],
+                    }
+                }
+            ]
+        }

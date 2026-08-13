@@ -76,8 +76,8 @@ class ComputerUseClient:
                     {
                         "computerUse": {
                             "environment": "ENVIRONMENT_BROWSER",
-                            "enablePromptInjectionDetection": True,
                             "excludedPredefinedFunctions": sorted(_EXCLUDED),
+                            "enablePromptInjectionDetection": True,
                         }
                     }
                 ],
@@ -149,13 +149,11 @@ def _image(value: bytes) -> dict[str, Any]:
     }
 
 
-_ALLOWED = frozenset({"click", "navigate", "press_key", "scroll", "type", "wait"})
+_ALLOWED = frozenset({"click", "press_key", "scroll", "type", "wait"})
 _EXCLUDED = frozenset(
     {
         "double_click",
         "drag_and_drop",
-        "go_back",
-        "go_forward",
         "hotkey",
         "key_down",
         "key_up",

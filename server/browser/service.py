@@ -4,6 +4,7 @@ from typing import Protocol
 
 from contracts import (
     BrowserAction,
+    BrowserActionKind,
     BrowserActionRecord,
     BrowserActionStatus,
     BrowserSession,
@@ -97,6 +98,21 @@ class BrowserService:
         )
         return await self._repository.update(organisation_id, session_id, revision, changed)
 
+    async def rebind_fence(
+        self,
+        organisation_id: str,
+        session_id: str,
+        revision: int,
+        fencing_token: int,
+    ) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        if current.status not in {BrowserStatus.READY, BrowserStatus.PAUSED}:
+            raise ResourceConflictError("only an inactive browser can accept a renewed run fence")
+        if fencing_token <= current.fencing_token:
+            raise ResourceConflictError("browser fence must advance monotonically")
+        changed = self._change(current, fencing_token=fencing_token)
+        return await self._repository.update(organisation_id, session_id, revision, changed)
+
     async def arm_capture(
         self, organisation_id: str, session_id: str, revision: int
     ) -> BrowserSession:
@@ -134,10 +150,11 @@ class BrowserService:
         if current.status is not BrowserStatus.CAPTURING:
             raise ResourceConflictError("secure capture barrier is not armed")
         await self._repository.save_capture(result)
+        takeover = current.takeover_subject is not None
         changed = self._change(
             current,
-            status=BrowserStatus.RUNNING,
-            model_paused=False,
+            status=BrowserStatus.TAKEOVER if takeover else BrowserStatus.RUNNING,
+            model_paused=takeover,
             recording_paused=False,
         )
         return await self._repository.update(
@@ -172,6 +189,25 @@ class BrowserService:
         )
         return await self._repository.update(organisation_id, session_id, revision, changed)
 
+    async def release_takeover(
+        self,
+        organisation_id: str,
+        session_id: str,
+        revision: int,
+        subject: str,
+    ) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        if current.status is not BrowserStatus.TAKEOVER or current.takeover_subject != subject:
+            raise ResourceConflictError("only the takeover owner can release the browser")
+        changed = self._change(
+            current,
+            status=BrowserStatus.PAUSED,
+            model_paused=True,
+            recording_paused=True,
+            takeover_subject=None,
+        )
+        return await self._repository.update(organisation_id, session_id, revision, changed)
+
     async def authorize_action(
         self,
         organisation_id: str,
@@ -194,7 +230,12 @@ class BrowserService:
         if action.kind not in current.policy.allowed_actions:
             raise ResourceConflictError("browser action is not allowed by session policy")
         changed = self._change(current, step_count=current.step_count + 1)
-        return await self._repository.begin_action(current, changed, action, self._clock())
+        recorded = (
+            action.model_copy(update={"value": "<redacted>"})
+            if action.kind is BrowserActionKind.TYPE
+            else action
+        )
+        return await self._repository.begin_action(current, changed, recorded, self._clock())
 
     async def finish_action(
         self,

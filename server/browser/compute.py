@@ -20,18 +20,25 @@ class BrowserVmManager:
         project_id: str,
         zone: str,
         instance_template: str,
+        capability_key_version: str,
+        evidence_bucket: str,
+        region: str,
+        worker_image: str,
     ) -> None:
         self._client = client
         self._project = project_id
         self._zone = zone
         self._template = instance_template
+        self._capability = capability_key_version
+        self._evidence = evidence_bucket
+        self._region = region
+        self._image = worker_image
 
     async def create(
         self,
         organisation_id: str,
         session_id: str,
         expires_at: datetime,
-        api_url: str,
     ) -> BrowserVm:
         name = _name(session_id)
         base = (
@@ -51,8 +58,12 @@ class BrowserVmManager:
                     "items": [
                         {"key": "firekey-organisation", "value": organisation_id},
                         {"key": "firekey-session", "value": session_id},
-                        {"key": "firekey-api", "value": api_url},
                         {"key": "firekey-expires", "value": expires_at.isoformat()},
+                        {"key": "firekey-project", "value": self._project},
+                        {"key": "firekey-capability", "value": self._capability},
+                        {"key": "firekey-evidence", "value": self._evidence},
+                        {"key": "firekey-region", "value": self._region},
+                        {"key": "firekey-worker-image", "value": self._image},
                     ]
                 },
             },

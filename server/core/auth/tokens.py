@@ -38,6 +38,28 @@ class GoogleTokenVerifier:
         return dict(claims)
 
 
+class IapTokenVerifier:
+    def __init__(self, audience: str) -> None:
+        self._audience = audience
+        session = cachecontrol.CacheControl(requests.Session())
+        self._request = Request(session=session)
+
+    async def verify(self, token: str) -> AuthenticatedIdentity:
+        try:
+            claims = await asyncio.to_thread(
+                id_token.verify_token,
+                token,
+                self._request,
+                self._audience,
+                "https://www.gstatic.com/iap/verify/public_key",
+            )
+        except ValueError as error:
+            raise AuthenticationError("IAP identity token is invalid") from error
+        if claims.get("iss") != "https://cloud.google.com/iap":
+            raise AuthenticationError("IAP identity token issuer is invalid")
+        return _identity(claims)
+
+
 def _identity(claims: Mapping[str, Any]) -> AuthenticatedIdentity:
     subject = claims.get("sub")
     issuer = claims.get("iss")
