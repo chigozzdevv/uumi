@@ -30,6 +30,11 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/dedupe/event_{identity}"
 
     @staticmethod
+    def principal(organisation_id: str, principal_id: str) -> str:
+        organisation = FirestorePaths.organisation(organisation_id)
+        return f"{organisation}/principals/{principal_id}"
+
+    @staticmethod
     def organisation(organisation_id: str) -> str:
         return f"organisations/{_segment(organisation_id)}"
 

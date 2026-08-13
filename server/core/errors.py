@@ -32,3 +32,11 @@ class StorageIntegrityError(FireKeyError):
 
 class OutboxLeaseError(FireKeyError):
     pass
+
+
+class AuthenticationError(FireKeyError):
+    pass
+
+
+class AuthorizationError(FireKeyError):
+    pass
