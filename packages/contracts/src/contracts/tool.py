@@ -1,6 +1,7 @@
+from enum import StrEnum
 from typing import Any
 
-from pydantic import Field
+from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
 
@@ -22,3 +23,28 @@ class ToolResult(Contract):
     result: dict[str, Any] = Field(default_factory=dict)
     error_code: str | None = Field(default=None, max_length=96)
     evidence_ids: tuple[Identifier, ...] = ()
+
+
+class ToolAttemptStatus(StrEnum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class ToolAttempt(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    run_id: Identifier
+    request_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    tool: str = Field(min_length=1, max_length=128)
+    status: ToolAttemptStatus
+    result: ToolResult | None = None
+    started_at: AwareDatetime
+    completed_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def validate_terminal_result(self) -> "ToolAttempt":
+        terminal = self.status is not ToolAttemptStatus.RUNNING
+        if terminal != (self.result is not None and self.completed_at is not None):
+            raise ValueError("terminal tool attempts require a result and completion time")
+        return self

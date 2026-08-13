@@ -126,6 +126,10 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/reports/{_segment(report_id)}"
 
     @staticmethod
+    def tool(organisation_id: str, request_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/tools/{_segment(request_id)}"
+
+    @staticmethod
     def agent(organisation_id: str, agent_id: str) -> str:
         return f"{FirestorePaths.organisation(organisation_id)}/agents/{_segment(agent_id)}"
 

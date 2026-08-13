@@ -73,7 +73,7 @@ from contracts.provider import ConnectorCapabilities, MutationMode, MutationSema
 from contracts.recovery import RecoveryPlan
 from contracts.run import Failure, Lease, RotationRun, RunStep, Trigger
 from contracts.state import GenerationState, RunStatus, Stage
-from contracts.tool import ToolRequest, ToolResult
+from contracts.tool import ToolAttempt, ToolAttemptStatus, ToolRequest, ToolResult
 from contracts.verification import (
     ProbeDefinition,
     ProbeKind,
@@ -162,6 +162,8 @@ __all__ = [
     "Stage",
     "StageProof",
     "StartRunCommand",
+    "ToolAttempt",
+    "ToolAttemptStatus",
     "ToolRequest",
     "ToolResult",
     "Trigger",
