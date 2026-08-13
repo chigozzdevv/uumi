@@ -71,6 +71,8 @@ class PlaybookStep(Contract):
             raise ValueError("secure fields can only be handled by browser.secure-capture")
         if self.tool.startswith("browser.") and self.operation != "navigate" and not self.selectors:
             raise ValueError("browser actions require deterministic selectors")
+        if self.tool.startswith("browser.") and self.checkpoint is None:
+            raise ValueError("browser actions require a deterministic page checkpoint")
         return self
 
 
@@ -104,6 +106,7 @@ class PlaybookDraft(Contract):
 class DryRunStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
+    RECOVERY = "recovery-required"
     PASSED = "passed"
     FAILED = "failed"
 
@@ -113,8 +116,11 @@ class DryRun(Contract):
     organisation_id: Identifier
     playbook_id: Identifier
     version_id: Identifier
+    run_id: Identifier
     status: DryRunStatus
     environment_id: Identifier
+    credential_id: Identifier
+    requested_by: Identifier
     checks: frozenset[str] = frozenset()
     evidence_ids: tuple[Identifier, ...] = ()
     replay_reference: str | None = Field(default=None, max_length=1024)
@@ -131,6 +137,8 @@ class DryRun(Contract):
             raise ValueError("a passed dry run requires evidence")
         if self.status is DryRunStatus.FAILED and not self.failure:
             raise ValueError("a failed dry run requires a reason")
+        if self.status is DryRunStatus.RECOVERY and not self.failure:
+            raise ValueError("a recoverable dry run requires a failure reason")
         return self
 
 
@@ -178,5 +186,13 @@ class PlaybookAssignment(Contract):
     playbook_id: Identifier
     version_id: Identifier
     connection_ids: tuple[Identifier, ...] = Field(min_length=1)
+    dry_run_only: bool = False
+    environment_id: Identifier | None = None
     assigned_by: Identifier
     assigned_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_environment(self) -> "PlaybookAssignment":
+        if self.dry_run_only != (self.environment_id is not None):
+            raise ValueError("dry-run assignments require exactly one isolated environment")
+        return self

@@ -49,6 +49,8 @@ class RotationRun(Contract):
     credential_id: Identifier
     trigger: Trigger
     policy_version: Identifier
+    dry_run_id: Identifier | None = None
+    dry_run_playbook_id: Identifier | None = None
     stage: Stage = Stage.TRIGGER
     status: RunStatus = RunStatus.PENDING
     lease: Lease | None = None
@@ -65,6 +67,8 @@ class RotationRun(Contract):
 
     @model_validator(mode="after")
     def validate_terminal_state(self) -> "RotationRun":
+        if (self.dry_run_id is None) != (self.dry_run_playbook_id is None):
+            raise ValueError("dry-run identity and playbook binding must be set together")
         if self.status is RunStatus.COMPLETED and self.stage is not Stage.COMPLETE:
             raise ValueError("a completed run must be in the complete stage")
         if self.lease is not None and self.lease.fencing_token != self.fencing_token:

@@ -43,7 +43,7 @@ class RunWorkflow:
 
     async def create(self, command: CreateRunCommand) -> MutationResult:
         now = self._clock()
-        run = build_run(command, self._id_factory("run"), now)
+        run = build_run(command, command.run_id or self._id_factory("run"), now)
         return await self._repository.create(run, command)
 
     async def get(self, organisation_id: str, run_id: str) -> RotationRun:
@@ -89,6 +89,7 @@ class RunWorkflow:
                 command.fencing_token,
                 command.expected_revision,
                 now,
+                command.bindings,
             ),
             command.proof,
         )

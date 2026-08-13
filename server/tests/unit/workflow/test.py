@@ -7,6 +7,7 @@ from contracts import (
     EventKind,
     RunStatus,
     Stage,
+    StageBindings,
     StartRunCommand,
     Trigger,
 )
@@ -132,6 +133,7 @@ async def test_complete_flow_releases_credential_lock() -> None:
                 expected_revision=result.run.revision,
                 fencing_token=result.run.fencing_token,
                 proof=make_proof(stage, NOW).model_copy(update={"run_id": result.run.id}),
+                bindings=bindings(stage),
             )
         )
 
@@ -144,3 +146,13 @@ async def test_complete_flow_releases_credential_lock() -> None:
     )
     assert next_run.applied is True
     assert next_run.run.id != result.run.id
+
+
+def bindings(stage: Stage) -> StageBindings:
+    if stage is Stage.PREFLIGHT:
+        return StageBindings(playbook_version="version_one", current_generation_id="generation_old")
+    if stage is Stage.PLAYBOOK:
+        return StageBindings(plan_id="plan_one", plan_hash="a" * 64)
+    if stage is Stage.CREATE:
+        return StageBindings(target_generation_id="generation_new")
+    return StageBindings()

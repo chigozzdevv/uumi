@@ -70,13 +70,20 @@ class Playbooks:
         assert self.version is not None
         return self.version
 
-    async def save_dryrun(self, result: DryRun) -> DryRun:
-        self.dryrun = result
-        assert self.version is not None
-        self.version = self.version.model_copy(
-            update={"dry_run_id": result.id, "state": PlaybookState.APPROVAL}
-        )
-        return result
+    async def get_dryrun(
+        self, organisation_id: str, playbook_id: str, dryrun_id: str
+    ) -> DryRun | None:
+        return self.dryrun
+
+    async def validate_dryrun(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        version_id: str,
+        environment_id: str,
+        credential_id: str,
+    ) -> None:
+        return None
 
     async def activate(
         self,
@@ -163,14 +170,20 @@ async def test_playbook_requires_dryrun_before_activation() -> None:
         organisation_id="org_one",
         playbook_id="playbook_one",
         version_id=version.id,
+        run_id="run_one",
         status=DryRunStatus.PASSED,
         environment_id="test_one",
+        credential_id="credential_one",
+        requested_by="author_one",
         checks=frozenset({"created", "stored", "deployed", "verified", "cleaned"}),
         evidence_ids=("evidence_one",),
         started_at=NOW,
         completed_at=NOW + timedelta(minutes=1),
     )
-    await service.record_dryrun(dryrun)
+    repository.dryrun = dryrun
+    repository.version = version.model_copy(
+        update={"dry_run_id": dryrun.id, "state": PlaybookState.APPROVAL}
+    )
     active = await service.activate("org_one", "playbook_one", version.id, dryrun.id, "admin_one")
 
     assert active.state is PlaybookState.ACTIVE

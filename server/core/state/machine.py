@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from contracts import Failure, Lease, RotationRun, RunStatus, Stage, StageProof
+from contracts import Failure, Lease, RotationRun, RunStatus, Stage, StageBindings, StageProof
 from contracts.state import STAGES
 from policy import GatePolicy
 
@@ -56,6 +56,7 @@ class RotationMachine:
         fencing_token: int,
         expected_revision: int,
         now: datetime,
+        bindings: StageBindings | None = None,
     ) -> RotationRun:
         self._control(run, fencing_token, expected_revision, now)
         if run.status not in {RunStatus.RUNNING, RunStatus.RECOVERING}:
@@ -65,6 +66,7 @@ class RotationMachine:
         if proof.stage is not run.stage:
             raise TransitionRejectedError("proof does not match the current stage")
         self._policy.validate(proof)
+        changes = self._bindings(run, bindings or StageBindings())
 
         if run.stage is Stage.COMPLETE:
             return self._update(
@@ -72,6 +74,7 @@ class RotationMachine:
                 now,
                 status=RunStatus.COMPLETED,
                 lease=None,
+                **changes,
             )
 
         index = STAGES.index(run.stage)
@@ -80,7 +83,37 @@ class RotationMachine:
             now,
             stage=STAGES[index + 1],
             status=RunStatus.RUNNING,
+            **changes,
         )
+
+    @staticmethod
+    def _bindings(run: RotationRun, bindings: StageBindings) -> dict[str, object]:
+        values = bindings.model_dump(exclude_none=True)
+        allowed: dict[Stage, frozenset[str]] = {
+            Stage.PREFLIGHT: frozenset({"playbook_version", "current_generation_id"}),
+            Stage.PLAYBOOK: frozenset({"plan_id", "plan_hash"}),
+            Stage.CREATE: frozenset({"target_generation_id"}),
+        }
+        unexpected = set(values).difference(allowed.get(run.stage, frozenset()))
+        if unexpected:
+            names = ", ".join(sorted(unexpected))
+            raise TransitionRejectedError(
+                f"stage {run.stage.value} cannot bind run fields: {names}"
+            )
+        if run.stage is Stage.PREFLIGHT and set(values) != allowed[Stage.PREFLIGHT]:
+            raise TransitionRejectedError("preflight must bind playbook and current generation")
+        if run.stage is Stage.PLAYBOOK and set(values) != allowed[Stage.PLAYBOOK]:
+            raise TransitionRejectedError("playbook stage must bind plan identity and digest")
+        if run.stage is Stage.CREATE and set(values) != allowed[Stage.CREATE]:
+            raise TransitionRejectedError("create stage must bind the target generation")
+        immutable = {
+            name: value
+            for name, value in values.items()
+            if getattr(run, name) is not None and getattr(run, name) != value
+        }
+        if immutable:
+            raise TransitionRejectedError("run bindings cannot change after they are set")
+        return values
 
     def pause(
         self,

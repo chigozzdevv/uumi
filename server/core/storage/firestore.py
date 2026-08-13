@@ -3,7 +3,13 @@ from typing import Any
 
 from contracts import (
     CreateRunCommand,
+    DryRun,
+    DryRunStatus,
+    Environment,
     EventKind,
+    PlaybookAssignment,
+    PlaybookState,
+    PlaybookVersion,
     RotationRun,
     RunCommand,
     RunStatus,
@@ -61,6 +67,46 @@ class FirestoreRunRepository:
             )
         )
         request_hash = creation_hash(command)
+        dryrun_ref = (
+            self._client.document(
+                FirestorePaths.dryrun(
+                    command.dry_run.organisation_id,
+                    command.dry_run.playbook_id,
+                    command.dry_run.id,
+                )
+            )
+            if command.dry_run is not None
+            else None
+        )
+        dryrun_version_ref = (
+            self._client.document(
+                FirestorePaths.playbook_version(
+                    command.dry_run.organisation_id,
+                    command.dry_run.playbook_id,
+                    command.dry_run.version_id,
+                )
+            )
+            if command.dry_run is not None
+            else None
+        )
+        dryrun_assignment_ref = (
+            self._client.document(
+                FirestorePaths.assignment(
+                    command.dry_run.organisation_id, command.dry_run.credential_id
+                )
+            )
+            if command.dry_run is not None
+            else None
+        )
+        dryrun_environment_ref = (
+            self._client.document(
+                FirestorePaths.environment(
+                    command.dry_run.organisation_id, command.dry_run.environment_id
+                )
+            )
+            if command.dry_run is not None
+            else None
+        )
 
         @async_transactional
         async def apply(transaction: AsyncTransaction) -> MutationResult:
@@ -88,6 +134,43 @@ class FirestoreRunRepository:
                 raise IdempotencyConflictError(
                     f"command {command.id} already belongs to another run"
                 )
+            if (
+                dryrun_ref is not None
+                and dryrun_version_ref is not None
+                and dryrun_assignment_ref is not None
+                and dryrun_environment_ref is not None
+                and command.dry_run is not None
+            ):
+                existing_dryrun = await dryrun_ref.get(transaction=transaction)
+                version_snapshot = await dryrun_version_ref.get(transaction=transaction)
+                assignment_snapshot = await dryrun_assignment_ref.get(transaction=transaction)
+                environment_snapshot = await dryrun_environment_ref.get(transaction=transaction)
+                if existing_dryrun.exists:
+                    raise IdempotencyConflictError(f"dry run {command.dry_run.id} already exists")
+                if not all(
+                    item.exists
+                    for item in (version_snapshot, assignment_snapshot, environment_snapshot)
+                ):
+                    raise StorageIntegrityError("dry-run isolation inputs are missing")
+                version = PlaybookVersion.model_validate(_required_data(version_snapshot))
+                assignment = PlaybookAssignment.model_validate(_required_data(assignment_snapshot))
+                environment = Environment.model_validate(_required_data(environment_snapshot))
+                if version.state is not PlaybookState.TEST:
+                    raise StorageIntegrityError("dry-run playbook version is not awaiting a test")
+                if (
+                    command.dry_run.status is not DryRunStatus.PENDING
+                    or command.dry_run.evidence_ids
+                    or command.dry_run.checks
+                    or command.dry_run.failure is not None
+                    or command.dry_run.completed_at is not None
+                    or environment.production
+                    or not assignment.dry_run_only
+                    or assignment.environment_id != environment.id
+                    or assignment.credential_id != run.credential_id
+                    or assignment.playbook_id != command.dry_run.playbook_id
+                    or assignment.version_id != command.dry_run.version_id
+                ):
+                    raise StorageIntegrityError("dry-run isolation binding is invalid")
 
             step = RunStep(
                 id=command.id,
@@ -114,6 +197,8 @@ class FirestoreRunRepository:
             )
 
             transaction.set(run_ref, encode(run))
+            if dryrun_ref is not None and command.dry_run is not None:
+                transaction.create(dryrun_ref, encode(command.dry_run))
             transaction.set(step_ref, encode(step))
             transaction.set(outbox_ref, encode(event))
             transaction.set(
@@ -205,6 +290,30 @@ class FirestoreRunRepository:
             if not lock.exists or _required_data(lock).get("run_id") != run.id:
                 raise StorageIntegrityError(f"run {run.id} does not hold its credential lock")
 
+            dryrun_ref = None
+            version_ref = None
+            dryrun = None
+            version = None
+            if run.dry_run_id is not None and run.dry_run_playbook_id is not None:
+                dryrun_ref = self._client.document(
+                    FirestorePaths.dryrun(
+                        run.organisation_id, run.dry_run_playbook_id, run.dry_run_id
+                    )
+                )
+                dryrun_snapshot = await dryrun_ref.get(transaction=transaction)
+                if not dryrun_snapshot.exists:
+                    raise StorageIntegrityError("rotation run lost its dry-run record")
+                dryrun = DryRun.model_validate(_required_data(dryrun_snapshot))
+                version_ref = self._client.document(
+                    FirestorePaths.playbook_version(
+                        run.organisation_id, dryrun.playbook_id, dryrun.version_id
+                    )
+                )
+                version_snapshot = await version_ref.get(transaction=transaction)
+                if not version_snapshot.exists:
+                    raise StorageIntegrityError("dry-run playbook version disappeared")
+                version = PlaybookVersion.model_validate(_required_data(version_snapshot))
+
             updated = transition(run)
             validate_transition(run, updated, command.organisation_id)
 
@@ -238,6 +347,27 @@ class FirestoreRunRepository:
             )
 
             transaction.set(run_ref, encode(updated))
+            if dryrun_ref is not None and dryrun is not None:
+                changed_dryrun = _advance_dryrun(dryrun, updated, proof)
+                transaction.set(dryrun_ref, encode(changed_dryrun))
+                if updated.status is RunStatus.COMPLETED:
+                    if version_ref is None or version is None:
+                        raise StorageIntegrityError("dry-run completion lost its playbook version")
+                    if version.id != dryrun.version_id or version.state is not PlaybookState.TEST:
+                        raise StorageIntegrityError(
+                            "dry-run completion cannot advance its playbook version"
+                        )
+                    transaction.set(
+                        version_ref,
+                        encode(
+                            version.model_copy(
+                                update={
+                                    "state": PlaybookState.APPROVAL,
+                                    "dry_run_id": dryrun.id,
+                                }
+                            )
+                        ),
+                    )
             transaction.set(step_ref, encode(step))
             transaction.set(outbox_ref, encode(event))
             if updated.status is RunStatus.COMPLETED:
@@ -273,6 +403,59 @@ class FirestoreRunRepository:
 def _tenant(run: RotationRun, organisation_id: str) -> None:
     if run.organisation_id != organisation_id:
         raise StorageIntegrityError("run organisation does not match its document path")
+
+
+def _advance_dryrun(
+    current: DryRun,
+    run: RotationRun,
+    proof: StageProof | None,
+) -> DryRun:
+    if (
+        current.run_id != run.id
+        or current.organisation_id != run.organisation_id
+        or current.credential_id != run.credential_id
+    ):
+        raise StorageIntegrityError("dry-run lineage changed during rotation")
+    if current.status in {DryRunStatus.PASSED, DryRunStatus.FAILED}:
+        raise StorageIntegrityError("terminal dry-run evidence cannot be changed")
+    checks = current.checks
+    evidence_ids = current.evidence_ids
+    if proof is not None:
+        checks = frozenset((*checks, *proof.checks))
+        evidence_ids = tuple(dict.fromkeys((*evidence_ids, *proof.evidence_ids)))
+    if run.status is RunStatus.COMPLETED:
+        return current.model_copy(
+            update={
+                "status": DryRunStatus.PASSED,
+                "checks": checks,
+                "evidence_ids": evidence_ids,
+                "failure": None,
+                "completed_at": run.updated_at,
+            }
+        )
+    if run.status in {RunStatus.FAILED, RunStatus.CLEANUP}:
+        if run.failure is None:
+            raise StorageIntegrityError("recoverable dry run has no failure")
+        return current.model_copy(
+            update={
+                "status": DryRunStatus.RECOVERY,
+                "checks": checks,
+                "evidence_ids": evidence_ids,
+                "failure": run.failure.message,
+            }
+        )
+    if run.status is RunStatus.RECOVERING:
+        return current.model_copy(
+            update={
+                "status": DryRunStatus.RUNNING,
+                "checks": checks,
+                "evidence_ids": evidence_ids,
+                "failure": None,
+            }
+        )
+    return current.model_copy(
+        update={"status": DryRunStatus.RUNNING, "checks": checks, "evidence_ids": evidence_ids}
+    )
 
 
 def _required_data(snapshot: DocumentSnapshot) -> dict[str, Any]:

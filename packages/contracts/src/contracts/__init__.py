@@ -13,6 +13,8 @@ from contracts.audit import AuditEvent, Evidence
 from contracts.base import Contract, Identifier
 from contracts.binding import ConsumerBinding
 from contracts.browser import (
+    BrowserAccessGrant,
+    BrowserAccessMode,
     BrowserAction,
     BrowserActionKind,
     BrowserActionRecord,
@@ -33,7 +35,13 @@ from contracts.command import (
     RenewLeaseCommand,
     ResumeRunCommand,
     RunCommand,
+    StageBindings,
     StartRunCommand,
+)
+from contracts.coordinator import (
+    StageExecutionRequest,
+    StageExecutionResult,
+    StageExecutionStatus,
 )
 from contracts.credential import ManagedCredential
 from contracts.event import EventKind, OutboxEvent, RunEvent
@@ -73,7 +81,7 @@ from contracts.playbook import (
     SelectorKind,
 )
 from contracts.provider import ConnectorCapabilities, MutationMode, MutationSemantics
-from contracts.recovery import RecoveryPlan
+from contracts.recovery import RecoveryMode, RecoveryPlan
 from contracts.run import Failure, Lease, RotationRun, RunStep, Trigger
 from contracts.state import GenerationState, RunStatus, Stage
 from contracts.tool import ToolAttempt, ToolAttemptStatus, ToolRequest, ToolResult
@@ -97,6 +105,8 @@ __all__ = [
     "Approval",
     "ApprovalDecision",
     "AuditEvent",
+    "BrowserAccessGrant",
+    "BrowserAccessMode",
     "BrowserAction",
     "BrowserActionKind",
     "BrowserActionRecord",
@@ -148,6 +158,7 @@ __all__ = [
     "ProbeResult",
     "ProtectedAction",
     "RecoverRunCommand",
+    "RecoveryMode",
     "RecoveryPlan",
     "RenewLeaseCommand",
     "ReplayCheckpoint",
@@ -166,6 +177,10 @@ __all__ = [
     "Severity",
     "SourceResource",
     "Stage",
+    "StageBindings",
+    "StageExecutionRequest",
+    "StageExecutionResult",
+    "StageExecutionStatus",
     "StageProof",
     "StartRunCommand",
     "ToolAttempt",

@@ -1,8 +1,10 @@
+import hashlib
 from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
 
 from contracts import (
+    CreateRunCommand,
     DryRun,
     DryRunStatus,
     ExecutionMethod,
@@ -11,11 +13,20 @@ from contracts import (
     PlaybookDraft,
     PlaybookState,
     PlaybookVersion,
+    RotationRun,
     Stage,
+    Trigger,
 )
 from policy import digest
 
 from core.errors import PlaybookError
+from core.storage.repository import MutationResult
+
+
+class DryRunWorkflow(Protocol):
+    async def create(self, command: CreateRunCommand) -> MutationResult: ...
+
+    async def get(self, organisation_id: str, run_id: str) -> RotationRun: ...
 
 
 class PlaybookRepository(Protocol):
@@ -38,7 +49,18 @@ class PlaybookRepository(Protocol):
         version_id: str,
     ) -> PlaybookVersion: ...
 
-    async def save_dryrun(self, result: DryRun) -> DryRun: ...
+    async def get_dryrun(
+        self, organisation_id: str, playbook_id: str, dryrun_id: str
+    ) -> DryRun | None: ...
+
+    async def validate_dryrun(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        version_id: str,
+        environment_id: str,
+        credential_id: str,
+    ) -> None: ...
 
     async def activate(
         self,
@@ -58,9 +80,11 @@ class PlaybookService:
         self,
         repository: PlaybookRepository,
         clock: Callable[[], datetime],
+        workflow: DryRunWorkflow | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
+        self._workflow = workflow
 
     async def create_version(
         self,
@@ -83,17 +107,100 @@ class PlaybookService:
             source_ids,
         )
 
-    async def record_dryrun(self, result: DryRun) -> DryRun:
-        version = await self._repository.get_version(
-            result.organisation_id,
-            result.playbook_id,
-            result.version_id,
+    async def start_dryrun(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        dryrun_id: str,
+        version_id: str,
+        environment_id: str,
+        credential_id: str,
+        policy_version: str,
+        actor_id: str,
+        command_id: str,
+        reason: str,
+        urgency: str,
+        received_at: datetime,
+    ) -> tuple[DryRun, RotationRun, bool]:
+        if self._workflow is None:
+            raise RuntimeError("playbook dry-run workflow is not configured")
+        existing = await self._repository.get_dryrun(organisation_id, playbook_id, dryrun_id)
+        if existing is not None:
+            expected = (
+                organisation_id,
+                playbook_id,
+                version_id,
+                environment_id,
+                credential_id,
+                actor_id,
+            )
+            actual = (
+                existing.organisation_id,
+                existing.playbook_id,
+                existing.version_id,
+                existing.environment_id,
+                existing.credential_id,
+                existing.requested_by,
+            )
+            if actual != expected:
+                raise PlaybookError("dry-run ID is already bound to another request")
+            run = await self._workflow.get(organisation_id, existing.run_id)
+            request_binding = (
+                policy_version,
+                actor_id,
+                reason,
+                urgency,
+                received_at,
+            )
+            stored_binding = (
+                run.policy_version,
+                run.trigger.actor_id,
+                run.trigger.reason,
+                run.trigger.urgency,
+                run.trigger.received_at,
+            )
+            if stored_binding != request_binding:
+                raise PlaybookError("dry-run request changed after it was accepted")
+            return existing, run, False
+        await self._repository.validate_dryrun(
+            organisation_id,
+            playbook_id,
+            version_id,
+            environment_id,
+            credential_id,
         )
-        if version.state in {PlaybookState.ACTIVE, PlaybookState.SUPERSEDED}:
-            raise PlaybookError("immutable active playbook versions cannot be retested")
-        if result.status not in {DryRunStatus.PASSED, DryRunStatus.FAILED}:
-            raise PlaybookError("only terminal dry-run results can be recorded")
-        return await self._repository.save_dryrun(result)
+        run_id = f"run_{hashlib.sha256(command_id.encode()).hexdigest()[:40]}"
+        dryrun = DryRun(
+            id=dryrun_id,
+            organisation_id=organisation_id,
+            playbook_id=playbook_id,
+            version_id=version_id,
+            run_id=run_id,
+            status=DryRunStatus.PENDING,
+            environment_id=environment_id,
+            credential_id=credential_id,
+            requested_by=actor_id,
+            started_at=received_at,
+        )
+        result = await self._workflow.create(
+            CreateRunCommand(
+                id=command_id,
+                organisation_id=organisation_id,
+                credential_id=credential_id,
+                policy_version=policy_version,
+                run_id=run_id,
+                dry_run=dryrun,
+                trigger=Trigger(
+                    source="playbook-dryrun",
+                    event_id=dryrun_id,
+                    actor_id=actor_id,
+                    reason=reason,
+                    urgency=urgency,
+                    received_at=received_at,
+                ),
+            )
+        )
+        return dryrun, result.run, result.applied
 
     async def activate(
         self,
@@ -130,6 +237,8 @@ class PlaybookService:
         version_id: str,
         connection_ids: tuple[str, ...],
         actor_id: str,
+        dry_run_only: bool = False,
+        environment_id: str | None = None,
     ) -> PlaybookAssignment:
         assignment = PlaybookAssignment(
             id=f"assignment_{credential_id}",
@@ -138,6 +247,8 @@ class PlaybookService:
             playbook_id=playbook_id,
             version_id=version_id,
             connection_ids=connection_ids,
+            dry_run_only=dry_run_only,
+            environment_id=environment_id,
             assigned_by=actor_id,
             assigned_at=self._clock(),
         )

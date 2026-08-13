@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from contracts import Failure, RotationRun, RunStatus, Stage, StageProof
+from contracts import Failure, RotationRun, RunStatus, Stage, StageBindings, StageProof
 from core.errors import LeaseConflictError, RevisionConflictError, TransitionRejectedError
 from core.state import RotationMachine
 from policy import GatePolicy, PolicyViolationError
@@ -75,6 +75,7 @@ def test_run_requires_every_stage_before_completion() -> None:
             run.lease.fencing_token,
             run.revision,
             NOW,
+            bindings(stage),
         )
 
     assert run.stage is Stage.COMPLETE
@@ -146,3 +147,13 @@ def test_gate_policy_covers_all_twelve_stages() -> None:
     policy = GatePolicy()
 
     assert {stage for stage in Stage if policy.checks(stage)} == set(Stage)
+
+
+def bindings(stage: Stage) -> StageBindings:
+    if stage is Stage.PREFLIGHT:
+        return StageBindings(playbook_version="version_one", current_generation_id="generation_old")
+    if stage is Stage.PLAYBOOK:
+        return StageBindings(plan_id="plan_one", plan_hash="a" * 64)
+    if stage is Stage.CREATE:
+        return StageBindings(target_generation_id="generation_new")
+    return StageBindings()

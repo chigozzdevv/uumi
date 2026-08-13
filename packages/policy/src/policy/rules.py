@@ -13,7 +13,7 @@ REQUIRED_CHECKS: dict[Stage, frozenset[str]] = {
             "provider-ready",
             "credential-known",
             "scopes-known",
-            "playbook-active",
+            "playbook-eligible",
             "management-authenticated",
             "store-ready",
             "consumers-known",

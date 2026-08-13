@@ -10,6 +10,8 @@ def build_run(command: CreateRunCommand, run_id: str, now: datetime) -> Rotation
         credential_id=command.credential_id,
         trigger=command.trigger,
         policy_version=command.policy_version,
+        dry_run_id=command.dry_run.id if command.dry_run is not None else None,
+        dry_run_playbook_id=(command.dry_run.playbook_id if command.dry_run is not None else None),
         created_at=now,
         updated_at=now,
     )

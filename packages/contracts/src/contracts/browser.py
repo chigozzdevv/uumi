@@ -18,6 +18,11 @@ class BrowserStatus(StrEnum):
     TERMINATED = "terminated"
 
 
+class BrowserAccessMode(StrEnum):
+    VIEW = "view"
+    TAKEOVER = "takeover"
+
+
 class BrowserActionKind(StrEnum):
     NAVIGATE = "navigate"
     CLICK = "click"
@@ -44,6 +49,7 @@ class BrowserAction(Contract):
     protected: bool = False
     expected_url: str | None = Field(default=None, max_length=2048)
     expected_text: tuple[str, ...] = ()
+    forbidden_text: tuple[str, ...] = ()
     fencing_token: int = Field(gt=0)
 
     @model_validator(mode="after")
@@ -148,3 +154,13 @@ class SecureCaptureResult(Contract):
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     masked_value_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     captured_at: AwareDatetime
+
+
+class BrowserAccessGrant(Contract):
+    organisation_id: Identifier
+    session_id: Identifier
+    mode: BrowserAccessMode
+    gateway_url: str = Field(min_length=12, max_length=2048)
+    capability: str = Field(min_length=32)
+    expires_at: AwareDatetime
+    session: BrowserSession
