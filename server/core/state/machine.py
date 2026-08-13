@@ -23,9 +23,15 @@ class RotationMachine:
         if run.status is not RunStatus.PENDING:
             raise TransitionRejectedError("only a pending run can start")
         self._future(expires_at, now)
-        token = run.lease.fencing_token + 1 if run.lease else 1
+        token = run.fencing_token + 1
         lease = Lease(owner_id=owner_id, fencing_token=token, expires_at=expires_at)
-        return self._update(run, now, status=RunStatus.RUNNING, lease=lease)
+        return self._update(
+            run,
+            now,
+            status=RunStatus.RUNNING,
+            lease=lease,
+            fencing_token=token,
+        )
 
     def renew(
         self,
@@ -102,9 +108,15 @@ class RotationMachine:
         if run.lease and run.lease.expires_at > now and run.lease.owner_id != owner_id:
             raise LeaseConflictError("an active lease belongs to another worker")
         self._future(expires_at, now)
-        token = run.lease.fencing_token + 1 if run.lease else 1
+        token = run.fencing_token + 1
         lease = Lease(owner_id=owner_id, fencing_token=token, expires_at=expires_at)
-        return self._update(run, now, status=RunStatus.RUNNING, lease=lease)
+        return self._update(
+            run,
+            now,
+            status=RunStatus.RUNNING,
+            lease=lease,
+            fencing_token=token,
+        )
 
     def cleanup(
         self,
@@ -152,7 +164,7 @@ class RotationMachine:
         if run.lease and run.lease.expires_at > now and run.lease.owner_id != owner_id:
             raise LeaseConflictError("an active lease belongs to another worker")
         self._future(expires_at, now)
-        token = run.lease.fencing_token + 1 if run.lease else 1
+        token = run.fencing_token + 1
         lease = Lease(owner_id=owner_id, fencing_token=token, expires_at=expires_at)
         return self._update(
             run,
@@ -160,6 +172,7 @@ class RotationMachine:
             status=RunStatus.RECOVERING,
             failure=None,
             lease=lease,
+            fencing_token=token,
         )
 
     @staticmethod

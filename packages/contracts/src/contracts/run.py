@@ -35,6 +35,7 @@ class RotationRun(Contract):
     stage: Stage = Stage.TRIGGER
     status: RunStatus = RunStatus.PENDING
     lease: Lease | None = None
+    fencing_token: int = Field(default=0, ge=0)
     playbook_version: Identifier | None = None
     plan_id: Identifier | None = None
     plan_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
@@ -49,6 +50,8 @@ class RotationRun(Contract):
     def validate_terminal_state(self) -> "RotationRun":
         if self.status is RunStatus.COMPLETED and self.stage is not Stage.COMPLETE:
             raise ValueError("a completed run must be in the complete stage")
+        if self.lease is not None and self.lease.fencing_token != self.fencing_token:
+            raise ValueError("the active lease must use the run fencing token")
         problem_states = {RunStatus.FAILED, RunStatus.CLEANUP}
         if self.status in problem_states and self.failure is None:
             raise ValueError("failed and cleanup-required runs require failure details")

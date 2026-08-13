@@ -117,6 +117,31 @@ def test_cleanup_can_recover_under_a_new_fence() -> None:
     assert run.lease.fencing_token == 2
 
 
+def test_failed_run_recovery_preserves_fence_history() -> None:
+    machine, run = start()
+    failure = Failure(
+        code="candidate-failed",
+        message="candidate verification failed",
+        retryable=True,
+    )
+    run = machine.fail(run, failure, 1, run.revision, NOW)
+
+    assert run.lease is None
+    assert run.fencing_token == 1
+
+    run = machine.recover(
+        run,
+        "recovery_one",
+        run.revision,
+        LEASE_END,
+        NOW,
+    )
+
+    assert run.lease is not None
+    assert run.lease.fencing_token == 2
+    assert run.fencing_token == 2
+
+
 def test_gate_policy_covers_all_twelve_stages() -> None:
     policy = GatePolicy()
 
