@@ -3,6 +3,7 @@ from enum import StrEnum
 from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
+from contracts.playbook import Selector
 
 
 class BrowserStatus(StrEnum):
@@ -27,16 +28,23 @@ class BrowserActionKind(StrEnum):
     WAIT = "wait"
 
 
+class BrowserActionStatus(StrEnum):
+    AUTHORIZED = "authorized"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class BrowserAction(Contract):
     id: Identifier
     session_id: Identifier
     kind: BrowserActionKind
-    selector: str | None = Field(default=None, max_length=1024)
+    selector: Selector | None = None
     value: str | None = Field(default=None, max_length=4096)
     url: str | None = Field(default=None, max_length=2048)
     protected: bool = False
     expected_url: str | None = Field(default=None, max_length=2048)
     expected_text: tuple[str, ...] = ()
+    fencing_token: int = Field(gt=0)
 
     @model_validator(mode="after")
     def validate_target(self) -> "BrowserAction":
@@ -49,6 +57,26 @@ class BrowserAction(Contract):
             raise ValueError("interactive actions require a selector")
         if self.kind in {BrowserActionKind.TYPE, BrowserActionKind.SELECT} and self.value is None:
             raise ValueError("input actions require a value")
+        return self
+
+
+class BrowserActionRecord(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    session_id: Identifier
+    action: BrowserAction
+    status: BrowserActionStatus
+    error: str | None = Field(default=None, max_length=1024)
+    authorised_at: AwareDatetime
+    completed_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def validate_result(self) -> "BrowserActionRecord":
+        terminal = self.status is not BrowserActionStatus.AUTHORIZED
+        if terminal != (self.completed_at is not None):
+            raise ValueError("terminal browser actions require a completion time")
+        if self.status is BrowserActionStatus.FAILED and not self.error:
+            raise ValueError("failed browser actions require an error")
         return self
 
 
@@ -66,11 +94,13 @@ class BrowserSession(Contract):
     id: Identifier
     organisation_id: Identifier
     run_id: Identifier
+    playbook_id: Identifier
     playbook_version: Identifier
     worker_instance: str | None = Field(default=None, max_length=512)
     internal_address: str | None = Field(default=None, max_length=128)
     status: BrowserStatus
     policy: BrowserPolicy
+    fencing_token: int = Field(gt=0)
     step_count: int = Field(default=0, ge=0)
     model_paused: bool = True
     recording_paused: bool = True
@@ -107,3 +137,14 @@ class ReplayCheckpoint(Contract):
     safety: tuple[str, ...] = ()
     human_takeover: bool = False
     recorded_at: AwareDatetime
+
+
+class SecureCaptureResult(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    session_id: Identifier
+    field_name: Identifier
+    secret_reference: str = Field(min_length=1, max_length=1024)
+    fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    masked_value_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    captured_at: AwareDatetime

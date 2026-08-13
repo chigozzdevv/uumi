@@ -1,0 +1,263 @@
+from collections.abc import Callable
+from datetime import datetime
+from typing import Protocol
+
+from contracts import (
+    BrowserAction,
+    BrowserActionRecord,
+    BrowserActionStatus,
+    BrowserSession,
+    BrowserStatus,
+    ReplayCheckpoint,
+    SecureCaptureResult,
+)
+from core.errors import ResourceConflictError
+
+
+class BrowserRepository(Protocol):
+    async def create(self, session: BrowserSession) -> BrowserSession: ...
+
+    async def get(self, organisation_id: str, session_id: str) -> BrowserSession: ...
+
+    async def update(
+        self,
+        organisation_id: str,
+        session_id: str,
+        expected_revision: int,
+        changed: BrowserSession,
+    ) -> BrowserSession: ...
+
+    async def save_capture(self, result: SecureCaptureResult) -> SecureCaptureResult: ...
+
+    async def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> ReplayCheckpoint: ...
+
+    async def begin_action(
+        self,
+        current: BrowserSession,
+        changed: BrowserSession,
+        action: BrowserAction,
+        authorised_at: datetime,
+    ) -> BrowserSession: ...
+
+    async def finish_action(
+        self,
+        organisation_id: str,
+        session_id: str,
+        action_id: str,
+        status: BrowserActionStatus,
+        error: str | None,
+        completed_at: datetime,
+    ) -> BrowserActionRecord: ...
+
+
+class BrowserService:
+    def __init__(
+        self,
+        repository: BrowserRepository,
+        clock: Callable[[], datetime],
+    ) -> None:
+        self._repository = repository
+        self._clock = clock
+
+    async def create(self, session: BrowserSession) -> BrowserSession:
+        if session.status is not BrowserStatus.PROVISIONING:
+            raise ResourceConflictError("browser sessions must begin in provisioning")
+        if not session.model_paused or not session.recording_paused:
+            raise ResourceConflictError("browser barriers must remain armed during provisioning")
+        return await self._repository.create(session)
+
+    async def attach(
+        self,
+        organisation_id: str,
+        session_id: str,
+        revision: int,
+        instance: str,
+        internal_address: str,
+    ) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        if current.status is not BrowserStatus.PROVISIONING:
+            raise ResourceConflictError("only a provisioning browser can attach a VM")
+        changed = self._change(
+            current,
+            status=BrowserStatus.READY,
+            worker_instance=instance,
+            internal_address=internal_address,
+        )
+        return await self._repository.update(organisation_id, session_id, revision, changed)
+
+    async def start(self, organisation_id: str, session_id: str, revision: int) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        if current.status not in {BrowserStatus.READY, BrowserStatus.PAUSED}:
+            raise ResourceConflictError("browser is not ready to start")
+        changed = self._change(
+            current,
+            status=BrowserStatus.RUNNING,
+            model_paused=False,
+            recording_paused=False,
+        )
+        return await self._repository.update(organisation_id, session_id, revision, changed)
+
+    async def arm_capture(
+        self, organisation_id: str, session_id: str, revision: int
+    ) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        if current.status is not BrowserStatus.RUNNING:
+            raise ResourceConflictError("secure capture can only arm a running browser")
+        changed = self._change(
+            current,
+            status=BrowserStatus.CAPTURING,
+            model_paused=True,
+            recording_paused=True,
+        )
+        return await self._repository.update(organisation_id, session_id, revision, changed)
+
+    async def arm_human_capture(
+        self, organisation_id: str, session_id: str, revision: int
+    ) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        if current.status not in {BrowserStatus.TAKEOVER, BrowserStatus.PAUSED}:
+            raise ResourceConflictError("human secure input requires takeover or a paused session")
+        changed = self._change(
+            current,
+            status=BrowserStatus.CAPTURING,
+            model_paused=True,
+            recording_paused=True,
+        )
+        return await self._repository.update(organisation_id, session_id, revision, changed)
+
+    async def complete_capture(
+        self,
+        result: SecureCaptureResult,
+        revision: int,
+    ) -> BrowserSession:
+        current = await self._current(result.organisation_id, result.session_id, revision)
+        if current.status is not BrowserStatus.CAPTURING:
+            raise ResourceConflictError("secure capture barrier is not armed")
+        await self._repository.save_capture(result)
+        changed = self._change(
+            current,
+            status=BrowserStatus.RUNNING,
+            model_paused=False,
+            recording_paused=False,
+        )
+        return await self._repository.update(
+            result.organisation_id, result.session_id, revision, changed
+        )
+
+    async def freeze(self, organisation_id: str, session_id: str, revision: int) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        changed = self._change(
+            current,
+            status=BrowserStatus.PAUSED,
+            model_paused=True,
+            recording_paused=True,
+        )
+        return await self._repository.update(organisation_id, session_id, revision, changed)
+
+    async def takeover(
+        self,
+        organisation_id: str,
+        session_id: str,
+        revision: int,
+        subject: str,
+    ) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        if current.status not in {BrowserStatus.RUNNING, BrowserStatus.PAUSED}:
+            raise ResourceConflictError("browser cannot enter takeover from its current state")
+        changed = self._change(
+            current,
+            status=BrowserStatus.TAKEOVER,
+            model_paused=True,
+            takeover_subject=subject,
+        )
+        return await self._repository.update(organisation_id, session_id, revision, changed)
+
+    async def authorize_action(
+        self,
+        organisation_id: str,
+        session_id: str,
+        revision: int,
+        action: BrowserAction,
+    ) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        allowed_status = current.status in {BrowserStatus.RUNNING, BrowserStatus.TAKEOVER}
+        protected_capture = (
+            current.status is BrowserStatus.CAPTURING
+            and action.protected
+            and current.model_paused
+            and current.recording_paused
+        )
+        if not allowed_status and not protected_capture:
+            raise ResourceConflictError("browser session is not accepting actions")
+        if action.session_id != session_id or action.fencing_token != current.fencing_token:
+            raise ResourceConflictError("browser action holds a stale session fence")
+        if action.kind not in current.policy.allowed_actions:
+            raise ResourceConflictError("browser action is not allowed by session policy")
+        changed = self._change(current, step_count=current.step_count + 1)
+        return await self._repository.begin_action(current, changed, action, self._clock())
+
+    async def finish_action(
+        self,
+        organisation_id: str,
+        session_id: str,
+        action_id: str,
+        succeeded: bool,
+        error: str | None = None,
+    ) -> BrowserActionRecord:
+        status = BrowserActionStatus.SUCCEEDED if succeeded else BrowserActionStatus.FAILED
+        return await self._repository.finish_action(
+            organisation_id,
+            session_id,
+            action_id,
+            status,
+            error,
+            self._clock(),
+        )
+
+    async def checkpoint(
+        self, session: BrowserSession, checkpoint: ReplayCheckpoint
+    ) -> ReplayCheckpoint:
+        if session.recording_paused:
+            raise ResourceConflictError("replay capture is paused")
+        if checkpoint.organisation_id != session.organisation_id:
+            raise ResourceConflictError("replay checkpoint crosses organisation boundary")
+        if checkpoint.session_id != session.id or checkpoint.sequence != session.step_count:
+            raise ResourceConflictError("replay checkpoint sequence is inconsistent")
+        return await self._repository.save_checkpoint(checkpoint)
+
+    async def terminate(
+        self,
+        organisation_id: str,
+        session_id: str,
+        revision: int,
+    ) -> BrowserSession:
+        current = await self._current(organisation_id, session_id, revision)
+        changed = self._change(
+            current,
+            status=BrowserStatus.TERMINATED,
+            model_paused=True,
+            recording_paused=True,
+            terminated_at=self._clock(),
+        )
+        return await self._repository.update(organisation_id, session_id, revision, changed)
+
+    async def _current(
+        self, organisation_id: str, session_id: str, revision: int
+    ) -> BrowserSession:
+        current = await self._repository.get(organisation_id, session_id)
+        if current.revision != revision:
+            raise ResourceConflictError(
+                f"browser expected revision {revision}, found {current.revision}"
+            )
+        if self._clock() >= current.expires_at:
+            raise ResourceConflictError("browser session has expired")
+        return current
+
+    def _change(self, current: BrowserSession, **values: object) -> BrowserSession:
+        return current.model_copy(
+            update={
+                **values,
+                "updated_at": self._clock(),
+                "revision": current.revision + 1,
+            }
+        )

@@ -118,6 +118,16 @@ class FirestorePaths:
         return f"{root}/replay/{_segment(checkpoint_id)}"
 
     @staticmethod
+    def capture(organisation_id: str, session_id: str, capture_id: str) -> str:
+        root = FirestorePaths.browser(organisation_id, session_id)
+        return f"{root}/captures/{_segment(capture_id)}"
+
+    @staticmethod
+    def browser_action(organisation_id: str, session_id: str, action_id: str) -> str:
+        root = FirestorePaths.browser(organisation_id, session_id)
+        return f"{root}/actions/{_segment(action_id)}"
+
+    @staticmethod
     def probe(organisation_id: str, probe_id: str) -> str:
         return f"{FirestorePaths.organisation(organisation_id)}/probes/{_segment(probe_id)}"
 

@@ -15,10 +15,13 @@ from contracts.binding import ConsumerBinding
 from contracts.browser import (
     BrowserAction,
     BrowserActionKind,
+    BrowserActionRecord,
+    BrowserActionStatus,
     BrowserPolicy,
     BrowserSession,
     BrowserStatus,
     ReplayCheckpoint,
+    SecureCaptureResult,
 )
 from contracts.command import (
     CleanupRunCommand,
@@ -96,6 +99,8 @@ __all__ = [
     "AuditEvent",
     "BrowserAction",
     "BrowserActionKind",
+    "BrowserActionRecord",
+    "BrowserActionStatus",
     "BrowserPolicy",
     "BrowserSession",
     "BrowserStatus",
@@ -154,6 +159,7 @@ __all__ = [
     "RunEvent",
     "RunStatus",
     "RunStep",
+    "SecureCaptureResult",
     "SecureField",
     "Selector",
     "SelectorKind",

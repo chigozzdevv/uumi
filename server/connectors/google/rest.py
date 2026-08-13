@@ -71,12 +71,14 @@ class GoogleRestClient:
     ) -> dict[str, Any]:
         for _ in range(attempts):
             operation = await self.request("GET", f"{base_url.rstrip('/')}/{name}")
-            if operation.get("done") is True:
+            if operation.get("done") is True or operation.get("status") == "DONE":
                 if "error" in operation:
                     raise ConnectorError(
                         "google-operation-failed", "Google operation completed with an error"
                     )
-                response = operation.get("response", {})
+                response = operation.get("response")
+                if response is None:
+                    return operation
                 return response if isinstance(response, dict) else {}
             await asyncio.sleep(1)
         raise ConnectorError("google-operation-timeout", "Google operation did not complete", True)
