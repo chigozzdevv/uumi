@@ -40,3 +40,23 @@ class AuthenticationError(FireKeyError):
 
 class AuthorizationError(FireKeyError):
     pass
+
+
+class ResourceNotFoundError(FireKeyError):
+    pass
+
+
+class ResourceConflictError(FireKeyError):
+    pass
+
+
+class ApprovalError(FireKeyError):
+    pass
+
+
+class PlaybookError(FireKeyError):
+    pass
+
+
+class CapabilityError(FireKeyError):
+    pass
