@@ -44,6 +44,7 @@ class ProbeResult(Contract):
     generation_id: Identifier | None = None
     checks: frozenset[str] = Field(min_length=1)
     evidence_ids: tuple[Identifier, ...] = Field(min_length=1)
+    observations: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
     error: str | None = Field(default=None, max_length=1024)
     started_at: AwareDatetime
     completed_at: AwareDatetime
