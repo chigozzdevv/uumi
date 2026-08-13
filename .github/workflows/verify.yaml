@@ -32,6 +32,25 @@ jobs:
         run: make sync
       - name: Verify
         run: make verify
+      - name: Start Firestore emulator
+        run: |
+          docker run --detach \
+            --name firekey-firestore \
+            --publish 8787:8787 \
+            gcr.io/google.com/cloudsdktool/google-cloud-cli:528.0.0-emulators \
+            gcloud emulators firestore start --host-port=0.0.0.0:8787
+          for attempt in {1..30}; do
+            if curl --silent http://127.0.0.1:8787 >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs firekey-firestore
+          exit 1
+      - name: Verify Firestore transactions
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8787
+        run: uv run pytest server/tests/integration/firestore -m integration
       - name: Build API image
         run: make image
       - name: Validate infrastructure
