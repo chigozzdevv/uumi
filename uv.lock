@@ -286,6 +286,7 @@ dependencies = [
     { name = "firekey-telemetry" },
     { name = "google-cloud-firestore" },
     { name = "google-cloud-pubsub" },
+    { name = "httpx" },
     { name = "pydantic-settings" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -299,6 +300,7 @@ requires-dist = [
     { name = "firekey-telemetry", editable = "packages/telemetry" },
     { name = "google-cloud-firestore", specifier = ">=2.28,<3" },
     { name = "google-cloud-pubsub", specifier = ">=2.39,<3" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "pydantic-settings", specifier = ">=2.10,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<1" },
 ]
