@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Any
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -21,6 +22,7 @@ class AgentStatus(StrEnum):
 
 class AgentRegistration(Contract):
     id: Identifier
+    organisation_id: Identifier
     kind: AgentKind
     display_name: str = Field(min_length=1, max_length=160)
     version: str = Field(min_length=1, max_length=64)
@@ -53,7 +55,7 @@ class AgentResult(Contract):
     agent: AgentKind
     skill: str = Field(min_length=1, max_length=96)
     succeeded: bool
-    output: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    output: dict[str, Any] = Field(default_factory=dict)
     evidence_ids: tuple[Identifier, ...] = ()
     error: str | None = Field(default=None, max_length=1024)
     completed_at: AwareDatetime
@@ -81,6 +83,7 @@ class AgentMemory(Contract):
     id: Identifier
     organisation_id: Identifier
     agent: AgentKind
+    remote_memory: str = Field(min_length=1, max_length=1024)
     fact: str = Field(min_length=1, max_length=2048)
     provenance: tuple[Identifier, ...] = Field(min_length=1)
     approved_by: Identifier

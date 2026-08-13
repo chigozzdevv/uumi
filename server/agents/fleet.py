@@ -1,0 +1,40 @@
+from contracts import AgentKind, AgentRegistration, AgentStatus
+
+from agents.storage import AgentRepository
+
+
+class AgentFleetService:
+    def __init__(self, repository: AgentRepository) -> None:
+        self._repository = repository
+
+    async def register(self, registration: AgentRegistration) -> AgentRegistration:
+        expected = _SKILLS[registration.kind]
+        if registration.skills != expected:
+            raise ValueError(f"{registration.kind.value} agent has an invalid skill boundary")
+        if registration.status is not AgentStatus.READY:
+            raise ValueError("only ready Agent Runtime deployments may enter the fleet")
+        if not registration.deployment.startswith("projects/"):
+            raise ValueError("agent deployment must be a managed Agent Runtime resource")
+        return await self._repository.register(registration)
+
+    async def resolve(self, organisation_id: str, kind: AgentKind, skill: str) -> AgentRegistration:
+        candidates = [
+            item
+            for item in await self._repository.list(organisation_id)
+            if item.kind is kind and item.status is AgentStatus.READY and skill in item.skills
+        ]
+        if len(candidates) != 1:
+            raise ValueError(
+                f"expected one ready {kind.value} agent for {skill}, found {len(candidates)}"
+            )
+        return candidates[0]
+
+
+_SKILLS: dict[AgentKind, frozenset[str]] = {
+    AgentKind.INVENTORY: frozenset(
+        {"correlate_exposure", "resolve_consumers", "detect_stale_mapping"}
+    ),
+    AgentKind.PLANNER: frozenset({"plan_rotation", "select_strategy", "bind_playbook"}),
+    AgentKind.PLAYBOOK: frozenset({"build_playbook", "analyse_walkthrough", "generate_dry_run"}),
+    AgentKind.OPERATOR: frozenset({"execute_console_playbook", "detect_interface_drift"}),
+}

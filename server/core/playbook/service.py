@@ -71,7 +71,7 @@ class PlaybookService:
         actor_id: str,
         source_ids: tuple[str, ...] = (),
     ) -> tuple[Playbook, PlaybookVersion]:
-        _validate_definition(definition)
+        validate_definition(definition)
         return await self._repository.add_version(
             playbook_id,
             version_id,
@@ -108,7 +108,7 @@ class PlaybookService:
             playbook_id,
             version_id,
         )
-        _validate_definition(version.definition)
+        validate_definition(version.definition)
         if digest(version.definition) != version.digest:
             raise PlaybookError("playbook definition digest does not match its immutable version")
         if version.state is not PlaybookState.APPROVAL or version.dry_run_id != dryrun_id:
@@ -144,7 +144,7 @@ class PlaybookService:
         return await self._repository.assign(assignment)
 
 
-def _validate_definition(definition: PlaybookDraft) -> None:
+def validate_definition(definition: PlaybookDraft) -> None:
     used_tools = {step.tool for step in definition.steps}
     undeclared = used_tools.difference(definition.allowed_tools)
     if undeclared:
