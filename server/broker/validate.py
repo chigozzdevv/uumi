@@ -81,6 +81,11 @@ def validate_request(
         raise CapabilityError("tool connection is not assigned to the active playbook")
     if version.id != assignment.version_id or run.playbook_version != version.id:
         raise CapabilityError("tool request is not bound to the run playbook version")
+    if run.dry_run_id is not None:
+        if not assignment.dry_run_only or run.dry_run_playbook_id != assignment.playbook_id:
+            raise CapabilityError("dry-run tool request escaped its isolated assignment")
+    elif assignment.dry_run_only:
+        raise CapabilityError("production tool request cannot use a dry-run assignment")
     if request.tool not in version.definition.allowed_tools:
         raise CapabilityError("tool is not allowed by the immutable playbook")
     if request.tool not in connection.capabilities:

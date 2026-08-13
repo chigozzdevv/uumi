@@ -193,6 +193,83 @@ class FirestoreGenerationRepository:
 
         return await apply(self._client.transaction(max_attempts=5))
 
+    async def stage_bindings(
+        self,
+        organisation_id: str,
+        credential_id: str,
+        target_id: str,
+        secret_reference: str,
+        binding_ids: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        references = tuple(
+            self._client.document(FirestorePaths.binding(organisation_id, binding_id))
+            for binding_id in binding_ids
+        )
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> tuple[str, ...]:
+            snapshots = [await reference.get(transaction=transaction) for reference in references]
+            if not all(snapshot.exists for snapshot in snapshots):
+                raise ResourceNotFoundError("consumer deployment bindings are incomplete")
+            bindings = tuple(ConsumerBinding.model_validate(_data(item)) for item in snapshots)
+            if any(binding.credential_id != credential_id for binding in bindings):
+                raise ResourceConflictError("consumer binding belongs to another credential")
+            for reference, binding in zip(references, bindings, strict=True):
+                if binding.target_generation_id not in {None, target_id}:
+                    raise ResourceConflictError("consumer binding targets another generation")
+                changed = binding.model_copy(
+                    update={
+                        "target_generation_id": target_id,
+                        "secret_reference": secret_reference,
+                        "revision": binding.revision + 1,
+                    }
+                )
+                transaction.set(reference, encode(changed))
+            return tuple(binding.id for binding in bindings)
+
+        return await apply(self._client.transaction(max_attempts=5))
+
+    async def verify_bindings(
+        self,
+        organisation_id: str,
+        target_id: str,
+        report_id: str,
+        binding_ids: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        report_ref = self._client.document(FirestorePaths.report(organisation_id, report_id))
+        references = tuple(
+            self._client.document(FirestorePaths.binding(organisation_id, binding_id))
+            for binding_id in binding_ids
+        )
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> tuple[str, ...]:
+            report_snapshot = await report_ref.get(transaction=transaction)
+            snapshots = [await reference.get(transaction=transaction) for reference in references]
+            if not report_snapshot.exists or not all(snapshot.exists for snapshot in snapshots):
+                raise ResourceNotFoundError("consumer verification evidence is incomplete")
+            report = VerificationReport.model_validate(_data(report_snapshot))
+            if report.status is not VerificationStatus.PASSED or report.generation_id != target_id:
+                raise ResourceConflictError("consumer verification report did not pass")
+            bindings = tuple(ConsumerBinding.model_validate(_data(item)) for item in snapshots)
+            for reference, binding in zip(references, bindings, strict=True):
+                if binding.target_generation_id != target_id:
+                    raise ResourceConflictError("consumer binding does not target the generation")
+                transaction.set(
+                    reference,
+                    encode(
+                        binding.model_copy(
+                            update={
+                                "verification_id": report_id,
+                                "revision": binding.revision + 1,
+                            }
+                        )
+                    ),
+                )
+            return tuple(binding.id for binding in bindings)
+
+        return await apply(self._client.transaction(max_attempts=5))
+
     async def orphan(
         self,
         organisation_id: str,

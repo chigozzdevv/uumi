@@ -38,8 +38,26 @@ class FirestoreAuditRepository:
             head = await head_ref.get(transaction=transaction)
             if existing.exists:
                 current = AuditEvent.model_validate(_data(existing))
-                fields = (current.kind, current.actor_id, current.resource, current.run_id)
-                if fields == (kind, actor_id, resource, run_id) and current.payload == payload:
+                fields = (
+                    current.kind,
+                    current.actor_id,
+                    current.resource,
+                    current.run_id,
+                    current.evidence_ids,
+                    current.region,
+                )
+                if (
+                    fields
+                    == (
+                        kind,
+                        actor_id,
+                        resource,
+                        run_id,
+                        evidence_ids,
+                        region,
+                    )
+                    and current.payload == payload
+                ):
                     return current
                 raise ResourceConflictError(f"audit event {event_id} already exists")
             if head.exists:
