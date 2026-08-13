@@ -43,3 +43,17 @@ variable "enable_gateway" {
   type        = bool
   default     = true
 }
+
+variable "workflow_organisations" {
+  description = "Organisations the workflow identity is authorised to operate."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for organisation_id in var.workflow_organisations :
+      can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation_id))
+    ])
+    error_message = "Workflow organisation IDs must satisfy the FireKey identifier contract."
+  }
+}

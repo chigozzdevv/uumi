@@ -7,3 +7,8 @@ output "members" {
   description = "IAM member names keyed by account ID."
   value       = { for key, account in google_service_account.account : key => account.member }
 }
+
+output "subjects" {
+  description = "OIDC subject identifiers keyed by account ID."
+  value       = { for key, account in google_service_account.account : key => account.unique_id }
+}
