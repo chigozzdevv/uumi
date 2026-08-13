@@ -113,6 +113,32 @@ variable "scc_sources" {
   default = {}
 }
 
+variable "secret_sources" {
+  description = "FireKey organisations receiving Secret Manager event notifications."
+  type        = set(string)
+  default     = []
+}
+
+variable "provider_sources" {
+  description = "Signed provider webhook sources keyed by an operator-owned label."
+  type = map(object({
+    organisation_id = string
+    provider        = string
+  }))
+  default = {}
+}
+
+variable "rotation_schedules" {
+  description = "Recurring credential rotations keyed by stable schedule ID."
+  type = map(object({
+    organisation_id = string
+    credential_id   = string
+    schedule        = string
+    time_zone       = optional(string, "Etc/UTC")
+  }))
+  default = {}
+}
+
 variable "broker_image" {
   description = "Immutable FireKey MCP broker image reference."
   type        = string

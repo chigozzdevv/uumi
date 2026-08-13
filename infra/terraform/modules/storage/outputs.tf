@@ -33,7 +33,17 @@ output "github_secrets" {
   value       = { for organisation, secret in google_secret_manager_secret.github : organisation => secret.id }
 }
 
+output "provider_secrets" {
+  description = "Provider webhook secret resources keyed by configured source."
+  value       = { for source, secret in google_secret_manager_secret.provider : source => secret.id }
+}
+
 output "kms_key" {
   description = "CMEK resource used by evidence and Agent Runtime."
   value       = google_kms_crypto_key.evidence.id
+}
+
+output "secretmanager_member" {
+  description = "Secret Manager service agent IAM member."
+  value       = google_project_service_identity.secretmanager.member
 }

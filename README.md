@@ -12,7 +12,8 @@ gateway. Google Cloud Workflows owns the twelve-stage run loop; Firestore owns i
 versions, leases, fencing tokens, approvals, sessions, and the transactional state record.
 
 Every run is bound to an approved immutable policy version defining required checks, allowed and
-protected tools, observation limits, recovery modes, and generation-proof requirements. A failed
+protected tools, automatic and emergency triggers, observation limits, recovery modes, and
+generation-proof requirements. A failed
 planned stage enters a newly fenced recovery execution. Only its precomputed playbook branch may
 run, and successful compensation ends as `compensated`, never as a completed credential rotation.
 
@@ -24,6 +25,9 @@ run, and successful compensation ends as `compensated`, never as a completed cre
   incident, playbook, approval, and generation kernel.
 - `server/connectors` contains the Google Cloud, SendGrid, GitHub, SCC, Secret Manager, and
   Cloud Run adapters.
+- `server/ingestion` authenticates signed webhooks and Google push identities, normalises stable
+  events, rejects changed replays, correlates exact inventory identifiers, and starts runs only
+  when an active policy explicitly authorises that event type.
 - `server/agents` contains four separately deployed ADK agents, deterministic skill tools,
   managed sessions, approved Memory Bank context, and the per-tenant routing registry.
 - `server/broker` exposes capability-scoped MCP tools. The model never receives provider or

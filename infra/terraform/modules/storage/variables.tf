@@ -99,3 +99,36 @@ variable "github_secret_accessor" {
   default     = null
   nullable    = true
 }
+
+variable "provider_sources" {
+  description = "Signed provider webhook sources keyed by an operator-owned label."
+  type = map(object({
+    organisation_id = string
+    provider        = string
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for source in values(var.provider_sources) :
+      can(regex("^[a-z][a-z0-9_-]{2,127}$", source.organisation_id)) &&
+      can(regex("^[a-z][a-z0-9-]{1,54}$", source.provider))
+    ])
+    error_message = "Provider sources require valid organisation and provider identifiers."
+  }
+}
+
+variable "provider_secret_accessor" {
+  description = "IAM member allowed to verify signed provider webhooks."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.provider_secret_accessor == null ||
+      startswith(var.provider_secret_accessor, "serviceAccount:")
+    )
+    error_message = "Provider webhook accessor must be a service account IAM member."
+  }
+}

@@ -13,7 +13,12 @@ output "scc_topics" {
   value       = { for organisation, topic in google_pubsub_topic.scc : organisation => topic.id }
 }
 
+output "secret_topics" {
+  description = "Secret Manager notification topics keyed by FireKey organisation."
+  value       = { for organisation, topic in google_pubsub_topic.secrets : organisation => topic.id }
+}
+
 output "scc_deadletter_subscription" {
-  description = "Retained SCC messages that exhausted delivery retries."
+  description = "Retained ingestion messages that exhausted delivery retries."
   value       = try(google_pubsub_subscription.deadletter[0].id, null)
 }

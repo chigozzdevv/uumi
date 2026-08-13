@@ -23,6 +23,16 @@ variable "event_service_account" {
   type        = string
 }
 
+variable "secretmanager_member" {
+  description = "Secret Manager service agent IAM member allowed to publish notifications."
+  type        = string
+
+  validation {
+    condition     = startswith(var.secretmanager_member, "serviceAccount:")
+    error_message = "secretmanager_member must be a service account IAM member."
+  }
+}
+
 variable "publisher_name" {
   description = "Cloud Run publisher service name."
   type        = string
@@ -67,5 +77,42 @@ variable "scc_sources" {
       length(trimspace(source.filter)) > 0
     ])
     error_message = "SCC sources require a FireKey organisation, numeric Cloud organisation, valid location, and filter."
+  }
+}
+
+variable "secret_sources" {
+  description = "FireKey organisations receiving Secret Manager notifications."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for organisation in var.secret_sources :
+      can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation))
+    ])
+    error_message = "Secret sources require valid FireKey organisation identifiers."
+  }
+}
+
+variable "rotation_schedules" {
+  description = "Recurring FireKey credential rotations keyed by stable schedule ID."
+  type = map(object({
+    organisation_id = string
+    credential_id   = string
+    schedule        = string
+    time_zone       = optional(string, "Etc/UTC")
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for schedule_id, schedule in var.rotation_schedules :
+      can(regex("^[a-z][a-z0-9_-]{2,127}$", schedule_id)) &&
+      can(regex("^[a-z][a-z0-9_-]{2,127}$", schedule.organisation_id)) &&
+      can(regex("^[a-z][a-z0-9_-]{2,127}$", schedule.credential_id)) &&
+      length(trimspace(schedule.schedule)) > 0 &&
+      length(trimspace(schedule.time_zone)) > 0
+    ])
+    error_message = "Rotation schedules require stable IDs, a tenant, credential, cron expression, and time zone."
   }
 }

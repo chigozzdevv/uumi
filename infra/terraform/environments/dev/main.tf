@@ -99,8 +99,10 @@ module "storage" {
     api         = module.identity.members["firekey-api"]
     coordinator = module.identity.members["firekey-coordinator"]
   }
-  github_organisations   = var.workflow_organisations
-  github_secret_accessor = module.identity.members["firekey-ingestion"]
+  github_organisations     = var.workflow_organisations
+  github_secret_accessor   = module.identity.members["firekey-ingestion"]
+  provider_sources         = var.provider_sources
+  provider_secret_accessor = module.identity.members["firekey-ingestion"]
   principals = {
     for organisation_id in var.workflow_organisations :
     "workflow-${organisation_id}" => {
@@ -157,6 +159,23 @@ check "scc_tenants" {
   assert {
     condition     = setsubtract(toset(keys(var.scc_sources)), var.workflow_organisations) == toset([])
     error_message = "Every SCC source must map to an authorised FireKey organisation."
+  }
+}
+
+check "ingestion_tenants" {
+  assert {
+    condition = (
+      setsubtract(var.secret_sources, var.workflow_organisations) == toset([]) &&
+      setsubtract(
+        toset([for source in values(var.provider_sources) : source.organisation_id]),
+        var.workflow_organisations,
+      ) == toset([]) &&
+      setsubtract(
+        toset([for schedule in values(var.rotation_schedules) : schedule.organisation_id]),
+        var.workflow_organisations,
+      ) == toset([])
+    )
+    error_message = "Every ingestion source must map to an authorised FireKey organisation."
   }
 }
 
@@ -217,11 +236,14 @@ module "events" {
   publisher_member      = module.identity.members["firekey-publisher"]
   event_member          = module.identity.members["firekey-events"]
   event_service_account = module.identity.emails["firekey-events"]
+  secretmanager_member  = module.storage.secretmanager_member
   publisher_name        = module.runtime.publisher_name
   publisher_uri         = module.runtime.publisher_uri
   ingestion_uri         = module.runtime.ingestion_uri
   oidc_audience         = var.oidc_audience
   scc_sources           = var.scc_sources
+  secret_sources        = var.secret_sources
+  rotation_schedules    = var.rotation_schedules
 
   depends_on = [module.project, module.runtime]
 }

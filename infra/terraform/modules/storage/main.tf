@@ -330,3 +330,32 @@ resource "google_secret_manager_secret_iam_member" "github" {
   role      = "roles/secretmanager.secretAccessor"
   member    = var.github_secret_accessor
 }
+
+resource "google_secret_manager_secret" "provider" {
+  for_each = var.provider_sources
+
+  project   = var.project_id
+  secret_id = "firekey-provider-webhook-${each.value.organisation_id}-${each.value.provider}"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.location
+        customer_managed_encryption {
+          kms_key_name = google_kms_crypto_key.evidence.id
+        }
+      }
+    }
+  }
+
+  deletion_protection = true
+}
+
+resource "google_secret_manager_secret_iam_member" "provider" {
+  for_each = var.provider_secret_accessor == null ? {} : google_secret_manager_secret.provider
+
+  project   = each.value.project
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = var.provider_secret_accessor
+}

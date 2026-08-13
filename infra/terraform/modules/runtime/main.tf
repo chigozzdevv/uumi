@@ -61,6 +61,10 @@ resource "google_cloud_run_v2_service" "ingestion" {
         name  = "FIREKEY_GITHUB_SECRET_PROJECT"
         value = var.project_id
       }
+      env {
+        name  = "FIREKEY_TRUSTED_PUSH_SERVICE_ACCOUNTS"
+        value = jsonencode([var.scc_push_service_account])
+      }
 
       resources {
         limits = {

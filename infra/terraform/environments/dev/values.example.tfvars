@@ -20,3 +20,21 @@ scc_sources = {
     filter                = "state = \"ACTIVE\" AND severity = \"CRITICAL\""
   }
 }
+
+secret_sources = ["org_replace"]
+
+provider_sources = {
+  sendgrid = {
+    organisation_id = "org_replace"
+    provider        = "sendgrid"
+  }
+}
+
+rotation_schedules = {
+  production_mailer = {
+    organisation_id = "org_replace"
+    credential_id   = "credential_replace"
+    schedule        = "0 2 * * 0"
+    time_zone       = "Etc/UTC"
+  }
+}

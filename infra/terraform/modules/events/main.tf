@@ -5,7 +5,10 @@ locals {
       uri  = var.publisher_uri
     }
   }
-  scc = var.ingestion_uri == null ? {} : var.scc_sources
+  scc       = var.ingestion_uri == null ? {} : var.scc_sources
+  secrets   = var.ingestion_uri == null ? toset([]) : var.secret_sources
+  schedules = var.ingestion_uri == null ? {} : var.rotation_schedules
+  push      = length(local.scc) + length(local.secrets) == 0 ? [] : ["enabled"]
 }
 
 resource "google_project_service_identity" "pubsub" {
@@ -47,6 +50,24 @@ resource "google_pubsub_topic" "scc" {
   }
 }
 
+resource "google_pubsub_topic" "secrets" {
+  for_each = local.secrets
+
+  project                    = var.project_id
+  name                       = "firekey-secrets-${replace(each.value, "_", "-")}"
+  message_retention_duration = "604800s"
+  deletion_policy            = "PREVENT"
+}
+
+resource "google_pubsub_topic_iam_member" "secrets" {
+  for_each = google_pubsub_topic.secrets
+
+  project = each.value.project
+  topic   = each.value.name
+  role    = "roles/pubsub.publisher"
+  member  = var.secretmanager_member
+}
+
 resource "google_scc_v2_organization_notification_config" "firekey" {
   for_each = local.scc
 
@@ -62,10 +83,10 @@ resource "google_scc_v2_organization_notification_config" "firekey" {
 }
 
 resource "google_pubsub_topic" "deadletter" {
-  count = length(local.scc) == 0 ? 0 : 1
+  count = length(local.push)
 
   project                    = var.project_id
-  name                       = "firekey-scc-deadletter"
+  name                       = "firekey-ingestion-deadletter"
   message_retention_duration = "2678400s"
   deletion_policy            = "PREVENT"
 
@@ -117,11 +138,51 @@ resource "google_pubsub_subscription" "scc" {
   depends_on = [google_scc_v2_organization_notification_config.firekey]
 }
 
+resource "google_pubsub_subscription" "secrets" {
+  for_each = local.secrets
+
+  project                      = var.project_id
+  name                         = "firekey-secrets-${replace(each.value, "_", "-")}-push"
+  topic                        = google_pubsub_topic.secrets[each.value].id
+  ack_deadline_seconds         = 60
+  message_retention_duration   = "604800s"
+  retain_acked_messages        = false
+  enable_exactly_once_delivery = false
+  deletion_policy              = "PREVENT"
+
+  expiration_policy {
+    ttl = ""
+  }
+
+  retry_policy {
+    minimum_backoff = "10s"
+    maximum_backoff = "600s"
+  }
+
+  dead_letter_policy {
+    dead_letter_topic     = google_pubsub_topic.deadletter[0].id
+    max_delivery_attempts = 10
+  }
+
+  push_config {
+    push_endpoint = "${var.ingestion_uri}/v1/secrets/${each.value}"
+
+    attributes = {
+      x-goog-version = "v1"
+    }
+
+    oidc_token {
+      service_account_email = var.event_service_account
+      audience              = var.oidc_audience
+    }
+  }
+}
+
 resource "google_pubsub_subscription" "deadletter" {
-  count = length(local.scc) == 0 ? 0 : 1
+  count = length(local.push)
 
   project                    = var.project_id
-  name                       = "firekey-scc-deadletter-review"
+  name                       = "firekey-ingestion-deadletter-review"
   topic                      = google_pubsub_topic.deadletter[0].id
   ack_deadline_seconds       = 60
   message_retention_duration = "2678400s"
@@ -134,7 +195,7 @@ resource "google_pubsub_subscription" "deadletter" {
 }
 
 resource "google_pubsub_topic_iam_member" "deadletter" {
-  count = length(local.scc) == 0 ? 0 : 1
+  count = length(local.push)
 
   project = google_pubsub_topic.deadletter[0].project
   topic   = google_pubsub_topic.deadletter[0].name
@@ -151,12 +212,55 @@ resource "google_pubsub_subscription_iam_member" "deadletter" {
   member       = google_project_service_identity.pubsub.member
 }
 
+resource "google_pubsub_subscription_iam_member" "secret_deadletter" {
+  for_each = google_pubsub_subscription.secrets
+
+  project      = each.value.project
+  subscription = each.value.name
+  role         = "roles/pubsub.subscriber"
+  member       = google_project_service_identity.pubsub.member
+}
+
 resource "google_service_account_iam_member" "push_token" {
-  count = length(local.scc) == 0 ? 0 : 1
+  count = length(local.push)
 
   service_account_id = "projects/${var.project_id}/serviceAccounts/${var.event_service_account}"
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = google_project_service_identity.pubsub.member
+}
+
+resource "google_cloud_scheduler_job" "rotation" {
+  for_each = local.schedules
+
+  project          = var.project_id
+  region           = var.region
+  name             = "firekey-rotation-${replace(each.key, "_", "-")}"
+  description      = "Starts policy-controlled rotation for ${each.value.credential_id}."
+  schedule         = each.value.schedule
+  time_zone        = each.value.time_zone
+  attempt_deadline = "60s"
+  deletion_policy  = "PREVENT"
+
+  retry_config {
+    retry_count          = 5
+    min_backoff_duration = "10s"
+    max_backoff_duration = "600s"
+    max_doublings        = 5
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "${var.ingestion_uri}/v1/schedules/${each.value.organisation_id}/${each.key}"
+    body        = base64encode(jsonencode({ credential_id = each.value.credential_id }))
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    oidc_token {
+      service_account_email = var.event_service_account
+      audience              = var.oidc_audience
+    }
+  }
 }
 
 resource "google_project_iam_member" "event_receiver" {
