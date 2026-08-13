@@ -1,0 +1,37 @@
+from enum import StrEnum
+
+from pydantic import Field, model_validator
+
+from contracts.base import Contract, Identifier
+
+
+class RotationStrategy(StrEnum):
+    PARALLEL = "parallel"
+    DUAL = "dual-slot"
+    IMMEDIATE = "immediate"
+    MULTI = "multi-consumer"
+
+
+class RotationPlan(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    run_id: Identifier
+    credential_id: Identifier
+    policy_version: Identifier
+    playbook_version: Identifier
+    strategy: RotationStrategy
+    target_scopes: frozenset[str]
+    consumer_ids: tuple[Identifier, ...] = Field(min_length=1)
+    rollout: tuple[int, ...] = (5, 25, 50, 100)
+    observation_seconds: int = Field(gt=0, le=604800)
+    recovery_id: Identifier
+
+    @model_validator(mode="after")
+    def validate_rollout(self) -> "RotationPlan":
+        if tuple(sorted(set(self.rollout))) != self.rollout:
+            raise ValueError("rollout percentages must be unique and increasing")
+        if not self.rollout or self.rollout[-1] != 100:
+            raise ValueError("rollout must end at 100 percent")
+        if any(percent <= 0 or percent > 100 for percent in self.rollout):
+            raise ValueError("rollout percentages must be between 1 and 100")
+        return self

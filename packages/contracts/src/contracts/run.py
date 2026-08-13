@@ -1,0 +1,57 @@
+from pydantic import AwareDatetime, Field, model_validator
+
+from contracts.base import Contract, Identifier
+from contracts.state import RunStatus, Stage
+
+
+class Trigger(Contract):
+    source: str = Field(min_length=1, max_length=64)
+    event_id: str = Field(min_length=1, max_length=256)
+    actor_id: Identifier
+    reason: str = Field(min_length=1, max_length=1024)
+    urgency: str = Field(min_length=1, max_length=32)
+    received_at: AwareDatetime
+
+
+class Lease(Contract):
+    owner_id: Identifier
+    fencing_token: int = Field(gt=0)
+    expires_at: AwareDatetime
+
+
+class Failure(Contract):
+    code: str = Field(min_length=1, max_length=96)
+    message: str = Field(min_length=1, max_length=1024)
+    retryable: bool
+    evidence_ids: tuple[Identifier, ...] = ()
+
+
+class RotationRun(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    credential_id: Identifier
+    trigger: Trigger
+    policy_version: Identifier
+    stage: Stage = Stage.TRIGGER
+    status: RunStatus = RunStatus.PENDING
+    lease: Lease | None = None
+    playbook_version: Identifier | None = None
+    plan_id: Identifier | None = None
+    plan_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    current_generation_id: Identifier | None = None
+    target_generation_id: Identifier | None = None
+    failure: Failure | None = None
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_terminal_state(self) -> "RotationRun":
+        if self.status is RunStatus.COMPLETED and self.stage is not Stage.COMPLETE:
+            raise ValueError("a completed run must be in the complete stage")
+        problem_states = {RunStatus.FAILED, RunStatus.CLEANUP}
+        if self.status in problem_states and self.failure is None:
+            raise ValueError("failed and cleanup-required runs require failure details")
+        if self.status not in problem_states and self.failure is not None:
+            raise ValueError("failure details require a failed or cleanup-required run")
+        return self

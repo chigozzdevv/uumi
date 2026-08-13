@@ -1,0 +1,20 @@
+[project]
+name = "firekey-server"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.116,<1",
+    "firekey-contracts",
+    "firekey-policy",
+    "firekey-telemetry",
+    "pydantic-settings>=2.10,<3",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[tool.uv.sources]
+firekey-contracts = { workspace = true }
+firekey-policy = { workspace = true }
+firekey-telemetry = { workspace = true }
+
+[tool.uv]
+package = false
