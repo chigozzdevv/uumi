@@ -1,5 +1,6 @@
 from core.storage.approval import FirestoreApprovalRepository
 from core.storage.audit import FirestoreAuditRepository
+from core.storage.auditoutbox import FirestoreAuditOutboxRepository
 from core.storage.catalog import FirestoreCatalog
 from core.storage.firestore import FirestoreRunRepository
 from core.storage.generation import FirestoreGenerationRepository
@@ -15,6 +16,7 @@ from core.storage.walkthrough import FirestoreWalkthroughRepository
 
 __all__ = [
     "FirestoreApprovalRepository",
+    "FirestoreAuditOutboxRepository",
     "FirestoreAuditRepository",
     "FirestoreCatalog",
     "FirestoreGenerationRepository",

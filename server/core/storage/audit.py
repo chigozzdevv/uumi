@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from contracts import AuditEvent
+from contracts import AuditEvent, AuditOutbox
 from google.cloud.firestore_v1 import AsyncClient
 from google.cloud.firestore_v1.async_transaction import AsyncTransaction, async_transactional
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
@@ -30,11 +30,13 @@ class FirestoreAuditRepository:
         region: str,
     ) -> AuditEvent:
         event_ref = self._client.document(FirestorePaths.audit(organisation_id, event_id))
+        outbox_ref = self._client.document(FirestorePaths.audit_outbox(organisation_id, event_id))
         head_ref = self._client.document(FirestorePaths.audit_head(organisation_id))
 
         @async_transactional
         async def apply(transaction: AsyncTransaction) -> AuditEvent:
             existing = await event_ref.get(transaction=transaction)
+            existing_outbox = await outbox_ref.get(transaction=transaction)
             head = await head_ref.get(transaction=transaction)
             if existing.exists:
                 current = AuditEvent.model_validate(_data(existing))
@@ -58,6 +60,17 @@ class FirestoreAuditRepository:
                     )
                     and current.payload == payload
                 ):
+                    if existing_outbox.exists:
+                        outbox = AuditOutbox.model_validate(_data(existing_outbox))
+                        if outbox.event != current:
+                            raise StorageIntegrityError(
+                                "audit outbox event does not match its index"
+                            )
+                    else:
+                        transaction.create(
+                            outbox_ref,
+                            encode(AuditOutbox(event=current, available_at=current.occurred_at)),
+                        )
                     return current
                 raise ResourceConflictError(f"audit event {event_id} already exists")
             if head.exists:
@@ -100,6 +113,10 @@ class FirestoreAuditRepository:
                 region=region,
             )
             transaction.create(event_ref, encode(event))
+            transaction.create(
+                outbox_ref,
+                encode(AuditOutbox(event=event, available_at=occurred_at)),
+            )
             transaction.set(
                 head_ref,
                 {

@@ -43,6 +43,7 @@ class AuditWriter:
         payload: dict[str, str | int | float | bool | None],
         run_id: str | None = None,
         evidence_ids: tuple[str, ...] = (),
+        occurred_at: datetime | None = None,
     ) -> AuditEvent:
         safe = redact(payload)
         if not isinstance(safe, dict):
@@ -56,6 +57,6 @@ class AuditWriter:
             run_id,
             safe,
             evidence_ids,
-            self._clock(),
+            occurred_at or self._clock(),
             self._region,
         )

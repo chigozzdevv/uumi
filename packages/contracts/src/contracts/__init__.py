@@ -9,7 +9,7 @@ from contracts.agent import (
     AgentTask,
 )
 from contracts.approval import Approval, ApprovalDecision
-from contracts.audit import AuditEvent, Evidence
+from contracts.audit import AuditEvent, AuditOutbox, Evidence
 from contracts.base import Contract, Identifier
 from contracts.binding import ConsumerBinding
 from contracts.browser import (
@@ -133,6 +133,7 @@ __all__ = [
     "Approval",
     "ApprovalDecision",
     "AuditEvent",
+    "AuditOutbox",
     "BrowserAccessGrant",
     "BrowserAccessMode",
     "BrowserAction",

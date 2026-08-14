@@ -131,6 +131,14 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/audit/{_segment(event_id)}"
 
     @staticmethod
+    def audit_outbox(organisation_id: str, event_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/audit-outbox/{_segment(event_id)}"
+
+    @staticmethod
+    def audit_delivery(organisation_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/audit-state/delivery"
+
+    @staticmethod
     def audit_head(organisation_id: str) -> str:
         return f"{FirestorePaths.organisation(organisation_id)}/audit-state/head"
 

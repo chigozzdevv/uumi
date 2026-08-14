@@ -25,6 +25,27 @@ class AuditEvent(Contract):
         return self
 
 
+class AuditOutbox(Contract):
+    event: AuditEvent
+    available_at: AwareDatetime
+    attempts: int = Field(default=0, ge=0)
+    lease_owner: Identifier | None = None
+    lease_expires_at: AwareDatetime | None = None
+    logged_at: AwareDatetime | None = None
+    provider_receipt: str | None = Field(default=None, min_length=1, max_length=512)
+    last_error: str | None = Field(default=None, max_length=1024)
+
+    @model_validator(mode="after")
+    def validate_delivery(self) -> "AuditOutbox":
+        if (self.lease_owner is None) != (self.lease_expires_at is None):
+            raise ValueError("audit lease owner and expiry must be set together")
+        if self.logged_at is not None and self.lease_owner is not None:
+            raise ValueError("a logged audit event cannot remain leased")
+        if (self.logged_at is None) != (self.provider_receipt is None):
+            raise ValueError("audit log time and provider receipt must be set together")
+        return self
+
+
 class Evidence(Contract):
     id: Identifier
     organisation_id: Identifier
