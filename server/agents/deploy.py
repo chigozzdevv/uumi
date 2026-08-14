@@ -167,6 +167,7 @@ def _deployment_config(
             str(_ROOT / "server"),
             str(_ROOT / "packages" / "contracts" / "src"),
             str(_ROOT / "packages" / "policy" / "src"),
+            str(_ROOT / "packages" / "telemetry" / "src"),
         ],
         "env_vars": {"GOOGLE_CLOUD_PROJECT": project_id},
         "identity_type": types.IdentityType.AGENT_IDENTITY,

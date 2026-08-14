@@ -119,7 +119,7 @@ Run the deployment under the `firekey-agents` deployment identity and use the Te
 for the staging bucket, KMS key, and two governed gateways:
 
 ```bash
-uv run python -m agents.deploy \
+uv run --all-extras python -m agents.deploy \
   --project YOUR_PROJECT \
   --organisation YOUR_FIREKEY_ORGANISATION \
   --region YOUR_REGION \
