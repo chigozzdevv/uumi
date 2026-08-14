@@ -3,11 +3,111 @@ locals {
   publisher = var.publisher_image == null ? {} : { publisher = var.publisher_image }
   broker    = var.broker_image == null ? {} : { broker = var.broker_image }
   ingestion = var.ingestion_image == null ? {} : { ingestion = var.ingestion_image }
+  notification = var.notification_image == null || var.notification_app_url == null ? {} : {
+    notification = var.notification_image
+  }
   coordinator = (
     var.coordinator_image == null || var.browser_image == null || var.broker_image == null
     ? {}
     : { coordinator = var.coordinator_image }
   )
+}
+
+resource "google_cloud_run_v2_service" "notification" {
+  for_each = local.notification
+
+  project             = var.project_id
+  location            = var.region
+  name                = "firekey-notification"
+  description         = "Private durable multi-channel notification worker."
+  deletion_protection = true
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  custom_audiences    = [var.oidc_audience]
+
+  template {
+    service_account                  = var.notification_service_account
+    timeout                          = "300s"
+    max_instance_request_concurrency = 20
+    execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 20
+    }
+
+    containers {
+      name  = "notification"
+      image = each.value
+
+      ports {
+        name           = "http1"
+        container_port = 8080
+      }
+
+      env {
+        name  = "FIREKEY_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "FIREKEY_FIRESTORE_DATABASE"
+        value = "(default)"
+      }
+      env {
+        name  = "FIREKEY_OIDC_AUDIENCE"
+        value = var.oidc_audience
+      }
+      env {
+        name  = "FIREKEY_TRUSTED_PUSH_SERVICE_ACCOUNT"
+        value = var.scc_push_service_account
+      }
+      env {
+        name  = "FIREKEY_APP_URL"
+        value = var.notification_app_url
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+        cpu_idle          = true
+        startup_cpu_boost = true
+      }
+
+      startup_probe {
+        timeout_seconds   = 2
+        period_seconds    = 2
+        failure_threshold = 15
+        http_get {
+          path = "/health/live"
+          port = 8080
+        }
+      }
+
+      liveness_probe {
+        initial_delay_seconds = 10
+        timeout_seconds       = 2
+        period_seconds        = 10
+        failure_threshold     = 3
+        http_get {
+          path = "/health/live"
+          port = 8080
+        }
+      }
+    }
+  }
+
+  depends_on = [google_artifact_registry_repository.runtime]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "notification_invoker" {
+  for_each = google_cloud_run_v2_service.notification
+
+  project  = each.value.project
+  location = each.value.location
+  name     = each.value.name
+  role     = "roles/run.invoker"
+  member   = var.event_member
 }
 
 resource "google_cloud_run_v2_service" "ingestion" {

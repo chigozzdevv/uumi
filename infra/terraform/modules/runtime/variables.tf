@@ -33,6 +33,11 @@ variable "ingestion_service_account" {
   type        = string
 }
 
+variable "notification_service_account" {
+  description = "Service account email assigned to the notification worker."
+  type        = string
+}
+
 variable "scc_push_service_account" {
   description = "Service account email asserted on SCC Pub/Sub push requests."
   type        = string
@@ -122,6 +127,36 @@ variable "ingestion_image" {
       can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.ingestion_image))
     )
     error_message = "ingestion_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "notification_image" {
+  description = "Immutable notification worker image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.notification_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.notification_image))
+    )
+    error_message = "notification_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "notification_app_url" {
+  description = "Authenticated application origin used in notification links."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.notification_app_url == null ||
+      can(regex("^https://[a-zA-Z0-9.-]+$", var.notification_app_url))
+    )
+    error_message = "notification_app_url must be null or an HTTPS origin without a path."
   }
 }
 

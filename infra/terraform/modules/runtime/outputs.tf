@@ -23,6 +23,16 @@ output "ingestion_uri" {
   value       = try(google_cloud_run_v2_service.ingestion["ingestion"].uri, null)
 }
 
+output "notification_name" {
+  description = "Notification worker service name when deployed."
+  value       = try(google_cloud_run_v2_service.notification["notification"].name, null)
+}
+
+output "notification_uri" {
+  description = "Notification worker URI when deployed."
+  value       = try(google_cloud_run_v2_service.notification["notification"].uri, null)
+}
+
 output "broker_uri" {
   description = "Private MCP broker URI."
   value       = try(google_cloud_run_v2_service.broker["broker"].uri, null)

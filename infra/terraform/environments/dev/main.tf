@@ -50,6 +50,10 @@ module "identity" {
       display_name = "FireKey Agent Runtime"
       description  = "Runs the registered ADK reasoning fleet."
     }
+    "firekey-notification" = {
+      display_name = "FireKey Notification Worker"
+      description  = "Delivers durable safe notifications through configured channels."
+    }
   }
 
   depends_on = [module.project]
@@ -79,13 +83,14 @@ module "storage" {
   project_id = var.project_id
   location   = var.region
   users = {
-    api         = module.identity.members["firekey-api"]
-    ingestion   = module.identity.members["firekey-ingestion"]
-    publisher   = module.identity.members["firekey-publisher"]
-    broker      = module.identity.members["firekey-broker"]
-    coordinator = module.identity.members["firekey-coordinator"]
-    browser     = module.identity.members["firekey-browser"]
-    gateway     = module.identity.members["firekey-gateway"]
+    api          = module.identity.members["firekey-api"]
+    ingestion    = module.identity.members["firekey-ingestion"]
+    publisher    = module.identity.members["firekey-publisher"]
+    broker       = module.identity.members["firekey-broker"]
+    coordinator  = module.identity.members["firekey-coordinator"]
+    browser      = module.identity.members["firekey-browser"]
+    gateway      = module.identity.members["firekey-gateway"]
+    notification = module.identity.members["firekey-notification"]
   }
   evidence_users = {
     broker      = module.identity.members["firekey-broker"]
@@ -114,6 +119,15 @@ module "storage" {
   depends_on = [module.project]
 }
 
+resource "google_secret_manager_secret_iam_member" "notification" {
+  for_each = var.notification_secrets
+
+  project   = each.value.project_id
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = module.identity.members["firekey-notification"]
+}
+
 module "browser" {
   source = "../../modules/browser"
 
@@ -139,18 +153,20 @@ locals {
     var.coordinator_image,
     var.browser_image,
     var.gateway_image,
+    var.notification_image,
   ])
 }
 
 check "complete_runtime" {
   assert {
     condition = length(local.runtime_images) == 0 || (
-      length(local.runtime_images) == 7 &&
+      length(local.runtime_images) == 8 &&
       var.capability_secret_version != null &&
+      var.notification_app_url != null &&
       length(var.workflow_organisations) > 0 &&
       length(var.gateway_users) > 0
     )
-    error_message = "Deploy all seven runtime images together with an explicit capability secret, organisation grant, and IAP gateway user."
+    error_message = "Deploy all eight runtime images together with an explicit capability secret, notification app URL, organisation grant, and IAP gateway user."
   }
 }
 
@@ -181,33 +197,36 @@ check "ingestion_tenants" {
 module "runtime" {
   source = "../../modules/runtime"
 
-  project_id                  = var.project_id
-  region                      = var.region
-  api_service_account         = module.identity.emails["firekey-api"]
-  ingestion_service_account   = module.identity.emails["firekey-ingestion"]
-  publisher_service_account   = module.identity.emails["firekey-publisher"]
-  broker_service_account      = module.identity.emails["firekey-broker"]
-  coordinator_service_account = module.identity.emails["firekey-coordinator"]
-  coordinator_member          = module.identity.members["firekey-coordinator"]
-  workflow_member             = module.identity.members["firekey-workflow"]
-  event_member                = module.identity.members["firekey-events"]
-  scc_push_service_account    = module.identity.emails["firekey-events"]
-  oidc_audience               = var.oidc_audience
-  api_image                   = var.api_image
-  ingestion_image             = var.ingestion_image
-  publisher_image             = var.publisher_image
-  broker_image                = var.broker_image
-  coordinator_image           = var.coordinator_image
-  browser_image               = var.browser_image
-  browser_gateway_url         = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
-  evidence_bucket             = module.storage.evidence_bucket
-  walkthrough_bucket          = module.storage.walkthrough_bucket
-  capability_secret_version   = local.capability_secret_version
-  capability_public_key       = var.capability_public_key
-  browser_template            = module.browser.template
-  browser_zone                = var.zone
-  network                     = module.browser.network
-  subnetwork                  = module.browser.subnetwork
+  project_id                   = var.project_id
+  region                       = var.region
+  api_service_account          = module.identity.emails["firekey-api"]
+  ingestion_service_account    = module.identity.emails["firekey-ingestion"]
+  publisher_service_account    = module.identity.emails["firekey-publisher"]
+  broker_service_account       = module.identity.emails["firekey-broker"]
+  coordinator_service_account  = module.identity.emails["firekey-coordinator"]
+  notification_service_account = module.identity.emails["firekey-notification"]
+  coordinator_member           = module.identity.members["firekey-coordinator"]
+  workflow_member              = module.identity.members["firekey-workflow"]
+  event_member                 = module.identity.members["firekey-events"]
+  scc_push_service_account     = module.identity.emails["firekey-events"]
+  oidc_audience                = var.oidc_audience
+  api_image                    = var.api_image
+  ingestion_image              = var.ingestion_image
+  publisher_image              = var.publisher_image
+  broker_image                 = var.broker_image
+  coordinator_image            = var.coordinator_image
+  notification_image           = var.notification_image
+  notification_app_url         = var.notification_app_url
+  browser_image                = var.browser_image
+  browser_gateway_url          = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
+  evidence_bucket              = module.storage.evidence_bucket
+  walkthrough_bucket           = module.storage.walkthrough_bucket
+  capability_secret_version    = local.capability_secret_version
+  capability_public_key        = var.capability_public_key
+  browser_template             = module.browser.template
+  browser_zone                 = var.zone
+  network                      = module.browser.network
+  subnetwork                   = module.browser.subnetwork
 
   depends_on = [module.project, module.storage, module.browser, module.gateway]
 }
@@ -265,6 +284,8 @@ module "events" {
   publisher_name        = module.runtime.publisher_name
   publisher_uri         = module.runtime.publisher_uri
   ingestion_uri         = module.runtime.ingestion_uri
+  notification_name     = module.runtime.notification_name
+  notification_uri      = module.runtime.notification_uri
   oidc_audience         = var.oidc_audience
   scc_sources           = var.scc_sources
   secret_sources        = var.secret_sources

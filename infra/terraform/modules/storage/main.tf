@@ -69,6 +69,24 @@ resource "google_firestore_index" "outbox" {
   }
 }
 
+resource "google_firestore_index" "notification_delivery" {
+  project         = var.project_id
+  database        = google_firestore_database.primary.name
+  collection      = "notification-deliveries"
+  query_scope     = "COLLECTION_GROUP"
+  deletion_policy = "PREVENT"
+
+  fields {
+    field_path = "state"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "available_at"
+    order      = "ASCENDING"
+  }
+}
+
 resource "google_kms_key_ring" "firekey" {
   project  = var.project_id
   name     = "firekey"

@@ -103,6 +103,54 @@ variable "ingestion_image" {
   }
 }
 
+variable "notification_image" {
+  description = "Immutable FireKey notification worker image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.notification_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.notification_image))
+    )
+    error_message = "notification_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "notification_app_url" {
+  description = "Authenticated FireKey application origin used for safe notification links."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.notification_app_url == null ||
+      can(regex("^https://[a-zA-Z0-9.-]+$", var.notification_app_url))
+    )
+    error_message = "notification_app_url must be null or an HTTPS origin without a path."
+  }
+}
+
+variable "notification_secrets" {
+  description = "Existing Secret Manager credentials the notification worker may access."
+  type = map(object({
+    project_id = string
+    secret_id  = string
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for secret in values(var.notification_secrets) :
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", secret.project_id)) &&
+      can(regex("^[A-Za-z0-9_-]{1,255}$", secret.secret_id))
+    ])
+    error_message = "Notification secrets require valid project and secret identifiers."
+  }
+}
+
 variable "scc_sources" {
   description = "SCC organisation sources keyed by FireKey organisation ID."
   type = map(object({

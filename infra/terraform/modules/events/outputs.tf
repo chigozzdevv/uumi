@@ -22,3 +22,8 @@ output "scc_deadletter_subscription" {
   description = "Retained ingestion messages that exhausted delivery retries."
   value       = try(google_pubsub_subscription.deadletter[0].id, null)
 }
+
+output "notification_deadletter_subscription" {
+  description = "Retained notification events that exhausted delivery retries."
+  value       = try(google_pubsub_subscription.notification_deadletter["notification"].id, null)
+}

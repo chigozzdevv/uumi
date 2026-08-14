@@ -54,6 +54,20 @@ variable "ingestion_uri" {
   nullable    = true
 }
 
+variable "notification_name" {
+  description = "Cloud Run notification worker service name."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "notification_uri" {
+  description = "Cloud Run notification worker URI."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "oidc_audience" {
   description = "Audience asserted by SCC Pub/Sub push identity tokens."
   type        = string
