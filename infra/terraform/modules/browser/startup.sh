@@ -17,7 +17,7 @@ image="$(get firekey-worker-image)"
 
 docker-credential-gcr configure-docker --registries="${region}-docker.pkg.dev"
 docker pull "$image"
-docker run --detach --restart=no --network=host --name=firekey-browser \
+docker run --detach --restart=no --init --network=host --name=firekey-browser \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=512m --shm-size=1g \
   --security-opt=no-new-privileges --cap-drop=ALL \
   --env FIREKEY_PROJECT_ID="$project" \
