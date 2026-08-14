@@ -38,6 +38,11 @@ variable "notification_service_account" {
   type        = string
 }
 
+variable "auditlog_service_account" {
+  description = "Service account email assigned to the audit log publisher."
+  type        = string
+}
+
 variable "scc_push_service_account" {
   description = "Service account email asserted on SCC Pub/Sub push requests."
   type        = string
@@ -142,6 +147,21 @@ variable "notification_image" {
       can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.notification_image))
     )
     error_message = "notification_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "auditlog_image" {
+  description = "Immutable audit log publisher image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.auditlog_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.auditlog_image))
+    )
+    error_message = "auditlog_image must be null or an immutable sha256 image reference."
   }
 }
 

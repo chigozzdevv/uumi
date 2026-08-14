@@ -27,3 +27,8 @@ output "notification_deadletter_subscription" {
   description = "Retained notification events that exhausted delivery retries."
   value       = try(google_pubsub_subscription.notification_deadletter["notification"].id, null)
 }
+
+output "audit_deadletter_subscription" {
+  description = "Retained run events that exhausted canonical audit ingestion retries."
+  value       = try(google_pubsub_subscription.audit_deadletter["auditlog"].id, null)
+}

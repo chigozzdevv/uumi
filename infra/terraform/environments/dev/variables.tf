@@ -118,6 +118,21 @@ variable "notification_image" {
   }
 }
 
+variable "auditlog_image" {
+  description = "Immutable FireKey audit log publisher image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.auditlog_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.auditlog_image))
+    )
+    error_message = "auditlog_image must be null or an immutable sha256 image reference."
+  }
+}
+
 variable "notification_app_url" {
   description = "Authenticated FireKey application origin used for safe notification links."
   type        = string

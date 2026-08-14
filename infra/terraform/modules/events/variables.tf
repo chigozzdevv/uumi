@@ -68,6 +68,20 @@ variable "notification_uri" {
   nullable    = true
 }
 
+variable "auditlog_name" {
+  description = "Cloud Run audit log publisher service name."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "auditlog_uri" {
+  description = "Cloud Run audit log publisher URI."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "oidc_audience" {
   description = "Audience asserted by SCC Pub/Sub push identity tokens."
   type        = string

@@ -33,6 +33,16 @@ output "notification_uri" {
   value       = try(google_cloud_run_v2_service.notification["notification"].uri, null)
 }
 
+output "auditlog_name" {
+  description = "Audit log publisher service name when deployed."
+  value       = try(google_cloud_run_v2_service.auditlog["auditlog"].name, null)
+}
+
+output "auditlog_uri" {
+  description = "Audit log publisher URI when deployed."
+  value       = try(google_cloud_run_v2_service.auditlog["auditlog"].uri, null)
+}
+
 output "broker_uri" {
   description = "Private MCP broker URI."
   value       = try(google_cloud_run_v2_service.broker["broker"].uri, null)

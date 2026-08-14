@@ -87,6 +87,54 @@ resource "google_firestore_index" "notification_delivery" {
   }
 }
 
+resource "google_firestore_index" "audit_outbox" {
+  project         = var.project_id
+  database        = google_firestore_database.primary.name
+  collection      = "audit-outbox"
+  query_scope     = "COLLECTION_GROUP"
+  deletion_policy = "PREVENT"
+
+  fields {
+    field_path = "logged_at"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "available_at"
+    order      = "ASCENDING"
+  }
+}
+
+resource "google_logging_project_bucket_config" "audit" {
+  project        = var.project_id
+  location       = var.location
+  bucket_id      = "firekey-audit"
+  description    = "Canonical FireKey hash-chained audit events."
+  retention_days = 2555
+  locked         = true
+  cmek_settings {
+    kms_key_name = google_kms_crypto_key.evidence.id
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_logging_project_sink" "audit" {
+  project                = var.project_id
+  name                   = "firekey-audit"
+  destination            = "logging.googleapis.com/${google_logging_project_bucket_config.audit.id}"
+  filter                 = "logName=\"projects/${var.project_id}/logs/firekey-audit\""
+  unique_writer_identity = true
+}
+
+resource "google_project_iam_member" "audit_sink" {
+  project = var.project_id
+  role    = "roles/logging.bucketWriter"
+  member  = google_logging_project_sink.audit.writer_identity
+}
+
 resource "google_kms_key_ring" "firekey" {
   project  = var.project_id
   name     = "firekey"
@@ -128,12 +176,19 @@ resource "google_project_service_identity" "video" {
   service  = "videointelligence.googleapis.com"
 }
 
+resource "google_project_service_identity" "logging" {
+  provider = google-beta
+  project  = var.project_id
+  service  = "logging.googleapis.com"
+}
+
 resource "google_kms_crypto_key_iam_member" "service_crypto" {
   for_each = {
     storage       = google_project_service_identity.storage.member
     secretmanager = google_project_service_identity.secretmanager.member
     aiplatform    = google_project_service_identity.aiplatform.member
     video         = google_project_service_identity.video.member
+    logging       = google_project_service_identity.logging.member
   }
 
   crypto_key_id = google_kms_crypto_key.evidence.id

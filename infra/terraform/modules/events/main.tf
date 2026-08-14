@@ -13,7 +13,12 @@ locals {
     ? {}
     : { notification = { name = var.notification_name, uri = var.notification_uri } }
   )
-  push = length(local.scc) + length(local.secrets) + length(local.notification) == 0 ? [] : ["enabled"]
+  auditlog = (
+    var.auditlog_name == null || var.auditlog_uri == null
+    ? {}
+    : { auditlog = { name = var.auditlog_name, uri = var.auditlog_uri } }
+  )
+  push = length(local.scc) + length(local.secrets) + length(local.notification) + length(local.auditlog) == 0 ? [] : ["enabled"]
 }
 
 resource "google_project_service_identity" "pubsub" {
@@ -52,6 +57,90 @@ resource "google_pubsub_topic" "notification_deadletter" {
   message_storage_policy {
     allowed_persistence_regions = [var.region]
     enforce_in_transit          = true
+  }
+}
+
+resource "google_pubsub_topic" "audit_deadletter" {
+  for_each = local.auditlog
+
+  project                    = var.project_id
+  name                       = "firekey-audit-deadletter"
+  message_retention_duration = "2678400s"
+  deletion_policy            = "PREVENT"
+
+  message_storage_policy {
+    allowed_persistence_regions = [var.region]
+    enforce_in_transit          = true
+  }
+}
+
+resource "google_pubsub_subscription" "audit" {
+  for_each = local.auditlog
+
+  project                      = var.project_id
+  name                         = "firekey-audit-events"
+  topic                        = google_pubsub_topic.events.id
+  ack_deadline_seconds         = 60
+  message_retention_duration   = "604800s"
+  retain_acked_messages        = false
+  enable_message_ordering      = true
+  enable_exactly_once_delivery = false
+  deletion_policy              = "PREVENT"
+
+  expiration_policy {
+    ttl = ""
+  }
+  retry_policy {
+    minimum_backoff = "10s"
+    maximum_backoff = "600s"
+  }
+  dead_letter_policy {
+    dead_letter_topic     = google_pubsub_topic.audit_deadletter[each.key].id
+    max_delivery_attempts = 10
+  }
+  push_config {
+    push_endpoint = "${each.value.uri}/events"
+    attributes = {
+      x-goog-version = "v1"
+    }
+    oidc_token {
+      service_account_email = var.event_service_account
+      audience              = var.oidc_audience
+    }
+  }
+}
+
+resource "google_pubsub_topic_iam_member" "audit_deadletter" {
+  for_each = google_pubsub_topic.audit_deadletter
+
+  project = each.value.project
+  topic   = each.value.name
+  role    = "roles/pubsub.publisher"
+  member  = google_project_service_identity.pubsub.member
+}
+
+resource "google_pubsub_subscription_iam_member" "audit_deadletter" {
+  for_each = google_pubsub_subscription.audit
+
+  project      = each.value.project
+  subscription = each.value.name
+  role         = "roles/pubsub.subscriber"
+  member       = google_project_service_identity.pubsub.member
+}
+
+resource "google_pubsub_subscription" "audit_deadletter" {
+  for_each = google_pubsub_topic.audit_deadletter
+
+  project                    = var.project_id
+  name                       = "firekey-audit-deadletter-review"
+  topic                      = each.value.id
+  ack_deadline_seconds       = 60
+  message_retention_duration = "2678400s"
+  retain_acked_messages      = true
+  deletion_policy            = "PREVENT"
+
+  expiration_policy {
+    ttl = ""
   }
 }
 
@@ -442,6 +531,75 @@ resource "google_eventarc_trigger" "notification" {
   }
 
   depends_on = [google_project_iam_member.event_receiver]
+}
+
+resource "google_eventarc_trigger" "audit" {
+  for_each = local.auditlog
+
+  project                 = var.project_id
+  location                = var.region
+  name                    = "firekey-audit-created"
+  service_account         = var.event_service_account
+  deletion_policy         = "PREVENT"
+  event_data_content_type = "application/json"
+
+  matching_criteria {
+    attribute = "type"
+    value     = "google.cloud.firestore.document.v1.created"
+  }
+  matching_criteria {
+    attribute = "database"
+    value     = "(default)"
+  }
+  matching_criteria {
+    attribute = "namespace"
+    value     = "(default)"
+  }
+  matching_criteria {
+    attribute = "document"
+    operator  = "match-path-pattern"
+    value     = "organisations/{organisation}/audit-outbox/{event}"
+  }
+
+  destination {
+    cloud_run_service {
+      service = each.value.name
+      region  = var.region
+      path    = "/drain"
+    }
+  }
+
+  depends_on = [google_project_iam_member.event_receiver]
+}
+
+resource "google_cloud_scheduler_job" "audit" {
+  for_each = local.auditlog
+
+  project          = var.project_id
+  region           = var.region
+  name             = "firekey-audit-sweep"
+  description      = "Recovers pending canonical audit writes and expired delivery leases."
+  schedule         = "* * * * *"
+  time_zone        = "Etc/UTC"
+  attempt_deadline = "300s"
+  deletion_policy  = "PREVENT"
+
+  retry_config {
+    retry_count          = 3
+    min_backoff_duration = "5s"
+    max_backoff_duration = "60s"
+    max_doublings        = 3
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "${each.value.uri}/drain"
+
+    oidc_token {
+      service_account_email = var.event_service_account
+      audience              = var.oidc_audience
+    }
+  }
 }
 
 resource "google_cloud_scheduler_job" "notification" {

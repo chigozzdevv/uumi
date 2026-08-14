@@ -54,6 +54,10 @@ module "identity" {
       display_name = "FireKey Notification Worker"
       description  = "Delivers durable safe notifications through configured channels."
     }
+    "firekey-auditlog" = {
+      display_name = "FireKey Audit Log Publisher"
+      description  = "Delivers canonical hash-chained audit events to locked Cloud Logging."
+    }
   }
 
   depends_on = [module.project]
@@ -91,6 +95,7 @@ module "storage" {
     browser      = module.identity.members["firekey-browser"]
     gateway      = module.identity.members["firekey-gateway"]
     notification = module.identity.members["firekey-notification"]
+    auditlog     = module.identity.members["firekey-auditlog"]
   }
   evidence_users = {
     broker      = module.identity.members["firekey-broker"]
@@ -154,19 +159,20 @@ locals {
     var.browser_image,
     var.gateway_image,
     var.notification_image,
+    var.auditlog_image,
   ])
 }
 
 check "complete_runtime" {
   assert {
     condition = length(local.runtime_images) == 0 || (
-      length(local.runtime_images) == 8 &&
+      length(local.runtime_images) == 9 &&
       var.capability_secret_version != null &&
       var.notification_app_url != null &&
       length(var.workflow_organisations) > 0 &&
       length(var.gateway_users) > 0
     )
-    error_message = "Deploy all eight runtime images together with an explicit capability secret, notification app URL, organisation grant, and IAP gateway user."
+    error_message = "Deploy all nine runtime images together with an explicit capability secret, notification app URL, organisation grant, and IAP gateway user."
   }
 }
 
@@ -205,6 +211,7 @@ module "runtime" {
   broker_service_account       = module.identity.emails["firekey-broker"]
   coordinator_service_account  = module.identity.emails["firekey-coordinator"]
   notification_service_account = module.identity.emails["firekey-notification"]
+  auditlog_service_account     = module.identity.emails["firekey-auditlog"]
   coordinator_member           = module.identity.members["firekey-coordinator"]
   workflow_member              = module.identity.members["firekey-workflow"]
   event_member                 = module.identity.members["firekey-events"]
@@ -216,6 +223,7 @@ module "runtime" {
   broker_image                 = var.broker_image
   coordinator_image            = var.coordinator_image
   notification_image           = var.notification_image
+  auditlog_image               = var.auditlog_image
   notification_app_url         = var.notification_app_url
   browser_image                = var.browser_image
   browser_gateway_url          = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
@@ -286,6 +294,8 @@ module "events" {
   ingestion_uri         = module.runtime.ingestion_uri
   notification_name     = module.runtime.notification_name
   notification_uri      = module.runtime.notification_uri
+  auditlog_name         = module.runtime.auditlog_name
+  auditlog_uri          = module.runtime.auditlog_uri
   oidc_audience         = var.oidc_audience
   scc_sources           = var.scc_sources
   secret_sources        = var.secret_sources
@@ -380,4 +390,10 @@ resource "google_project_iam_member" "ingestion_runtime" {
   project = var.project_id
   role    = each.value
   member  = module.identity.members["firekey-ingestion"]
+}
+
+resource "google_project_iam_member" "auditlog_runtime" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = module.identity.members["firekey-auditlog"]
 }

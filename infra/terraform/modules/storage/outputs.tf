@@ -13,6 +13,11 @@ output "evidence_bucket" {
   value       = google_storage_bucket.evidence.name
 }
 
+output "audit_log_bucket" {
+  description = "Locked regional Cloud Logging bucket for canonical audit events."
+  value       = google_logging_project_bucket_config.audit.id
+}
+
 output "walkthrough_bucket" {
   description = "Short-retention bucket for non-production teaching walkthroughs."
   value       = google_storage_bucket.walkthroughs.name
