@@ -6,9 +6,10 @@ The product and end-to-end safety contract live in [`firekey.md`](firekey.md).
 
 ## End-to-end architecture
 
-The product has seven deployable Python boundaries: API, incident ingestion, transactional
-outbox publisher, MCP broker, stage coordinator, isolated browser worker, and IAP browser
-gateway. Google Cloud Workflows owns the twelve-stage run loop; Firestore owns immutable
+The product has nine deployable Python boundaries: API, incident ingestion, transactional
+outbox publisher, MCP broker, stage coordinator, isolated browser worker, IAP browser gateway,
+notification worker, and canonical audit publisher. Google Cloud Workflows owns the twelve-stage
+run loop; Firestore owns immutable
 versions, leases, fencing tokens, approvals, sessions, and the transactional state record.
 
 Every run is bound to an approved immutable policy version defining required checks, allowed and
@@ -19,7 +20,7 @@ run, and successful compensation ends as `compensated`, never as a completed cre
 
 - `packages/contracts` contains canonical immutable models shared by every component.
 - `packages/policy` contains deterministic stage, evidence, and approval gates.
-- `packages/telemetry` contains secret-safe generation telemetry.
+- `packages/telemetry` contains secret-safe Cloud Trace and Monitoring instrumentation.
 - `packages/testkit` contains test-only fakes that are not imported by runtime images.
 - `server/core` is the provider-independent state, storage, audit, identity, inventory,
   incident, playbook, approval, and generation kernel.
@@ -43,8 +44,13 @@ run, and successful compensation ends as `compensated`, never as a completed cre
   validation, live view, takeover gateway, and sanitised replay recorder.
 - `server/capture` performs declared-field transfer directly into Secret Manager while model
   screenshots and recording are paused.
+- `server/notification` delivers safe, durable email, Slack, and PagerDuty messages without
+  embedding approval capabilities or credentials.
+- `server/auditlog` publishes the canonical Firestore hash chain to a locked regional Cloud
+  Logging bucket with retry and dead-letter recovery.
 - `infra` provisions the Workflows, Eventarc, Pub/Sub, SCC, Cloud Run, IAP, one-run Compute
-  Engine browser fleet, CMEK, and locked audit storage.
+  Engine browser fleet, default-deny Secure Web Proxy, VPC Service Controls perimeter, regional
+  policy, OpenTelemetry IAM, delivery alerts, CMEK, and locked audit storage.
 
 ## Run lifecycle
 

@@ -1,4 +1,4 @@
-.PHONY: lock sync format lint type test infra verify image images api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image
+.PHONY: lock sync format lint type test infra verify image images api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image notification-image auditlog-image
 
 UV_CACHE_DIR ?= .cache/uv
 UV_PYTHON_INSTALL_DIR ?= .cache/python
@@ -30,7 +30,7 @@ verify: lint type test
 
 image: api-image
 
-images: api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image
+images: api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image notification-image auditlog-image
 
 api-image:
 	docker build --file server/api/Dockerfile --tag firekey-api:local .
@@ -52,6 +52,12 @@ browser-image:
 
 gateway-image:
 	docker build --file server/browser/Dockerfile --tag firekey-gateway:local .
+
+notification-image:
+	docker build --file server/notification/Dockerfile --tag firekey-notification:local .
+
+auditlog-image:
+	docker build --file server/auditlog/Dockerfile --tag firekey-auditlog:local .
 
 infra:
 	mkdir -p $(TF_CACHE_DIR)
