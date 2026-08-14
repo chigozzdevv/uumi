@@ -1,5 +1,6 @@
 locals {
   base_services = toset([
+    "accesscontextmanager.googleapis.com",
     "aiplatform.googleapis.com",
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
@@ -15,6 +16,8 @@ locals {
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
+    "networksecurity.googleapis.com",
+    "networkservices.googleapis.com",
     "pubsub.googleapis.com",
     "run.googleapis.com",
     "securitycenter.googleapis.com",
@@ -35,8 +38,6 @@ locals {
     "discoveryengine.googleapis.com",
     "dns.googleapis.com",
     "modelarmor.googleapis.com",
-    "networksecurity.googleapis.com",
-    "networkservices.googleapis.com",
     "notebooks.googleapis.com",
     "observability.googleapis.com",
     "telemetry.googleapis.com",

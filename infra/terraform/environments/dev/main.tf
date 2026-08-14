@@ -141,6 +141,7 @@ module "browser" {
   zone                   = var.zone
   worker_service_account = module.identity.emails["firekey-browser"]
   coordinator_member     = module.identity.members["firekey-coordinator"]
+  allowed_domains        = var.browser_allowed_domains
 
   depends_on = [module.project, module.identity, module.storage]
 }
@@ -169,10 +170,24 @@ check "complete_runtime" {
       length(local.runtime_images) == 9 &&
       var.capability_secret_version != null &&
       var.notification_app_url != null &&
+      var.access_policy_id != null &&
+      var.operator_access_level != null &&
+      length(var.browser_allowed_domains) > 0 &&
       length(var.workflow_organisations) > 0 &&
       length(var.gateway_users) > 0
     )
-    error_message = "Deploy all nine runtime images together with an explicit capability secret, notification app URL, organisation grant, and IAP gateway user."
+    error_message = "Deploy all nine runtime images together with an explicit capability secret, notification app URL, service perimeter, browser egress domains, organisation grant, and IAP gateway user."
+  }
+}
+
+check "perimeter_access_policy" {
+  assert {
+    condition = (
+      var.access_policy_id == null ||
+      var.operator_access_level == null ||
+      startswith(var.operator_access_level, "accessPolicies/${var.access_policy_id}/")
+    )
+    error_message = "operator_access_level must belong to access_policy_id."
   }
 }
 
@@ -234,13 +249,26 @@ module "runtime" {
   browser_template             = module.browser.template
   browser_zone                 = var.zone
   network                      = module.browser.network
-  subnetwork                   = module.browser.subnetwork
+  subnetwork                   = module.browser.runtime_subnetwork
 
   depends_on = [module.project, module.storage, module.browser, module.gateway]
 }
 
 data "google_project" "current" {
   project_id = var.project_id
+}
+
+module "perimeter" {
+  count  = var.access_policy_id == null || var.operator_access_level == null ? 0 : 1
+  source = "../../modules/perimeter"
+
+  project_id            = var.project_id
+  project_number        = data.google_project.current.number
+  access_policy_id      = var.access_policy_id
+  operator_access_level = var.operator_access_level
+  region                = var.region
+
+  depends_on = [module.project]
 }
 
 locals {
@@ -274,7 +302,7 @@ module "gateway" {
   service_account       = module.identity.emails["firekey-gateway"]
   capability_public_key = var.capability_public_key
   network               = module.browser.network
-  subnetwork            = module.browser.subnetwork
+  subnetwork            = module.browser.runtime_subnetwork
   users                 = var.gateway_users
 
   depends_on = [module.project, module.browser, module.storage]

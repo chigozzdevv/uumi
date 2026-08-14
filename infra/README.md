@@ -2,7 +2,7 @@
 
 FireKey uses a two-phase infrastructure deployment. The foundation is created first so images,
 Secret Manager versions, organisation grants, ingestion sources, and IAP users can be supplied as real
-immutable inputs. The second apply creates all seven runtimes, the Workflows coordinator, event
+immutable inputs. The second apply creates all nine runtimes, the Workflows coordinator, event
 routing, isolated browser fleet, and browser gateway together. Terraform rejects a partial
 runtime deployment.
 
@@ -21,7 +21,11 @@ protection.
 ## 2. Apply the foundation
 
 Copy `infra/terraform/environments/dev/values.example.tfvars` to an untracked `values.tfvars`.
-Keep all seven image variables and `capability_secret_version` null for the first apply.
+Keep all nine image variables, `notification_app_url`, and `capability_secret_version` null for
+the first apply. Supply the organisation Access Context Manager policy, an existing operator
+access level constrained by your organisation's trusted identities, devices, or networks, and the
+browser provider-domain allowlist from the beginning; these are infrastructure controls, not
+credential values.
 
 ```bash
 terraform -chdir=infra/terraform/environments/dev init \
@@ -32,8 +36,9 @@ terraform -chdir=infra/terraform/environments/dev apply \
 ```
 
 This creates the protected Firestore database, service accounts, immutable Artifact Registry,
-CMEK keys, the locked evidence bucket, Agent Runtime staging bucket, GitHub and provider webhook secret
-containers, capability secret container, private browser network, and one-run VM template.
+CMEK keys, locked evidence and audit storage, Agent Runtime staging bucket, GitHub and provider
+webhook secret containers, capability secret container, service perimeter, regional policy,
+private browser network, Secure Web Proxy, and one-run VM template.
 
 Create secret versions outside Terraform. The capability secret version must contain exactly the
 raw 32-byte private key of an Ed25519 keypair; `capability_public_key` contains only the paired raw
@@ -57,6 +62,8 @@ place private or HMAC values in Terraform variables, plans, state, commands, or 
 | `coordinator` | `server/coordinator/Dockerfile` | Deterministic stage executor |
 | `browser` | `server/browser/worker.Dockerfile` | One-run Playwright worker |
 | `gateway` | `server/browser/Dockerfile` | IAP live view and takeover |
+| `notification` | `server/notification/Dockerfile` | Durable email, Slack, and PagerDuty delivery |
+| `auditlog` | `server/auditlog/Dockerfile` | Canonical audit delivery to locked Cloud Logging |
 
 Tag each image with the Git commit, push it to the `image_repository` Terraform output, and
 resolve its digest:
@@ -70,10 +77,11 @@ gcloud artifacts docker images describe \
   --format='value(image_summary.digest)'
 ```
 
-Repeat that operation for all seven images. Set every image variable to its full
+Repeat that operation for all nine images. Set every image variable to its full
 `REGION-docker.pkg.dev/PROJECT/firekey/NAME@sha256:DIGEST` reference. Set the explicit capability
-secret version and paired public key, at least one `workflow_organisation`, at least one IAP
-`gateway_user`, and the required SCC, Secret Manager, provider, and recurring schedule sources.
+secret version and paired public key, notification application origin, notification secret
+containers, at least one `workflow_organisation`, at least one IAP `gateway_user`, and the required
+SCC, Secret Manager, provider, and recurring schedule sources.
 Then apply again. For every organisation in `secret_sources`, configure relevant Google Secret
 Manager secrets to publish to the `secret_topics` output; Terraform grants the Secret Manager
 service agent publisher access to those topics.
@@ -81,15 +89,29 @@ service agent publisher access to those topics.
 The resulting graph includes:
 
 - Cloud Workflows plus Eventarc/Pub/Sub delivery for authoritative run coordination.
-- Private API, publisher, broker, and coordinator Cloud Run services.
+- Private API, publisher, broker, coordinator, notification, and canonical audit Cloud Run services.
 - Authenticated public transport for signed GitHub/provider webhooks and OIDC-bound Google push
   delivery.
 - SCC v2 and Secret Manager topics, retrying push subscriptions, recurring Cloud Scheduler jobs,
   and retained dead-letter review.
 - A no-public-IP, Shielded, CMEK-encrypted, auto-deleting Compute Engine VM per browser run.
+- A regional next-hop Secure Web Proxy that admits the browser VM only by workload identity and
+  its exact approved domains. Cloud Run uses a separate source subnet and a fixed Google and
+  connector-domain list because Direct VPC egress does not propagate service-account identity to
+  Secure Web Proxy; unmatched internet egress is denied.
+- An enforced VPC Service Controls perimeter for supported Google APIs plus a project resource
+  location policy bound to the selected region. Third-party internet control remains the Secure
+  Web Proxy's responsibility.
+- The signed-webhook ingestion service remains externally reachable by design. Cloud Run's Admin
+  API is therefore outside the service perimeter; ingress authentication and replay protection
+  guard that transport, while every persisted data service stays inside the perimeter. The Admin
+  API remains reachable from the VPC so the broker can perform approved Cloud Run rotation steps.
 - IAP-authenticated live view and takeover through a VPC-connected Cloud Run gateway.
 - A one-year locked, versioned, CMEK evidence bucket containing sanitised replay and verified
-  hash-chain manifests.
+  hash-chain manifests, plus a seven-year locked regional Cloud Logging bucket for canonical
+  audit events.
+- OpenTelemetry export to Cloud Trace and Monitoring with alerts on incident-ingestion,
+  notification, and audit dead letters.
 
 ## 4. Deploy and register the four agents
 
@@ -122,7 +144,7 @@ per-tenant and per-skill routing index.
 
 Before enabling schedules or webhooks, verify:
 
-- all seven Cloud Run revisions use the expected image digests;
+- all nine Cloud Run revisions use the expected image digests;
 - the four agent registrations report ready and resolve exactly one deployment per skill;
 - each registration carries a distinct Agent Identity and both governed gateway resources;
 - Model Armor blocks a seeded prompt-injection probe and IAP rejects an unregistered endpoint;
@@ -131,8 +153,13 @@ Before enabling schedules or webhooks, verify:
 - Workflows can complete a controlled dry-run assignment in an isolated non-production
   environment;
 - the browser VM has no external IP, starts the exact digest, and is deleted at run completion;
+- the browser VM's default route resolves to Secure Web Proxy and an unlisted domain is denied;
+- the service perimeter is enforced, the region policy matches deployment, and operator access
+  succeeds only through the declared Access Context Manager level;
 - IAP view and takeover are identity-bound and Secure Capture produces no secret-bearing frame;
 - SCC and Secret Manager delivery failures appear in the retained dead-letter subscription;
+- a seeded delivery failure opens the corresponding Cloud Monitoring incident and its traces
+  correlate to the runtime revision;
 - the final negative provider and secret probes pass and the exported audit manifest validates
   from the genesis hash.
 

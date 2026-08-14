@@ -1,6 +1,10 @@
-project_id     = "replace-with-project-id"
-region         = "us-east1"
-enable_gateway = true
+project_id              = "replace-with-project-id"
+region                  = "us-east1"
+enable_gateway          = true
+access_policy_id        = "123456789012"
+operator_access_level   = "accessPolicies/123456789012/accessLevels/firekeyOperators"
+browser_allowed_domains = ["app.sendgrid.com"]
+gateway_users           = ["group:firekey-operators@example.com"]
 
 workflow_organisations    = ["org_replace"]
 api_image                 = null
@@ -10,8 +14,18 @@ broker_image              = null
 coordinator_image         = null
 browser_image             = null
 gateway_image             = null
+notification_image        = null
+auditlog_image            = null
+notification_app_url      = null
 capability_secret_version = null
 capability_public_key     = "replace-with-ed25519-public-key-base64url-x"
+
+notification_secrets = {
+  email = {
+    project_id = "replace-with-project-id"
+    secret_id  = "firekey-notification-sendgrid"
+  }
+}
 
 scc_sources = {
   org_replace = {

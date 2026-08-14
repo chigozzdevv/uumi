@@ -1403,7 +1403,7 @@ A run that lasts for weeks does not keep a model process alive. Cloud Workflows 
 
 An organisation selects a supported Google Cloud region when its FireKey environment is provisioned. Firestore, Agent Runtime, Sessions, Memory Bank, Workflows, Pub/Sub, logs, evidence storage, CMEK keys, and Computer Use VMs are created in or constrained to that approved regional boundary where the selected service supports it. Organisation policy blocks cross-region agent, model, tool, and evidence routes; unsupported provider or model geography is disclosed before activation rather than silently falling back.
 
-FireKey records the region for every agent deployment, run, session, memory, browser session, audit event, and evidence object. VPC Service Controls, private service access, IAM, CMEK, retention policy, and organisation policy provide the enforcement layers appropriate to each service.
+FireKey records the region for every agent deployment, run, session, memory, browser session, audit event, and evidence object. An enforced project location policy admits only the selected region for services that support resource-location constraints. VPC Service Controls protects the supported Google data APIs inside the project perimeter; it does not claim to govern third-party internet traffic. Private service access, IAM, CMEK, retention policy, Agent Gateway, and Secure Web Proxy provide the remaining service-appropriate layers.
 
 ### Firestore
 
@@ -1482,7 +1482,7 @@ Computer Use is a controlled fallback for provider consoles that lack an adequat
 
 - A fresh dedicated browser profile and ephemeral encrypted boot disk.
 - No public IP address and no public RDP or noVNC endpoint.
-- Private access to required Google APIs and egress through an authenticated proxy restricted to approved provider domains.
+- Private access to required Google APIs and egress through a regional next-hop Secure Web Proxy. The proxy matches the browser worker service identity and exact approved provider domains. Cloud Run uses a separate Direct VPC source subnet and a fixed Google and connector-domain list because Secure Web Proxy cannot recover service-account identity from Direct VPC egress. Unmatched HTTP/S traffic is denied, and DNS is limited to the Google metadata resolver.
 - Per-run service identity, firewall policy, step budget, and automatic teardown.
 - Restricted clipboard, download, upload, popup, and navigation behaviour.
 - Prompt-injection detection, DOM and screenshot redaction, and protected-action confirmation.

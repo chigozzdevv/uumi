@@ -138,6 +138,26 @@ output "browser_template" {
   value       = module.browser.template
 }
 
+output "browser_egress_gateway" {
+  description = "Default-deny Secure Web Proxy governing browser egress."
+  value       = module.browser.egress_gateway
+}
+
+output "browser_egress_domains" {
+  description = "External domains allowed through browser Secure Web Proxy."
+  value       = module.browser.egress_domains
+}
+
+output "service_perimeter" {
+  description = "Enforced VPC Service Controls perimeter, or null before configuration."
+  value       = try(module.perimeter[0].name, null)
+}
+
+output "location_policy" {
+  description = "Project resource-location policy, or null before perimeter configuration."
+  value       = try(module.perimeter[0].location_policy, null)
+}
+
 output "workflow" {
   description = "Authoritative rotation workflow resource."
   value       = module.workflow.name

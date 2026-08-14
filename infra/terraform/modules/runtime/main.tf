@@ -36,6 +36,15 @@ resource "google_cloud_run_v2_service" "auditlog" {
       max_instance_count = 20
     }
 
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+      network_interfaces {
+        network    = var.network
+        subnetwork = var.subnetwork
+        tags       = ["firekey-runtime"]
+      }
+    }
+
     containers {
       name  = "auditlog"
       image = each.value
@@ -132,6 +141,15 @@ resource "google_cloud_run_v2_service" "notification" {
     scaling {
       min_instance_count = 0
       max_instance_count = 20
+    }
+
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+      network_interfaces {
+        network    = var.network
+        subnetwork = var.subnetwork
+        tags       = ["firekey-runtime"]
+      }
     }
 
     containers {
@@ -233,6 +251,15 @@ resource "google_cloud_run_v2_service" "ingestion" {
     scaling {
       min_instance_count = 0
       max_instance_count = 20
+    }
+
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+      network_interfaces {
+        network    = var.network
+        subnetwork = var.subnetwork
+        tags       = ["firekey-runtime"]
+      }
     }
 
     containers {
@@ -360,6 +387,15 @@ resource "google_cloud_run_v2_service" "api" {
       max_instance_count = 20
     }
 
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+      network_interfaces {
+        network    = var.network
+        subnetwork = var.subnetwork
+        tags       = ["firekey-runtime"]
+      }
+    }
+
     containers {
       name  = "api"
       image = each.value
@@ -473,6 +509,15 @@ resource "google_cloud_run_v2_service" "publisher" {
       max_instance_count = 20
     }
 
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+      network_interfaces {
+        network    = var.network
+        subnetwork = var.subnetwork
+        tags       = ["firekey-runtime"]
+      }
+    }
+
     containers {
       name  = "publisher"
       image = each.value
@@ -571,6 +616,15 @@ resource "google_cloud_run_v2_service" "broker" {
       max_instance_count = 30
     }
 
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+      network_interfaces {
+        network    = var.network
+        subnetwork = var.subnetwork
+        tags       = ["firekey-runtime"]
+      }
+    }
+
     containers {
       name  = "broker"
       image = each.value
@@ -657,7 +711,7 @@ resource "google_cloud_run_v2_service" "coordinator" {
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-coordinator"]
+        tags       = ["firekey-runtime"]
       }
     }
 

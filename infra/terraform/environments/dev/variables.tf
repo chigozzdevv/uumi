@@ -44,6 +44,39 @@ variable "enable_gateway" {
   default     = true
 }
 
+variable "access_policy_id" {
+  description = "Organisation Access Context Manager policy ID; required for runtime deployment."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.access_policy_id == null || can(regex("^[0-9]+$", var.access_policy_id))
+    error_message = "access_policy_id must be null or numeric."
+  }
+}
+
+variable "operator_access_level" {
+  description = "Access level admitting authorised deployment operators to perimeter resources."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.operator_access_level == null ||
+      can(regex("^accessPolicies/[0-9]+/accessLevels/[A-Za-z][A-Za-z0-9_]+$", var.operator_access_level))
+    )
+    error_message = "operator_access_level must be null or a full Access Context Manager access level name."
+  }
+}
+
+variable "browser_allowed_domains" {
+  description = "Exact provider domains allowed through the browser Secure Web Proxy."
+  type        = set(string)
+  default     = []
+}
+
 variable "workflow_organisations" {
   description = "Organisations the workflow identity is authorised to operate."
   type        = set(string)

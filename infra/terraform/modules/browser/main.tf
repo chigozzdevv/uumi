@@ -11,6 +11,8 @@ resource "google_compute_subnetwork" "browser" {
   name                     = "firekey-browser"
   network                  = google_compute_network.firekey.id
   ip_cidr_range            = "10.76.0.0/24"
+  purpose                  = "PRIVATE"
+  role                     = "ACTIVE"
   private_ip_google_access = true
 
   log_config {
@@ -18,6 +20,132 @@ resource "google_compute_subnetwork" "browser" {
     flow_sampling        = 1
     metadata             = "INCLUDE_ALL_METADATA"
   }
+}
+
+resource "google_compute_subnetwork" "proxy" {
+  project       = var.project_id
+  region        = var.region
+  name          = "firekey-browser-proxy"
+  network       = google_compute_network.firekey.id
+  ip_cidr_range = "10.76.2.0/23"
+  purpose       = "REGIONAL_MANAGED_PROXY"
+  role          = "ACTIVE"
+}
+
+resource "google_compute_subnetwork" "runtime" {
+  project                  = var.project_id
+  region                   = var.region
+  name                     = "firekey-runtime"
+  network                  = google_compute_network.firekey.id
+  ip_cidr_range            = "10.76.4.0/23"
+  purpose                  = "PRIVATE"
+  role                     = "ACTIVE"
+  private_ip_google_access = true
+
+  log_config {
+    aggregation_interval = "INTERVAL_5_SEC"
+    flow_sampling        = 1
+    metadata             = "INCLUDE_ALL_METADATA"
+  }
+}
+
+locals {
+  google_domains = toset([
+    "googleapis.com",
+    "gstatic.com",
+    "gcr.io",
+    "pkg.dev",
+  ])
+  connector_domains = toset([
+    "api.sendgrid.com",
+    "events.pagerduty.com",
+    "hooks.slack.com",
+    "run.app",
+  ])
+  egress_domains  = sort(tolist(setunion(local.google_domains, var.allowed_domains)))
+  runtime_domains = sort(tolist(setunion(local.google_domains, local.connector_domains)))
+  domain_matcher = join(" || ", flatten([
+    for domain in local.egress_domains : [
+      "host() == '${domain}'",
+      "host().endsWith('.${domain}')",
+    ]
+  ]))
+  runtime_domain_matcher = join(" || ", flatten([
+    for domain in local.runtime_domains : [
+      "host() == '${domain}'",
+      "host().endsWith('.${domain}')",
+    ]
+  ]))
+}
+
+resource "google_network_security_gateway_security_policy" "browser" {
+  project         = var.project_id
+  location        = var.region
+  name            = "firekey-browser-egress"
+  description     = "Default-deny browser egress policy for approved provider and Google domains."
+  deletion_policy = "PREVENT"
+}
+
+resource "google_network_security_gateway_security_policy_rule" "browser" {
+  project                 = var.project_id
+  location                = var.region
+  name                    = "allow-approved-domains"
+  gateway_security_policy = google_network_security_gateway_security_policy.browser.name
+  enabled                 = true
+  priority                = 100
+  session_matcher = (
+    "source.matchServiceAccount('${var.worker_service_account}') && (${local.domain_matcher})"
+  )
+  basic_profile = "ALLOW"
+}
+
+resource "google_network_security_gateway_security_policy_rule" "runtime" {
+  project                 = var.project_id
+  location                = var.region
+  name                    = "allow-runtime-connectors"
+  gateway_security_policy = google_network_security_gateway_security_policy.browser.name
+  enabled                 = true
+  priority                = 110
+  session_matcher = (
+    "inIpRange(source.ip, '${google_compute_subnetwork.runtime.ip_cidr_range}') && (${local.runtime_domain_matcher})"
+  )
+  basic_profile = "ALLOW"
+
+  depends_on = [google_network_security_gateway_security_policy_rule.browser]
+}
+
+resource "google_network_services_gateway" "browser" {
+  project                              = var.project_id
+  location                             = var.region
+  name                                 = "firekey-browser-egress"
+  description                          = "Regional next-hop Secure Web Proxy for one-run browser workers."
+  type                                 = "SECURE_WEB_GATEWAY"
+  ports                                = [443]
+  scope                                = "firekey-browser"
+  gateway_security_policy              = google_network_security_gateway_security_policy.browser.id
+  network                              = google_compute_network.firekey.id
+  subnetwork                           = google_compute_subnetwork.browser.id
+  routing_mode                         = "NEXT_HOP_ROUTING_MODE"
+  delete_swg_autogen_router_on_destroy = true
+  deletion_policy                      = "PREVENT"
+
+  depends_on = [
+    google_compute_subnetwork.proxy,
+    google_network_security_gateway_security_policy_rule.runtime,
+  ]
+}
+
+resource "google_compute_route" "browser_proxy" {
+  provider = google-beta
+
+  project      = var.project_id
+  name         = "firekey-browser-proxy"
+  description  = "Routes browser worker internet traffic through Secure Web Proxy."
+  network      = google_compute_network.firekey.name
+  dest_range   = "0.0.0.0/0"
+  priority     = 100
+  tags         = ["firekey-browser", "firekey-runtime"]
+  next_hop_ilb = one(google_network_services_gateway.browser.addresses)
 }
 
 resource "google_compute_router" "browser" {
@@ -53,8 +181,11 @@ resource "google_compute_firewall" "worker" {
   direction = "INGRESS"
   priority  = 1000
 
-  source_ranges = [google_compute_subnetwork.browser.ip_cidr_range]
-  target_tags   = ["firekey-browser"]
+  source_ranges = [
+    google_compute_subnetwork.browser.ip_cidr_range,
+    google_compute_subnetwork.runtime.ip_cidr_range,
+  ]
+  target_tags = ["firekey-browser"]
 
   allow {
     protocol = "tcp"
@@ -81,6 +212,77 @@ resource "google_compute_firewall" "egress" {
     ports    = ["443"]
   }
 
+  log_config {
+    metadata = "INCLUDE_ALL_METADATA"
+  }
+}
+
+resource "google_compute_firewall" "runtime_egress" {
+  project            = var.project_id
+  name               = "firekey-runtime-egress"
+  network            = google_compute_network.firekey.name
+  direction          = "EGRESS"
+  priority           = 1000
+  destination_ranges = ["0.0.0.0/0"]
+  target_tags        = ["firekey-runtime"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["443"]
+  }
+
+  log_config {
+    metadata = "INCLUDE_ALL_METADATA"
+  }
+}
+
+resource "google_compute_firewall" "gateway_worker" {
+  project            = var.project_id
+  name               = "firekey-gateway-worker"
+  network            = google_compute_network.firekey.name
+  direction          = "EGRESS"
+  priority           = 800
+  destination_ranges = [google_compute_subnetwork.browser.ip_cidr_range]
+  target_tags        = ["firekey-runtime"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["8080"]
+  }
+
+  log_config {
+    metadata = "INCLUDE_ALL_METADATA"
+  }
+}
+
+resource "google_compute_firewall" "metadata" {
+  project            = var.project_id
+  name               = "firekey-metadata"
+  network            = google_compute_network.firekey.name
+  direction          = "EGRESS"
+  priority           = 850
+  destination_ranges = ["169.254.169.254/32"]
+  target_tags        = ["firekey-browser", "firekey-runtime"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80"]
+  }
+
+  log_config {
+    metadata = "INCLUDE_ALL_METADATA"
+  }
+}
+
+resource "google_compute_firewall" "dns" {
+  project            = var.project_id
+  name               = "firekey-browser-dns"
+  network            = google_compute_network.firekey.name
+  direction          = "EGRESS"
+  priority           = 900
+  destination_ranges = ["169.254.169.254/32"]
+  target_tags        = ["firekey-browser", "firekey-runtime"]
+
   allow {
     protocol = "udp"
     ports    = ["53"]
@@ -89,6 +291,24 @@ resource "google_compute_firewall" "egress" {
   allow {
     protocol = "tcp"
     ports    = ["53"]
+  }
+
+  log_config {
+    metadata = "INCLUDE_ALL_METADATA"
+  }
+}
+
+resource "google_compute_firewall" "deny_egress" {
+  project            = var.project_id
+  name               = "firekey-deny-egress"
+  network            = google_compute_network.firekey.name
+  direction          = "EGRESS"
+  priority           = 2000
+  destination_ranges = ["0.0.0.0/0"]
+  target_tags        = ["firekey-browser", "firekey-runtime"]
+
+  deny {
+    protocol = "all"
   }
 
   log_config {

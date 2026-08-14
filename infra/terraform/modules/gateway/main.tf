@@ -29,11 +29,11 @@ resource "google_cloud_run_v2_service" "gateway" {
     }
 
     vpc_access {
-      egress = "PRIVATE_RANGES_ONLY"
+      egress = "ALL_TRAFFIC"
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-gateway"]
+        tags       = ["firekey-runtime"]
       }
     }
 
