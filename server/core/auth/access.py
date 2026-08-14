@@ -26,6 +26,8 @@ class Permission(StrEnum):
     APPROVAL_READ = "approval.read"
     APPROVAL_DECIDE = "approval.decide"
     INCIDENT_WRITE = "incident.write"
+    NOTIFICATION_READ = "notification.read"
+    NOTIFICATION_WRITE = "notification.write"
     AGENT_READ = "agent.read"
     AGENT_WRITE = "agent.write"
     AUDIT_READ = "audit.read"
@@ -49,6 +51,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.APPROVAL_READ,
             Permission.AGENT_READ,
             Permission.AUDIT_READ,
+            Permission.NOTIFICATION_READ,
         }
     ),
     Role.OPERATOR: frozenset(
@@ -64,6 +67,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.APPROVAL_READ,
             Permission.AGENT_READ,
             Permission.INCIDENT_WRITE,
+            Permission.NOTIFICATION_READ,
         }
     ),
     Role.AUTOMATION: frozenset(
@@ -79,6 +83,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.APPROVAL_READ,
             Permission.AGENT_READ,
             Permission.INCIDENT_WRITE,
+            Permission.NOTIFICATION_READ,
         }
     ),
     Role.ADMINISTRATOR: frozenset(Permission),

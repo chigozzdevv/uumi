@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from contracts import Approval, ApprovalDecision, ProtectedAction
+from contracts import (
+    Approval,
+    ApprovalDecision,
+    NotificationKind,
+    ProtectedAction,
+    Severity,
+)
 from policy import digest
 
 from core.errors import ApprovalError
@@ -42,14 +48,32 @@ class ApprovalRepository(Protocol):
     ) -> Approval: ...
 
 
+class ApprovalNotifier(Protocol):
+    async def emit(
+        self,
+        event_id: str,
+        organisation_id: str,
+        kind: NotificationKind,
+        severity: Severity,
+        title: str,
+        body: str,
+        link_path: str,
+        resource_id: str,
+        run_id: str | None = None,
+        incident_id: str | None = None,
+        approval_id: str | None = None,
+    ) -> tuple[object, bool]: ...
+
 class ApprovalService:
     def __init__(
         self,
         repository: ApprovalRepository,
         clock: Callable[[], datetime],
+        notifier: ApprovalNotifier | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
+        self._notifier = notifier
 
     async def request(
         self,
@@ -81,6 +105,19 @@ class ApprovalService:
             created_at=now,
         )
         stored = await self._repository.create(approval, action)
+        if self._notifier is not None:
+            await self._notifier.emit(
+                stored.id,
+                stored.organisation_id,
+                NotificationKind.APPROVAL_REQUIRED,
+                Severity.HIGH,
+                "Protected action needs approval",
+                f"FireKey run {stored.run_id} is waiting for approval {stored.id}.",
+                f"/organisations/{stored.organisation_id}/approvals/{stored.id}",
+                stored.id,
+                run_id=stored.run_id,
+                approval_id=stored.id,
+            )
         return ApprovalCapability(approval=stored, token=token)
 
     async def decide(

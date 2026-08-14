@@ -27,6 +27,7 @@ from core.config import Settings
 from core.errors import AuthenticationError
 from core.incident import IncidentService
 from core.inventory import InventoryService
+from core.notification import NotificationService
 from core.playbook import PlaybookService, WalkthroughService
 from core.policy import PolicyService
 from core.storage import (
@@ -34,6 +35,7 @@ from core.storage import (
     FirestoreCatalog,
     FirestoreIncidentRepository,
     FirestoreInventoryRepository,
+    FirestoreNotificationRepository,
     FirestorePlaybookRepository,
     FirestorePolicyRepository,
     FirestoreProbeRepository,
@@ -62,6 +64,7 @@ class ApiServices:
     walkthroughs: WalkthroughService | None = None
     policies: PolicyService | None = None
     probes: ProbeService | None = None
+    notifications: NotificationService | None = None
 
 
 def build_services(settings: Settings | None = None) -> ApiServices:
@@ -89,18 +92,20 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         configured.firestore_database,
         _now,
     )
+    notifications = NotificationService(FirestoreNotificationRepository(client), _now)
     return ApiServices(
         workflow=workflow,
         access=AccessControl(FirestoreAccessRepository(client)),
         tokens=GoogleTokenVerifier(configured.oidc_audience),
         inventory=InventoryService(FirestoreInventoryRepository(client)),
         playbooks=PlaybookService(FirestorePlaybookRepository(client), _now, workflow),
-        approvals=ApprovalService(FirestoreApprovalRepository(client), _now),
+        approvals=ApprovalService(FirestoreApprovalRepository(client), _now, notifications),
         incidents=IncidentService(
             FirestoreIncidentRepository(client),
             _now,
             FirestoreInventoryRepository(client),
             workflow,
+            notifications,
         ),
         browsers=BrowserAccessService(
             FirestoreCatalog(client),
@@ -127,6 +132,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         ),
         policies=PolicyService(FirestorePolicyRepository(client), _now),
         probes=ProbeService(FirestoreProbeRepository(client), _now),
+        notifications=notifications,
     )
 
 

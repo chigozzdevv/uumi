@@ -15,9 +15,11 @@ from contracts import Contract, Identifier, Incident, IngestionEvent
 from core.auth import AuthenticatedIdentity, GoogleTokenVerifier
 from core.errors import AuthenticationError
 from core.incident import IncidentService
+from core.notification import NotificationService
 from core.storage import (
     FirestoreIncidentRepository,
     FirestoreInventoryRepository,
+    FirestoreNotificationRepository,
     FirestorePolicyRepository,
     FirestoreRunRepository,
 )
@@ -48,11 +50,13 @@ class Runtime:
         self.secrets = SecretManagerConnector(google)
         self.tokens = GoogleTokenVerifier(settings.oidc_audience)
         inventory = FirestoreInventoryRepository(firestore)
+        notifications = NotificationService(FirestoreNotificationRepository(firestore), _now)
         self.incidents = IncidentService(
             FirestoreIncidentRepository(firestore),
             _now,
             inventory,
             RunWorkflow(FirestoreRunRepository(firestore)),
+            notifications,
         )
         self.automation = IncidentAutomation(
             self.incidents,

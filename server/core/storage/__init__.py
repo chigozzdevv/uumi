@@ -5,6 +5,7 @@ from core.storage.firestore import FirestoreRunRepository
 from core.storage.generation import FirestoreGenerationRepository
 from core.storage.incident import FirestoreIncidentRepository
 from core.storage.inventory import FirestoreInventoryRepository
+from core.storage.notification import FirestoreNotificationRepository, NotificationClaim
 from core.storage.outbox import FirestoreOutboxRepository
 from core.storage.playbook import FirestorePlaybookRepository
 from core.storage.policy import FirestorePolicyRepository
@@ -19,6 +20,7 @@ __all__ = [
     "FirestoreGenerationRepository",
     "FirestoreIncidentRepository",
     "FirestoreInventoryRepository",
+    "FirestoreNotificationRepository",
     "FirestoreOutboxRepository",
     "FirestorePlaybookRepository",
     "FirestorePolicyRepository",
@@ -26,5 +28,6 @@ __all__ = [
     "FirestoreRunRepository",
     "FirestoreWalkthroughRepository",
     "MutationResult",
+    "NotificationClaim",
     "RunRepository",
 ]

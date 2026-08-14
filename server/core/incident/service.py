@@ -13,7 +13,9 @@ from contracts import (
     IncidentStatus,
     IngestionEvent,
     ManagedCredential,
+    NotificationKind,
     RotationRun,
+    Severity,
     Trigger,
 )
 
@@ -67,6 +69,23 @@ class IncidentWorkflow(Protocol):
     async def create(self, command: CreateRunCommand) -> MutationResult: ...
 
 
+class IncidentNotifier(Protocol):
+    async def emit(
+        self,
+        event_id: str,
+        organisation_id: str,
+        kind: NotificationKind,
+        severity: Severity,
+        title: str,
+        body: str,
+        link_path: str,
+        resource_id: str,
+        run_id: str | None = None,
+        incident_id: str | None = None,
+        approval_id: str | None = None,
+    ) -> tuple[object, bool]: ...
+
+
 class IncidentService:
     def __init__(
         self,
@@ -74,11 +93,13 @@ class IncidentService:
         clock: Callable[[], datetime],
         inventory: IncidentInventory | None = None,
         workflow: IncidentWorkflow | None = None,
+        notifier: IncidentNotifier | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
         self._inventory = inventory
         self._workflow = workflow
+        self._notifier = notifier
 
     async def ingest(self, incident_id: str, event: IngestionEvent) -> tuple[Incident, bool]:
         incident = Incident(
@@ -96,11 +117,13 @@ class IncidentService:
         )
         stored, applied = await self._repository.ingest(incident, event)
         if not applied or self._inventory is None:
+            await self._notify(stored, event)
             return stored, applied
         candidates = await self._candidates(event)
         correlated = await self.correlate(
             event.organisation_id, stored.id, stored.revision, candidates
         )
+        await self._notify(correlated, event)
         return correlated, applied
 
     async def get(self, organisation_id: str, incident_id: str) -> Incident:
@@ -313,6 +336,39 @@ class IncidentService:
                 )
             )
         return tuple(values)
+
+    async def _notify(self, incident: Incident, event: IngestionEvent) -> None:
+        if self._notifier is None:
+            return
+        if event.source == "schedule":
+            kind = NotificationKind.ROTATION_DUE
+            title = "Scheduled credential rotation is due"
+            body = f"FireKey incident {incident.id} is ready for its scheduled rotation."
+        elif incident.status is IncidentStatus.CORRELATING:
+            kind = NotificationKind.INCIDENT_CONFIRMATION
+            title = "Credential incident needs confirmation"
+            body = f"FireKey incident {incident.id} has ambiguous credential matches."
+        elif incident.severity in {Severity.CRITICAL, Severity.HIGH} and incident.confidence in {
+            Confidence.HIGH,
+            Confidence.VERIFIED,
+        }:
+            kind = NotificationKind.INCIDENT
+            title = "Credential incident detected"
+            body = f"FireKey incident {incident.id} requires review and containment."
+        else:
+            return
+        await self._notifier.emit(
+            event.id,
+            incident.organisation_id,
+            kind,
+            incident.severity,
+            title,
+            body,
+            f"/organisations/{incident.organisation_id}/incidents/{incident.id}",
+            incident.id,
+            run_id=incident.run_id,
+            incident_id=incident.id,
+        )
 
 
 def _secret_resource(reference: str) -> str:

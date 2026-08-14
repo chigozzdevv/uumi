@@ -65,6 +65,15 @@ from contracts.inventory import (
     ConsumerService,
     Environment,
 )
+from contracts.notification import (
+    Notification,
+    NotificationChannel,
+    NotificationDelivery,
+    NotificationEndpoint,
+    NotificationKind,
+    NotificationProvider,
+    NotificationState,
+)
 from contracts.plan import RotationPlan, RotationStrategy
 from contracts.playbook import (
     DryRun,
@@ -166,6 +175,13 @@ __all__ = [
     "ManagedCredential",
     "MutationMode",
     "MutationSemantics",
+    "Notification",
+    "NotificationChannel",
+    "NotificationDelivery",
+    "NotificationEndpoint",
+    "NotificationKind",
+    "NotificationProvider",
+    "NotificationState",
     "OutboxEvent",
     "PageCheckpoint",
     "PauseRunCommand",

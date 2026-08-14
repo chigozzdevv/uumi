@@ -98,6 +98,31 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/approvals/{_segment(approval_id)}"
 
     @staticmethod
+    def notification_collection(organisation_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/notifications"
+
+    @staticmethod
+    def notification(organisation_id: str, notification_id: str) -> str:
+        root = FirestorePaths.notification_collection(organisation_id)
+        return f"{root}/{_segment(notification_id)}"
+
+    @staticmethod
+    def notification_endpoint_collection(organisation_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/notification-endpoints"
+
+    @staticmethod
+    def notification_endpoint(organisation_id: str, endpoint_id: str) -> str:
+        root = FirestorePaths.notification_endpoint_collection(organisation_id)
+        return f"{root}/{_segment(endpoint_id)}"
+
+    @staticmethod
+    def notification_delivery(
+        organisation_id: str, notification_id: str, delivery_id: str
+    ) -> str:
+        root = FirestorePaths.notification(organisation_id, notification_id)
+        return f"{root}/notification-deliveries/{_segment(delivery_id)}"
+
+    @staticmethod
     def action(organisation_id: str, action_id: str) -> str:
         return f"{FirestorePaths.organisation(organisation_id)}/actions/{_segment(action_id)}"
 
