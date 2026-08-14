@@ -12,11 +12,13 @@ from connectors.google import GoogleRestClient
 from connectors.scc import SecurityCommandCenterFinding
 from connectors.secrets import SecretManagerConnector
 from contracts import Contract, Identifier, Incident, IngestionEvent
+from core.audit import AuditWriter
 from core.auth import AuthenticatedIdentity, GoogleTokenVerifier
 from core.errors import AuthenticationError
 from core.incident import IncidentService
 from core.notification import NotificationService
 from core.storage import (
+    FirestoreAuditRepository,
     FirestoreIncidentRepository,
     FirestoreInventoryRepository,
     FirestoreNotificationRepository,
@@ -51,12 +53,14 @@ class Runtime:
         self.tokens = GoogleTokenVerifier(settings.oidc_audience)
         inventory = FirestoreInventoryRepository(firestore)
         notifications = NotificationService(FirestoreNotificationRepository(firestore), _now)
+        audit = AuditWriter(FirestoreAuditRepository(firestore), settings.region, _now)
         self.incidents = IncidentService(
             FirestoreIncidentRepository(firestore),
             _now,
             inventory,
             RunWorkflow(FirestoreRunRepository(firestore)),
             notifications,
+            audit,
         )
         self.automation = IncidentAutomation(
             self.incidents,

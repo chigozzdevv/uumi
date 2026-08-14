@@ -116,7 +116,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_runtime,
         verifier,
         GenerationService(FirestoreGenerationRepository(firestore), _now),
-        IncidentService(FirestoreIncidentRepository(firestore), _now),
+        IncidentService(
+            FirestoreIncidentRepository(firestore),
+            _now,
+            audit=AuditWriter(
+                FirestoreAuditRepository(firestore), settings.region, _now
+            ),
+        ),
         evidence,
         AuditWriter(FirestoreAuditRepository(firestore), settings.region, _now),
         _now,

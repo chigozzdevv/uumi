@@ -81,6 +81,7 @@ async def confirm(
         incident_id,
         body.expected_revision,
         body.credential_id,
+        identity.actor_id,
     )
 
 

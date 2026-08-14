@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     project_id: str = Field(default="", min_length=4)
     firestore_database: str = "(default)"
+    region: str = Field(default="", min_length=3, max_length=32)
     oidc_audience: str = Field(default="", min_length=8)
     capability_secret: str = Field(default="", min_length=20)
     browser_gateway_url: str = Field(default="", min_length=12)
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
         if not all(
             (
                 self.project_id,
+                self.region,
                 self.oidc_audience,
                 self.capability_secret,
                 self.browser_gateway_url,

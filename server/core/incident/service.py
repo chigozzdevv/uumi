@@ -19,6 +19,7 @@ from contracts import (
     Trigger,
 )
 
+from core.audit.writer import AuditWriter
 from core.errors import ResourceConflictError
 from core.storage.repository import MutationResult
 
@@ -94,12 +95,14 @@ class IncidentService:
         inventory: IncidentInventory | None = None,
         workflow: IncidentWorkflow | None = None,
         notifier: IncidentNotifier | None = None,
+        audit: AuditWriter | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
         self._inventory = inventory
         self._workflow = workflow
         self._notifier = notifier
+        self._audit = audit
 
     async def ingest(self, incident_id: str, event: IngestionEvent) -> tuple[Incident, bool]:
         incident = Incident(
@@ -124,6 +127,22 @@ class IncidentService:
             event.organisation_id, stored.id, stored.revision, candidates
         )
         await self._notify(correlated, event)
+        if self._audit is not None:
+            await self._audit.append(
+                _audit_id(correlated.id, str(correlated.revision)),
+                correlated.organisation_id,
+                "incident.ingested",
+                "ingestion_one",
+                f"incidents/{correlated.id}",
+                {
+                    "source": correlated.source,
+                    "severity": correlated.severity.value,
+                    "confidence": correlated.confidence.value,
+                    "status": correlated.status.value,
+                    "credential_id": correlated.credential_id,
+                },
+                occurred_at=correlated.updated_at,
+            )
         return correlated, applied
 
     async def get(self, organisation_id: str, incident_id: str) -> Incident:
@@ -174,6 +193,7 @@ class IncidentService:
         incident_id: str,
         expected_revision: int,
         credential_id: str,
+        actor_id: str = "ingestion_one",
     ) -> Incident:
         incident = await self._repository.get(organisation_id, incident_id)
         if incident.revision != expected_revision:
@@ -196,7 +216,20 @@ class IncidentService:
             )
             for item in incident.candidates
         )
-        return await self.correlate(organisation_id, incident_id, expected_revision, candidates)
+        confirmed = await self.correlate(
+            organisation_id, incident_id, expected_revision, candidates
+        )
+        if self._audit is not None:
+            await self._audit.append(
+                _audit_id(confirmed.id, str(confirmed.revision)),
+                confirmed.organisation_id,
+                "incident.confirmed",
+                actor_id,
+                f"incidents/{confirmed.id}",
+                {"credential_id": credential_id, "revision": confirmed.revision},
+                occurred_at=confirmed.updated_at,
+            )
+        return confirmed
 
     async def start_rotation(
         self,
@@ -246,6 +279,17 @@ class IncidentService:
             incident.credential_id,
             result.run.id,
         )
+        if self._audit is not None:
+            await self._audit.append(
+                _audit_id(linked.id, str(linked.revision)),
+                linked.organisation_id,
+                "incident.rotation-started",
+                actor_id,
+                f"incidents/{linked.id}",
+                {"credential_id": linked.credential_id, "run_id": result.run.id},
+                run_id=result.run.id,
+                occurred_at=linked.updated_at,
+            )
         return linked, result.run, result.applied
 
     async def advance_run(
@@ -374,3 +418,8 @@ class IncidentService:
 def _secret_resource(reference: str) -> str:
     marker = "/versions/"
     return reference.partition(marker)[0] if marker in reference else reference
+
+
+def _audit_id(*values: str) -> str:
+    checksum = hashlib.sha256("\0".join(values).encode()).hexdigest()
+    return f"audit_{checksum[:40]}"

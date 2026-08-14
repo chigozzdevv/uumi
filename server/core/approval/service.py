@@ -14,6 +14,7 @@ from contracts import (
 )
 from policy import digest
 
+from core.audit.writer import AuditWriter
 from core.errors import ApprovalError
 
 
@@ -70,10 +71,12 @@ class ApprovalService:
         repository: ApprovalRepository,
         clock: Callable[[], datetime],
         notifier: ApprovalNotifier | None = None,
+        audit: AuditWriter | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
         self._notifier = notifier
+        self._audit = audit
 
     async def request(
         self,
@@ -118,6 +121,20 @@ class ApprovalService:
                 run_id=stored.run_id,
                 approval_id=stored.id,
             )
+        if self._audit is not None:
+            await self._audit.append(
+                _audit_id(stored.id, "requested"),
+                stored.organisation_id,
+                "approval.requested",
+                requester_id,
+                f"approvals/{stored.id}",
+                {
+                    "action_id": stored.action_id,
+                    "action_digest": stored.action_digest,
+                    "expires_at": stored.expires_at.isoformat(),
+                },
+                run_id=stored.run_id,
+            )
         return ApprovalCapability(approval=stored, token=token)
 
     async def decide(
@@ -130,7 +147,7 @@ class ApprovalService:
     ) -> Approval:
         if decision is ApprovalDecision.PENDING:
             raise ApprovalError("a pending decision cannot be submitted")
-        return await self._repository.decide(
+        decided = await self._repository.decide(
             organisation_id,
             approval_id,
             expected_revision,
@@ -138,6 +155,17 @@ class ApprovalService:
             actor_id,
             self._clock(),
         )
+        if self._audit is not None:
+            await self._audit.append(
+                _audit_id(decided.id, str(decided.revision)),
+                decided.organisation_id,
+                f"approval.{decided.decision.value}",
+                actor_id,
+                f"approvals/{decided.id}",
+                {"action_id": decided.action_id, "revision": decided.revision},
+                run_id=decided.run_id,
+            )
+        return decided
 
     async def consume(
         self,
@@ -147,8 +175,9 @@ class ApprovalService:
         action: ProtectedAction,
         plan_hash: str,
         evidence_hash: str,
+        actor_id: str = "coordinator_one",
     ) -> Approval:
-        return await self._repository.consume(
+        consumed = await self._repository.consume(
             organisation_id,
             approval_id,
             _hash(capability),
@@ -157,6 +186,17 @@ class ApprovalService:
             evidence_hash,
             self._clock(),
         )
+        if self._audit is not None:
+            await self._audit.append(
+                _audit_id(consumed.id, str(consumed.revision)),
+                consumed.organisation_id,
+                "approval.consumed",
+                actor_id,
+                f"approvals/{consumed.id}",
+                {"action_id": consumed.action_id, "revision": consumed.revision},
+                run_id=consumed.run_id,
+            )
+        return consumed
 
 
 def verify_capability(token: str, expected_hash: str) -> bool:
@@ -165,3 +205,8 @@ def verify_capability(token: str, expected_hash: str) -> bool:
 
 def _hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _audit_id(*values: str) -> str:
+    checksum = hashlib.sha256("\0".join(values).encode()).hexdigest()
+    return f"audit_{checksum[:40]}"

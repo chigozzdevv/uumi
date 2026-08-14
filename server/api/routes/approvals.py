@@ -105,4 +105,5 @@ async def consume(
         body.action,
         body.plan_hash,
         body.evidence_hash,
+        identity.actor_id,
     )

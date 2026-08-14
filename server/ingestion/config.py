@@ -7,6 +7,7 @@ class IngestionSettings(BaseSettings):
 
     project_id: str = Field(min_length=4)
     firestore_database: str = "(default)"
+    region: str = Field(min_length=3, max_length=32)
     oidc_audience: str = Field(min_length=8)
     scc_push_service_account: str = Field(pattern=r"^[^@]+@[^@]+\.iam\.gserviceaccount\.com$")
     github_secret_project: str = Field(min_length=4)

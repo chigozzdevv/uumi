@@ -16,6 +16,7 @@ from connectors.secrets import SecretManagerConnector
 from connectors.storage import GcsUploadConnector
 from connectors.video import VideoIntelligenceConnector
 from core.approval import ApprovalService
+from core.audit import AuditWriter
 from core.auth import (
     AccessControl,
     AuthenticatedIdentity,
@@ -32,6 +33,7 @@ from core.playbook import PlaybookService, WalkthroughService
 from core.policy import PolicyService
 from core.storage import (
     FirestoreApprovalRepository,
+    FirestoreAuditRepository,
     FirestoreCatalog,
     FirestoreIncidentRepository,
     FirestoreInventoryRepository,
@@ -93,19 +95,23 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         _now,
     )
     notifications = NotificationService(FirestoreNotificationRepository(client), _now)
+    audit = AuditWriter(FirestoreAuditRepository(client), configured.region, _now)
     return ApiServices(
         workflow=workflow,
         access=AccessControl(FirestoreAccessRepository(client)),
         tokens=GoogleTokenVerifier(configured.oidc_audience),
         inventory=InventoryService(FirestoreInventoryRepository(client)),
         playbooks=PlaybookService(FirestorePlaybookRepository(client), _now, workflow),
-        approvals=ApprovalService(FirestoreApprovalRepository(client), _now, notifications),
+        approvals=ApprovalService(
+            FirestoreApprovalRepository(client), _now, notifications, audit
+        ),
         incidents=IncidentService(
             FirestoreIncidentRepository(client),
             _now,
             FirestoreInventoryRepository(client),
             workflow,
             notifications,
+            audit,
         ),
         browsers=BrowserAccessService(
             FirestoreCatalog(client),
