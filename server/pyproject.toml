@@ -3,7 +3,6 @@ name = "firekey-server"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "a2a-sdk>=1,<2",
     "cachecontrol>=0.14,<1",
     "cryptography>=46,<48",
     "fastapi>=0.116,<1",
@@ -11,15 +10,20 @@ dependencies = [
     "firekey-policy",
     "firekey-telemetry",
     "google-cloud-firestore>=2.28,<3",
-    "google-cloud-aiplatform[agent_engines,adk]>=1.144,<2",
     "google-cloud-pubsub>=2.39,<3",
-    "google-adk[a2a,gcp]>=2,<3",
     "httpx>=0.28,<1",
-    "playwright>=1.55,<2",
     "pydantic-settings>=2.10,<3",
     "uvicorn[standard]>=0.35,<1",
-    "mcp>=2,<3",
 ]
+
+[project.optional-dependencies]
+agents = [
+    "a2a-sdk>=1,<2",
+    "google-cloud-aiplatform[agent_engines,adk]>=1.144,<2",
+    "google-adk[a2a,gcp]>=2,<3",
+]
+browser = ["playwright>=1.55,<2"]
+mcp = ["mcp>=2,<3"]
 
 [tool.uv.sources]
 firekey-contracts = { workspace = true }

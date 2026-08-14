@@ -14,7 +14,7 @@ COPY pyproject.toml uv.lock ./
 COPY packages ./packages
 COPY server ./server
 
-RUN uv sync --frozen --no-dev --no-editable --package firekey-server \
+RUN uv sync --frozen --no-dev --no-editable --package firekey-server --extra mcp \
     && find /app -type d -name __pycache__ -prune -exec rm -rf {} +
 
 USER 65532:65532

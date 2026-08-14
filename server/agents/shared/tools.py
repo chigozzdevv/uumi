@@ -214,7 +214,7 @@ async def _collection(
     async for snapshot in context.client.collection(root).where(field, "==", value).stream():
         data = snapshot.to_dict()
         if data is not None:
-            from agents.shared.context import redact
+            from agents.redact import redact
 
             values.append(redact(data))
     return values

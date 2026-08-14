@@ -10,7 +10,7 @@ from telemetry import record
 
 from agents.continuity import AgentContinuityService
 from agents.fleet import AgentFleetService
-from agents.shared.context import redact
+from agents.redact import redact
 
 
 class AgentRuntimeService:

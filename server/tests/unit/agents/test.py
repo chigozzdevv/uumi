@@ -4,8 +4,8 @@ import pytest
 from agents.continuity import AgentContinuityService
 from agents.deploy import _deployment_config, _effective_identity, _grant_callers
 from agents.fleet import _SKILLS, AgentFleetService
+from agents.redact import redact
 from agents.runtime import AgentRuntimeService, _a2a_output, _prompt
-from agents.shared.context import redact
 from connectors.base.errors import ConnectorError
 from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
 from vertexai import types

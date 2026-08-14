@@ -1,9 +1,9 @@
 from google.adk.agents import Agent
 from google.adk.apps import App
 
-from agents.shared import correlate_exposure, detect_stale_mapping, resolve_consumers
 from agents.shared.app import managed_app
 from agents.shared.models import InventoryAssessment
+from agents.shared.tools import correlate_exposure, detect_stale_mapping, resolve_consumers
 
 root_agent = Agent(
     name="inventory_exposure_agent",

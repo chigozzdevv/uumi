@@ -1,14 +1,11 @@
-from collections.abc import Mapping
 from typing import Any
 
 from core.errors import ResourceNotFoundError
 from core.storage.paths import FirestorePaths
 from google.adk.agents.context import Context as ToolContext
 from google.cloud.firestore_v1 import AsyncClient
-from telemetry import REDACTED
-from telemetry import redact as redact_sensitive
 
-_PLAINTEXT_SECRET_KEYS = frozenset({"plaintext", "private-key", "secret-value"})
+from agents.redact import redact
 
 
 class AgentContext:
@@ -42,18 +39,3 @@ class AgentContext:
         if not isinstance(value, str) or not value:
             raise ValueError(f"managed session state is missing {name}")
         return value
-
-
-def redact(value: Any, key: str = "") -> Any:
-    normalised = key.lower().replace("_", "-")
-    if normalised in _PLAINTEXT_SECRET_KEYS:
-        return REDACTED
-    if isinstance(value, Mapping):
-        return redact_sensitive(value)
-    if isinstance(value, list):
-        return [redact(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(redact(item) for item in value)
-    if isinstance(value, bytes):
-        return REDACTED
-    return value

@@ -1,9 +1,9 @@
 from google.adk.agents import Agent
 from google.adk.apps import App
 
-from agents.shared import detect_interface_drift, execute_console_playbook
 from agents.shared.app import managed_app
 from agents.shared.models import OperatorDecision
+from agents.shared.tools import detect_interface_drift, execute_console_playbook
 
 root_agent = Agent(
     name="console_operator_agent",

@@ -10,7 +10,7 @@ lock:
 	$(UV_ENV) uv lock
 
 sync:
-	$(UV_ENV) uv sync --all-packages --locked
+	$(UV_ENV) uv sync --all-packages --all-extras --locked
 
 format:
 	$(UV_ENV) uv run ruff format .
