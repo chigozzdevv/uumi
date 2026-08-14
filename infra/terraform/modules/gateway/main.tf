@@ -51,6 +51,10 @@ resource "google_cloud_run_v2_service" "gateway" {
         value = var.project_id
       }
       env {
+        name  = "FIREKEY_REGION"
+        value = var.region
+      }
+      env {
         name  = "FIREKEY_IAP_AUDIENCE"
         value = "/projects/${data.google_project.current.number}/locations/${var.region}/services/firekey-browser-gateway"
       }

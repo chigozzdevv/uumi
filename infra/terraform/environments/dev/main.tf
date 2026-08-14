@@ -325,6 +325,7 @@ resource "google_project_iam_member" "browser_runtime" {
     "roles/artifactregistry.reader",
     "roles/logging.logWriter",
     "roles/monitoring.metricWriter",
+    "roles/cloudtrace.agent",
   ])
 
   project = var.project_id
@@ -335,6 +336,8 @@ resource "google_project_iam_member" "browser_runtime" {
 resource "google_project_iam_member" "api_runtime" {
   for_each = toset([
     "roles/logging.logWriter",
+    "roles/monitoring.metricWriter",
+    "roles/cloudtrace.agent",
   ])
 
   project = var.project_id
@@ -345,7 +348,10 @@ resource "google_project_iam_member" "api_runtime" {
 resource "google_project_iam_member" "coordinator_runtime" {
   for_each = toset([
     "roles/logging.viewer",
+    "roles/logging.logWriter",
     "roles/monitoring.viewer",
+    "roles/monitoring.metricWriter",
+    "roles/cloudtrace.agent",
   ])
 
   project = var.project_id
@@ -385,6 +391,7 @@ resource "google_project_iam_member" "ingestion_runtime" {
   for_each = toset([
     "roles/logging.logWriter",
     "roles/monitoring.metricWriter",
+    "roles/cloudtrace.agent",
   ])
 
   project = var.project_id
@@ -393,7 +400,42 @@ resource "google_project_iam_member" "ingestion_runtime" {
 }
 
 resource "google_project_iam_member" "auditlog_runtime" {
+  for_each = toset([
+    "roles/logging.logWriter",
+    "roles/monitoring.metricWriter",
+    "roles/cloudtrace.agent",
+  ])
+
   project = var.project_id
-  role    = "roles/logging.logWriter"
+  role    = each.value
   member  = module.identity.members["firekey-auditlog"]
+}
+
+locals {
+  telemetry_runtime_roles = {
+    broker       = module.identity.members["firekey-broker"]
+    gateway      = module.identity.members["firekey-gateway"]
+    notification = module.identity.members["firekey-notification"]
+    publisher    = module.identity.members["firekey-publisher"]
+  }
+  telemetry_runtime_grants = merge([
+    for account, member in local.telemetry_runtime_roles : {
+      for role in [
+        "roles/logging.logWriter",
+        "roles/monitoring.metricWriter",
+        "roles/cloudtrace.agent",
+        ] : "${account}-${replace(role, "/", "-")}" => {
+        member = member
+        role   = role
+      }
+    }
+  ]...)
+}
+
+resource "google_project_iam_member" "telemetry_runtime" {
+  for_each = local.telemetry_runtime_grants
+
+  project = var.project_id
+  role    = each.value.role
+  member  = each.value.member
 }

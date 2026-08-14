@@ -2,6 +2,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from uuid import uuid4
 
 from core.events import EventPublisher
@@ -10,6 +11,7 @@ from core.storage import FirestoreOutboxRepository
 from fastapi import FastAPI
 from google.cloud.firestore_v1 import AsyncClient
 from pydantic import BaseModel
+from telemetry import instrument, record
 
 from publisher.config import PublisherSettings
 
@@ -37,6 +39,7 @@ class PublisherRuntime:
         self.instance_id = os.getenv("K_REVISION", "publisher")
 
     async def publish(self) -> PublishResponse:
+        started = monotonic()
         owner_id = f"{self.instance_id}-{uuid4().hex}"
         publisher = EventPublisher(
             self.repository,
@@ -47,11 +50,17 @@ class PublisherRuntime:
             batch_size=self.settings.publish_batch_size,
         )
         result = await publisher.drain(self.settings.publish_max_events)
-        return PublishResponse(
+        response = PublishResponse(
             claimed=result.claimed,
             published=result.published,
             failed=result.failed,
         )
+        record(
+            "event.publish",
+            "failed" if response.failed else "succeeded",
+            monotonic() - started,
+        )
+        return response
 
     def close(self) -> None:
         self.transport.close()
@@ -75,6 +84,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="FireKey Event Publisher", version="0.1.0", lifespan=lifespan)
+instrument(app, "firekey-publisher")
 
 
 @app.get("/health/live")

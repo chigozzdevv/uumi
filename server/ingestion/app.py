@@ -28,6 +28,7 @@ from core.storage import (
 from core.workflow import RunWorkflow
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from google.cloud.firestore_v1 import AsyncClient
+from telemetry import instrument
 
 from ingestion.automation import IncidentAutomation
 from ingestion.config import IngestionSettings
@@ -86,6 +87,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="FireKey Incident Ingestion", docs_url=None, lifespan=lifespan)
+instrument(app, "firekey-ingestion")
 
 
 @app.get("/health/live")

@@ -144,6 +144,32 @@ resource "google_pubsub_subscription" "audit_deadletter" {
   }
 }
 
+resource "google_monitoring_alert_policy" "audit_deadletter" {
+  for_each = google_pubsub_subscription.audit_deadletter
+
+  project      = var.project_id
+  display_name = "FireKey canonical audit dead letter"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Undelivered canonical audit dead letters"
+    condition_threshold {
+      filter          = "resource.type = \"pubsub_subscription\" AND resource.labels.subscription_id = \"${each.value.name}\" AND metric.type = \"pubsub.googleapis.com/subscription/num_undelivered_messages\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "300s"
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MAX"
+      }
+    }
+  }
+
+  alert_strategy {
+    auto_close = "604800s"
+  }
+}
+
 resource "google_pubsub_subscription" "notification" {
   for_each = local.notification
 
@@ -216,6 +242,32 @@ resource "google_pubsub_subscription" "notification_deadletter" {
 
   expiration_policy {
     ttl = ""
+  }
+}
+
+resource "google_monitoring_alert_policy" "notification_deadletter" {
+  for_each = google_pubsub_subscription.notification_deadletter
+
+  project      = var.project_id
+  display_name = "FireKey notification delivery dead letter"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Undelivered notification dead letters"
+    condition_threshold {
+      filter          = "resource.type = \"pubsub_subscription\" AND resource.labels.subscription_id = \"${each.value.name}\" AND metric.type = \"pubsub.googleapis.com/subscription/num_undelivered_messages\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "300s"
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MAX"
+      }
+    }
+  }
+
+  alert_strategy {
+    auto_close = "604800s"
   }
 }
 
@@ -374,6 +426,32 @@ resource "google_pubsub_subscription" "deadletter" {
 
   expiration_policy {
     ttl = ""
+  }
+}
+
+resource "google_monitoring_alert_policy" "ingestion_deadletter" {
+  count = length(local.push)
+
+  project      = var.project_id
+  display_name = "FireKey incident ingestion dead letter"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Undelivered ingestion dead letters"
+    condition_threshold {
+      filter          = "resource.type = \"pubsub_subscription\" AND resource.labels.subscription_id = \"${google_pubsub_subscription.deadletter[0].name}\" AND metric.type = \"pubsub.googleapis.com/subscription/num_undelivered_messages\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "300s"
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MAX"
+      }
+    }
+  }
+
+  alert_strategy {
+    auto_close = "604800s"
   }
 }
 

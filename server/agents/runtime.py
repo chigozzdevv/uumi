@@ -1,10 +1,12 @@
 import json
 from collections.abc import Callable
 from datetime import datetime
+from time import monotonic
 from typing import Any
 
 from connectors.google import GoogleRestClient
 from contracts import AgentResult, AgentTask
+from telemetry import record
 
 from agents.continuity import AgentContinuityService
 from agents.fleet import AgentFleetService
@@ -27,6 +29,7 @@ class AgentRuntimeService:
         self._clock = clock
 
     async def execute(self, task: AgentTask) -> AgentResult:
+        started = monotonic()
         try:
             registration = await self._fleet.resolve(task.organisation_id, task.agent, task.skill)
             session = await self._continuity.create_session(
@@ -57,7 +60,7 @@ class AgentRuntimeService:
             safe_output = redact(output)
             if not isinstance(safe_output, dict):
                 raise ValueError("agent output redaction changed its object shape")
-            return AgentResult(
+            result = AgentResult(
                 task_id=task.id,
                 agent=task.agent,
                 skill=task.skill,
@@ -67,7 +70,7 @@ class AgentRuntimeService:
                 completed_at=self._clock(),
             )
         except Exception as error:
-            return AgentResult(
+            result = AgentResult(
                 task_id=task.id,
                 agent=task.agent,
                 skill=task.skill,
@@ -75,6 +78,14 @@ class AgentRuntimeService:
                 error=f"{type(error).__name__}: agent execution failed",
                 completed_at=self._clock(),
             )
+        record(
+            "agent.invoke",
+            "succeeded" if result.succeeded else "failed",
+            monotonic() - started,
+            agent=task.agent.value,
+            skill=task.skill,
+        )
+        return result
 
 
 def _prompt(task: AgentTask, memories: tuple[dict[str, Any], ...] = ()) -> str:

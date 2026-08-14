@@ -6,6 +6,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from core.errors import AuthenticationError
 from core.storage import FirestoreAuditOutboxRepository, FirestoreAuditRepository
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from google.cloud.firestore_v1 import AsyncClient
+from telemetry import instrument, record
 
 from auditlog.config import AuditLogSettings
 
@@ -48,6 +50,7 @@ class Runtime:
         self.instance = os.getenv("K_REVISION", "auditlog")
 
     async def drain(self) -> DrainResponse:
+        started = monotonic()
         publisher = AuditPublisher(
             self.repository,
             self.transport,
@@ -57,11 +60,17 @@ class Runtime:
             self.settings.batch_size,
         )
         summary = await publisher.drain(self.settings.maximum_events)
-        return DrainResponse(
+        response = DrainResponse(
             claimed=summary.claimed,
             logged=summary.logged,
             failed=summary.failed,
         )
+        record(
+            "audit.deliver",
+            "failed" if response.failed else "succeeded",
+            monotonic() - started,
+        )
+        return response
 
     async def close(self) -> None:
         self.firestore.close()  # type: ignore[no-untyped-call]
@@ -79,6 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="FireKey Audit Log Publisher", docs_url=None, lifespan=lifespan)
+instrument(app, "firekey-auditlog")
 
 
 @app.get("/health/live")

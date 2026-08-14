@@ -17,6 +17,7 @@ from core.errors import (
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from policy import PolicyViolationError
+from telemetry import instrument
 
 from api.deps import ApiServices, build_services
 from api.routes import (
@@ -54,6 +55,7 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.include_router(walkthroughs_router)
     app.add_exception_handler(FireKeyError, _firekey_error)
     app.add_exception_handler(PolicyViolationError, _policy_error)
+    instrument(app, "firekey-api")
     return app
 
 

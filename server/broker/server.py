@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any
 
 from connectors.cloudrun import CloudRunConnector
@@ -15,6 +16,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
+from telemetry import record
 
 from broker.capability import CapabilityVerifier
 from broker.config import BrokerSettings
@@ -216,9 +218,16 @@ async def runtime_rollback(call: BrokerCall, ctx: Context[BrokerRuntime, Any]) -
 
 
 async def _execute(tool: str, call: BrokerCall, ctx: Context[BrokerRuntime, Any]) -> dict[str, Any]:
+    started = monotonic()
     request = ToolRequest(tool=tool, **call.model_dump())
     capability = _header(ctx, "x-firekey-capability")
     result = await ctx.request_context.lifespan_context.service.execute(request, capability)
+    record(
+        "tool.execute",
+        "succeeded" if result.succeeded else "failed",
+        monotonic() - started,
+        tool=tool,
+    )
     return _safe_result(result)
 
 

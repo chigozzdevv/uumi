@@ -318,6 +318,7 @@ resource "google_project_iam_member" "agent" {
     "roles/aiplatform.expressUser",
     "roles/aiplatform.user",
     "roles/browser",
+    "roles/cloudtrace.agent",
     "roles/datastore.viewer",
     "roles/logging.logWriter",
     "roles/monitoring.metricWriter",

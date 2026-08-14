@@ -26,4 +26,5 @@ docker run --detach --restart=no --network=host --name=firekey-browser \
   --env FIREKEY_CAPABILITY_PUBLIC_KEY="$capability_public" \
   --env FIREKEY_EVIDENCE_BUCKET="$evidence" \
   --env FIREKEY_REGION="$region" \
+  --env FIREKEY_TELEMETRY_ENABLED=true \
   "$image"

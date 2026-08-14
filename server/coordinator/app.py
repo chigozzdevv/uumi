@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Annotated
 
 from agents.continuity import AgentContinuityService
@@ -16,7 +17,12 @@ from connectors.cloudrun import CloudRunConnector
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
 from connectors.sendgrid import SendGridConnector
-from contracts import ConnectionKind, StageExecutionRequest, StageExecutionResult
+from contracts import (
+    ConnectionKind,
+    StageExecutionRequest,
+    StageExecutionResult,
+    StageExecutionStatus,
+)
 from core.audit import AuditWriter
 from core.auth import (
     AccessControl,
@@ -35,6 +41,7 @@ from core.storage import (
 )
 from fastapi import Depends, FastAPI, Header, Request
 from google.cloud.firestore_v1 import AsyncClient
+from telemetry import instrument, record
 from verifier import ProbeExecutor, VerificationService
 from verifier.storage import FirestoreVerificationRepository
 
@@ -119,9 +126,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         IncidentService(
             FirestoreIncidentRepository(firestore),
             _now,
-            audit=AuditWriter(
-                FirestoreAuditRepository(firestore), settings.region, _now
-            ),
+            audit=AuditWriter(FirestoreAuditRepository(firestore), settings.region, _now),
         ),
         evidence,
         AuditWriter(FirestoreAuditRepository(firestore), settings.region, _now),
@@ -141,6 +146,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="FireKey Stage Coordinator", docs_url=None, lifespan=lifespan)
+instrument(app, "firekey-coordinator")
 
 
 async def identity(
@@ -167,9 +173,23 @@ async def execute(
     actor: Annotated[AuthenticatedIdentity, Depends(identity)],
     request: Request,
 ) -> StageExecutionResult:
+    started = monotonic()
     runtime: Runtime = request.app.state.runtime
     await runtime.access.require(actor, body.organisation_id, Permission.RUN_WRITE)
-    return await runtime.coordinator.execute(body)
+    result = await runtime.coordinator.execute(body)
+    record(
+        "stage.execute",
+        (
+            "paused"
+            if result.status is StageExecutionStatus.PAUSED
+            else "succeeded"
+            if result.status in {StageExecutionStatus.SUCCEEDED, StageExecutionStatus.RECOVERED}
+            else "failed"
+        ),
+        monotonic() - started,
+        stage=result.stage.value,
+    )
+    return result
 
 
 def _now() -> datetime:

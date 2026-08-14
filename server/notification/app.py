@@ -5,6 +5,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from core.notification import NotificationDispatcher, NotificationService
 from core.storage import FirestoreNotificationRepository
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from google.cloud.firestore_v1 import AsyncClient
+from telemetry import instrument, record
 
 from notification.config import NotificationSettings
 from notification.events import run_notification
@@ -51,6 +53,7 @@ class Runtime:
         self.instance = os.getenv("K_REVISION", "notification")
 
     async def drain(self) -> DrainResponse:
+        started = monotonic()
         dispatcher = NotificationDispatcher(
             self.repository,
             self.connector,
@@ -60,11 +63,17 @@ class Runtime:
             self.settings.batch_size,
         )
         summary = await dispatcher.drain(self.settings.maximum_deliveries)
-        return DrainResponse(
+        response = DrainResponse(
             claimed=summary.claimed,
             sent=summary.sent,
             failed=summary.failed,
         )
+        record(
+            "notification.deliver",
+            "failed" if response.failed else "succeeded",
+            monotonic() - started,
+        )
+        return response
 
     async def close(self) -> None:
         self.firestore.close()  # type: ignore[no-untyped-call]
@@ -83,6 +92,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="FireKey Notification Worker", docs_url=None, lifespan=lifespan)
+instrument(app, "firekey-notification")
 
 
 @app.get("/health/live")

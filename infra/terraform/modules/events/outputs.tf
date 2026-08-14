@@ -32,3 +32,12 @@ output "audit_deadletter_subscription" {
   description = "Retained run events that exhausted canonical audit ingestion retries."
   value       = try(google_pubsub_subscription.audit_deadletter["auditlog"].id, null)
 }
+
+output "alert_policies" {
+  description = "Operational dead-letter alert policy IDs."
+  value = concat(
+    [for policy in google_monitoring_alert_policy.ingestion_deadletter : policy.id],
+    [for policy in values(google_monitoring_alert_policy.notification_deadletter) : policy.id],
+    [for policy in values(google_monitoring_alert_policy.audit_deadletter) : policy.id],
+  )
+}

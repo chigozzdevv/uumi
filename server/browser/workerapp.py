@@ -40,6 +40,7 @@ from playwright.async_api import Browser, Playwright, async_playwright
 from policy import digest
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from telemetry import instrument
 
 from browser.auth import BrowserAuthBroker
 from browser.driver import BrowserDriver
@@ -205,6 +206,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="FireKey Browser Worker", docs_url=None, lifespan=lifespan)
+instrument(app, "firekey-browser")
 Capability = Annotated[str, Header(alias="X-FireKey-Capability", min_length=32)]
 
 

@@ -7,6 +7,7 @@ from fastapi import FastAPI, WebSocket
 from google.cloud.firestore_v1 import AsyncClient
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from telemetry import instrument
 
 from browser.gateway import BrowserSessionGateway
 from browser.gateway_storage import FirestoreGatewayRepository
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="FireKey Browser Gateway", docs_url=None, lifespan=lifespan)
+instrument(app, "firekey-gateway")
 
 
 @app.get("/health/live")

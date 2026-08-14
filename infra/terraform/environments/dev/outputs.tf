@@ -33,6 +33,16 @@ output "ingestion_uri" {
   value       = module.runtime.ingestion_uri
 }
 
+output "notification_uri" {
+  description = "Private durable notification worker URI."
+  value       = module.runtime.notification_uri
+}
+
+output "auditlog_uri" {
+  description = "Private canonical audit publisher URI."
+  value       = module.runtime.auditlog_uri
+}
+
 output "event_topic" {
   description = "Ordered FireKey run event topic."
   value       = module.events.topic
@@ -46,6 +56,26 @@ output "scc_topics" {
 output "scc_deadletter_subscription" {
   description = "Retained SCC messages that exhausted delivery retries."
   value       = module.events.scc_deadletter_subscription
+}
+
+output "notification_deadletter_subscription" {
+  description = "Retained notification events that exhausted delivery retries."
+  value       = module.events.notification_deadletter_subscription
+}
+
+output "audit_deadletter_subscription" {
+  description = "Retained canonical audit events that exhausted delivery retries."
+  value       = module.events.audit_deadletter_subscription
+}
+
+output "operational_alerts" {
+  description = "Monitoring policies for delivery paths requiring operator intervention."
+  value       = module.events.alert_policies
+}
+
+output "audit_log_bucket" {
+  description = "Locked regional Cloud Logging bucket for canonical audit events."
+  value       = module.storage.audit_log_bucket
 }
 
 output "github_webhook_secrets" {
