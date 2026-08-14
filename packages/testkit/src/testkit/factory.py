@@ -1,7 +1,43 @@
 from datetime import UTC, datetime
 
-from contracts import RotationRun, Stage, StageProof, Trigger
-from policy import GatePolicy
+from contracts import (
+    PolicyDefinition,
+    PolicyState,
+    PolicyVersion,
+    RecoveryMode,
+    RotationRun,
+    Stage,
+    StageProof,
+    Trigger,
+)
+from policy import REQUIRED_CHECKS, GatePolicy, digest
+
+
+def make_policy_version(
+    organisation_id: str = "org_one",
+    version_id: str = "policy_one",
+    now: datetime | None = None,
+) -> PolicyVersion:
+    current = now or datetime.now(UTC)
+    definition = PolicyDefinition(
+        required_checks=REQUIRED_CHECKS,
+        allowed_tools=frozenset({"provider.create", "verification.run"}),
+        allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
+        maximum_observation_seconds=1800,
+    )
+    return PolicyVersion(
+        id=version_id,
+        organisation_id=organisation_id,
+        policy_id="policy_default",
+        number=1,
+        definition=definition,
+        digest=digest(definition),
+        state=PolicyState.ACTIVE,
+        created_by="admin_one",
+        created_at=current,
+        approved_by="approver_one",
+        approved_at=current,
+    )
 
 
 def make_run(now: datetime | None = None) -> RotationRun:

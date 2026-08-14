@@ -16,6 +16,7 @@ from google.cloud.pubsub_v1 import (  # type: ignore[import-untyped]
     SubscriberClient,
     types,
 )
+from testkit import make_policy_version
 
 if "FIRESTORE_EMULATOR_HOST" not in os.environ or "PUBSUB_EMULATOR_HOST" not in os.environ:
     pytest.skip("Firestore and Pub/Sub emulators are not running", allow_module_level=True)
@@ -52,6 +53,10 @@ async def test_outbox_delivers_ordered_events_once() -> None:
     organisation_id = f"org_{suffix}"
     run_id = f"run_{suffix}"
     firestore = AsyncClient(project=project_id)
+    policy = make_policy_version(organisation_id, now=NOW)
+    await firestore.document(FirestorePaths.policy_version(organisation_id, policy.id)).set(
+        policy.model_dump(mode="json")
+    )
     times = iter((NOW, NOW + timedelta(seconds=1)))
     workflow = RunWorkflow(
         FirestoreRunRepository(firestore),
@@ -62,7 +67,7 @@ async def test_outbox_delivers_ordered_events_once() -> None:
         id=f"cmd_create_{suffix}",
         organisation_id=organisation_id,
         credential_id=f"cred_{suffix}",
-        policy_version="policy_one",
+        policy_version=policy.id,
         trigger=Trigger(
             source="schedule",
             event_id=f"event-{suffix}",
