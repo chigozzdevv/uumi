@@ -257,9 +257,7 @@ class RuntimeGoogle:
 
 
 class RuntimeFleet:
-    async def resolve(
-        self, organisation_id: str, kind: AgentKind, skill: str
-    ) -> AgentRegistration:
+    async def resolve(self, organisation_id: str, kind: AgentKind, skill: str) -> AgentRegistration:
         return registration()
 
 

@@ -28,13 +28,9 @@ class NotificationRepository(Protocol):
         read_at: datetime,
     ) -> Notification: ...
 
-    async def register_endpoint(
-        self, endpoint: NotificationEndpoint
-    ) -> NotificationEndpoint: ...
+    async def register_endpoint(self, endpoint: NotificationEndpoint) -> NotificationEndpoint: ...
 
-    async def list_endpoints(
-        self, organisation_id: str
-    ) -> tuple[NotificationEndpoint, ...]: ...
+    async def list_endpoints(self, organisation_id: str) -> tuple[NotificationEndpoint, ...]: ...
 
     async def set_endpoint_enabled(
         self,
@@ -131,9 +127,7 @@ class NotificationService:
         )
         return await self._repository.register_endpoint(endpoint)
 
-    async def list_endpoints(
-        self, organisation_id: str
-    ) -> tuple[NotificationEndpoint, ...]:
+    async def list_endpoints(self, organisation_id: str) -> tuple[NotificationEndpoint, ...]:
         return await self._repository.list_endpoints(organisation_id)
 
     async def set_endpoint_enabled(

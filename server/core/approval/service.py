@@ -65,6 +65,7 @@ class ApprovalNotifier(Protocol):
         approval_id: str | None = None,
     ) -> tuple[object, bool]: ...
 
+
 class ApprovalService:
     def __init__(
         self,

@@ -98,9 +98,7 @@ class NotificationConnector:
         webhook = _utf8(secret, "Slack webhook")
         parsed = urlparse(webhook)
         if parsed.scheme != "https" or parsed.hostname != "hooks.slack.com":
-            raise ConnectorError(
-                "invalid-slack-webhook", "Slack webhook must use hooks.slack.com"
-            )
+            raise ConnectorError("invalid-slack-webhook", "Slack webhook must use hooks.slack.com")
         await self._request(
             "POST",
             webhook,

@@ -32,9 +32,7 @@ class FirestoreTaskStore(TaskStore):
             return None
         return _task(snapshot.to_dict())
 
-    async def list(
-        self, params: ListTasksRequest, context: ServerCallContext
-    ) -> ListTasksResponse:
+    async def list(self, params: ListTasksRequest, context: ServerCallContext) -> ListTasksResponse:
         query: Any = self._client.collection(_collection(_owner(context)))
         if params.context_id:
             query = query.where("context_id", "==", params.context_id)

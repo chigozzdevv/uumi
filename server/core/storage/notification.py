@@ -62,9 +62,7 @@ class FirestoreNotificationRepository:
             current_endpoints: list[NotificationEndpoint] = []
             for endpoint in selected:
                 endpoint_ref = self._client.document(
-                    FirestorePaths.notification_endpoint(
-                        notification.organisation_id, endpoint.id
-                    )
+                    FirestorePaths.notification_endpoint(notification.organisation_id, endpoint.id)
                 )
                 endpoint_snapshot = await endpoint_ref.get(transaction=transaction)
                 if not endpoint_snapshot.exists:
@@ -95,8 +93,10 @@ class FirestoreNotificationRepository:
     ) -> tuple[Notification, ...]:
         root = FirestorePaths.notification_collection(organisation_id)
         values: list[Notification] = []
-        query = self._client.collection(root).order_by("created_at", direction="DESCENDING").limit(
-            min(max(limit, 1), 200)
+        query = (
+            self._client.collection(root)
+            .order_by("created_at", direction="DESCENDING")
+            .limit(min(max(limit, 1), 200))
         )
         async for snapshot in query.stream():
             values.append(Notification.model_validate(_data(snapshot)))
@@ -133,9 +133,7 @@ class FirestoreNotificationRepository:
 
         return await apply(self._client.transaction(max_attempts=5))
 
-    async def register_endpoint(
-        self, endpoint: NotificationEndpoint
-    ) -> NotificationEndpoint:
+    async def register_endpoint(self, endpoint: NotificationEndpoint) -> NotificationEndpoint:
         reference = self._client.document(
             FirestorePaths.notification_endpoint(endpoint.organisation_id, endpoint.id)
         )
@@ -160,9 +158,7 @@ class FirestoreNotificationRepository:
 
         return await apply(self._client.transaction(max_attempts=5))
 
-    async def list_endpoints(
-        self, organisation_id: str
-    ) -> tuple[NotificationEndpoint, ...]:
+    async def list_endpoints(self, organisation_id: str) -> tuple[NotificationEndpoint, ...]:
         root = FirestorePaths.notification_endpoint_collection(organisation_id)
         values: list[NotificationEndpoint] = []
         async for snapshot in self._client.collection(root).limit(100).stream():
@@ -354,9 +350,7 @@ class FirestoreNotificationRepository:
         await apply(self._client.transaction(max_attempts=5))
 
 
-def _delivery(
-    notification: Notification, endpoint: NotificationEndpoint
-) -> NotificationDelivery:
+def _delivery(notification: Notification, endpoint: NotificationEndpoint) -> NotificationDelivery:
     identity = hashlib.sha256(f"{notification.id}\0{endpoint.id}".encode()).hexdigest()
     return NotificationDelivery(
         id=f"delivery_{identity[:40]}",

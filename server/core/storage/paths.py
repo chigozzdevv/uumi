@@ -116,9 +116,7 @@ class FirestorePaths:
         return f"{root}/{_segment(endpoint_id)}"
 
     @staticmethod
-    def notification_delivery(
-        organisation_id: str, notification_id: str, delivery_id: str
-    ) -> str:
+    def notification_delivery(organisation_id: str, notification_id: str, delivery_id: str) -> str:
         root = FirestorePaths.notification(organisation_id, notification_id)
         return f"{root}/notification-deliveries/{_segment(delivery_id)}"
 

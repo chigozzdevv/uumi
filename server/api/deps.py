@@ -102,9 +102,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         tokens=GoogleTokenVerifier(configured.oidc_audience),
         inventory=InventoryService(FirestoreInventoryRepository(client)),
         playbooks=PlaybookService(FirestorePlaybookRepository(client), _now, workflow),
-        approvals=ApprovalService(
-            FirestoreApprovalRepository(client), _now, notifications, audit
-        ),
+        approvals=ApprovalService(FirestoreApprovalRepository(client), _now, notifications, audit),
         incidents=IncidentService(
             FirestoreIncidentRepository(client),
             _now,

@@ -47,14 +47,10 @@ class Notifications:
         self.values[notification_id] = changed
         return changed
 
-    async def register_endpoint(
-        self, endpoint: NotificationEndpoint
-    ) -> NotificationEndpoint:
+    async def register_endpoint(self, endpoint: NotificationEndpoint) -> NotificationEndpoint:
         return endpoint
 
-    async def list_endpoints(
-        self, organisation_id: str
-    ) -> tuple[NotificationEndpoint, ...]:
+    async def list_endpoints(self, organisation_id: str) -> tuple[NotificationEndpoint, ...]:
         return ()
 
     async def set_endpoint_enabled(

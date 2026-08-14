@@ -79,9 +79,7 @@ async def list_endpoints(
     return await required(api.notifications, "notifications").list_endpoints(organisation_id)
 
 
-@router.post(
-    "/endpoints", response_model=NotificationEndpoint, status_code=status.HTTP_201_CREATED
-)
+@router.post("/endpoints", response_model=NotificationEndpoint, status_code=status.HTTP_201_CREATED)
 async def create_endpoint(
     organisation_id: Identifier,
     body: EndpointRequest,
