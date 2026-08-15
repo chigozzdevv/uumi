@@ -28,7 +28,7 @@ class NotificationChannel(StrEnum):
 
 
 class NotificationProvider(StrEnum):
-    SENDGRID = "sendgrid"
+    RESEND = "resend"
     SLACK = "slack"
     PAGERDUTY = "pagerduty"
 
@@ -61,13 +61,13 @@ class NotificationEndpoint(Contract):
     @model_validator(mode="after")
     def validate_provider(self) -> "NotificationEndpoint":
         expected = {
-            NotificationProvider.SENDGRID: NotificationChannel.EMAIL,
+            NotificationProvider.RESEND: NotificationChannel.EMAIL,
             NotificationProvider.SLACK: NotificationChannel.CHAT,
             NotificationProvider.PAGERDUTY: NotificationChannel.INCIDENT,
         }
         if self.channel is not expected[self.provider]:
             raise ValueError("notification provider does not match its channel")
-        if self.provider is NotificationProvider.SENDGRID:
+        if self.provider is NotificationProvider.RESEND:
             if not self.recipients or self.sender is None:
                 raise ValueError("email notifications require recipients and a sender")
             if not all(_email(value) for value in (*self.recipients, self.sender)):

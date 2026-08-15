@@ -25,7 +25,7 @@ capability_public_key     = "replace-with-ed25519-public-key-base64url-x"
 notification_secrets = {
   email = {
     project_id = "replace-with-project-id"
-    secret_id  = "firekey-notification-sendgrid"
+    secret_id  = "firekey-notification-resend"
   }
 }
 

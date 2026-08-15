@@ -49,8 +49,8 @@ class NotificationConnector:
                 "notification endpoint does not accept this event kind",
             )
         with await self._secrets.access(endpoint.auth_reference) as secret:
-            if endpoint.provider is NotificationProvider.SENDGRID:
-                return await self._sendgrid(notification, endpoint, delivery_id, secret.bytes())
+            if endpoint.provider is NotificationProvider.RESEND:
+                return await self._resend(notification, endpoint, delivery_id, secret.bytes())
             if endpoint.provider is NotificationProvider.SLACK:
                 return await self._slack(notification, delivery_id, secret.bytes())
             if endpoint.provider is NotificationProvider.PAGERDUTY:
@@ -60,34 +60,36 @@ class NotificationConnector:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def _sendgrid(
+    async def _resend(
         self,
         notification: Notification,
         endpoint: NotificationEndpoint,
         delivery_id: str,
         secret: bytes,
     ) -> str:
-        token = _utf8(secret, "SendGrid API key")
+        token = _utf8(secret, "Resend API key")
         assert endpoint.sender is not None
         response = await self._request(
             "POST",
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={"Authorization": f"Bearer {token}"},
-            json={
-                "personalizations": [
-                    {
-                        "to": [{"email": value} for value in endpoint.recipients],
-                        "custom_args": {"firekey_delivery_id": delivery_id},
-                    }
-                ],
-                "from": {"email": endpoint.sender},
-                "subject": notification.title,
-                "content": [{"type": "text/plain", "value": self._text(notification)}],
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": delivery_id,
             },
-            expected=frozenset({202}),
+            json={
+                "from": endpoint.sender,
+                "to": list(endpoint.recipients),
+                "subject": notification.title,
+                "text": self._text(notification),
+                "tags": [{"name": "firekey_delivery_id", "value": delivery_id}],
+            },
+            expected=frozenset({200}),
         )
-        receipt = response.headers.get("X-Message-Id")
-        return receipt or _receipt("sendgrid", delivery_id)
+        value = response.json()
+        email_id = value.get("id") if isinstance(value, dict) else None
+        return (
+            email_id if isinstance(email_id, str) and email_id else _receipt("resend", delivery_id)
+        )
 
     async def _slack(
         self,

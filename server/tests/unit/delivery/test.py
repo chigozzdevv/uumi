@@ -98,6 +98,51 @@ async def test_slack_delivery_contains_only_safe_message_and_app_link() -> None:
     await connector.close()
 
 
+async def test_resend_delivery_is_idempotent_and_hides_the_api_key() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request.read()
+        requests.append(request)
+        return httpx.Response(200, json={"id": "email_49a3999c"})
+
+    class ResendSecrets:
+        async def access(self, version: str) -> SecretValue:
+            return SecretValue(b"re_provider_auth")
+
+    connector = NotificationConnector(
+        ResendSecrets(),
+        "https://app.firekey.example",
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    endpoint = NotificationEndpoint(
+        id="endpoint_email",
+        organisation_id="org_one",
+        display_name="Operations email",
+        channel=NotificationChannel.EMAIL,
+        provider=NotificationProvider.RESEND,
+        auth_reference="projects/project-one/secrets/notification/versions/1",
+        event_kinds=frozenset({NotificationKind.ROTATION_FAILED}),
+        recipients=("oncall@acme.example",),
+        sender="FireKey <notifications@firekey.example>",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    receipt = await connector.send(_notification(), endpoint, "delivery_one")
+
+    assert receipt == "email_49a3999c"
+    request = requests[0]
+    assert request.url.host == "api.resend.com"
+    assert request.headers["Authorization"] == "Bearer re_provider_auth"
+    assert request.headers["Idempotency-Key"] == "delivery_one"
+    payload = request.content.decode()
+    assert "https://app.firekey.example/organisations/org_one/runs/run_one" in payload
+    assert "oncall@acme.example" in payload
+    assert "re_provider_auth" not in payload
+    await connector.close()
+
+
 async def test_dispatcher_retries_only_retryable_failures() -> None:
     claim = _claim()
     repository = Deliveries([claim])
