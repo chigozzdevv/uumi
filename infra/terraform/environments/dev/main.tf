@@ -5,6 +5,15 @@ module "project" {
   enable_gateway = var.enable_gateway
 }
 
+module "identityplatform" {
+  source = "../../modules/identityplatform"
+
+  project_id         = var.project_id
+  authorized_domains = var.identity_platform_domains
+
+  depends_on = [module.project]
+}
+
 module "identity" {
   source = "../../modules/identity"
 

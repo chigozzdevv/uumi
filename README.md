@@ -50,7 +50,8 @@ run, and successful compensation ends as `compensated`, never as a completed cre
   Logging bucket with retry and dead-letter recovery.
 - `infra` provisions the Workflows, Eventarc, Pub/Sub, SCC, Cloud Run, IAP, one-run Compute
   Engine browser fleet, default-deny Secure Web Proxy, VPC Service Controls perimeter, regional
-  policy, OpenTelemetry IAM, delivery alerts, CMEK, and locked audit storage.
+  policy, OpenTelemetry IAM, delivery alerts, CMEK, Identity Platform sign-in, and locked audit
+  storage.
 
 ## Run lifecycle
 

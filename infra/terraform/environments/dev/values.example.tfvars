@@ -6,6 +6,8 @@ operator_access_level   = "accessPolicies/123456789012/accessLevels/firekeyOpera
 browser_allowed_domains = ["app.sendgrid.com"]
 gateway_users           = ["group:firekey-operators@example.com"]
 
+identity_platform_domains = ["app.example.com"]
+
 workflow_organisations    = ["org_replace"]
 api_image                 = null
 publisher_image           = null

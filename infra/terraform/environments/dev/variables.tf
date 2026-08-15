@@ -324,6 +324,12 @@ variable "gateway_users" {
   default     = []
 }
 
+variable "identity_platform_domains" {
+  description = "Domains allowed to complete Identity Platform sign-in redirects, including the FireKey client origin."
+  type        = list(string)
+  default     = []
+}
+
 variable "oidc_audience" {
   description = "Stable audience used by Cloud Run and FireKey token verification."
   type        = string

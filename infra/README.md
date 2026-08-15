@@ -38,7 +38,8 @@ terraform -chdir=infra/terraform/environments/dev apply \
 This creates the protected Firestore database, service accounts, immutable Artifact Registry,
 CMEK keys, locked evidence and audit storage, Agent Runtime staging bucket, GitHub and provider
 webhook secret containers, capability secret container, service perimeter, regional policy,
-private browser network, Secure Web Proxy, and one-run VM template.
+private browser network, Secure Web Proxy, one-run VM template, and Identity Platform sign-in
+configuration (email and password enabled; `identity_platform_domains` admits the client origin).
 
 Create secret versions outside Terraform. The capability secret version must contain exactly the
 raw 32-byte private key of an Ed25519 keypair; `capability_public_key` contains only the paired raw
@@ -48,6 +49,11 @@ capabilities. Each GitHub organisation and provider webhook requires a distinct 
 secret version. Provider signatures cover `X-FireKey-Timestamp + "." + raw-body` and FireKey
 rejects timestamps outside the configured replay window. Do not
 place private or HMAC values in Terraform variables, plans, state, commands, or shell history.
+
+Enable the Google and GitHub sign-in providers in the Identity Platform console, never in
+Terraform. The GitHub provider needs an OAuth application's client secret; record the OAuth
+application's client ID only, and let the console hold the secret.
+The same rule applies to any later enterprise SAML or OIDC client secrets.
 
 ## 3. Build and push every runtime by digest
 
@@ -144,6 +150,8 @@ per-tenant and per-skill routing index.
 
 Before enabling schedules or webhooks, verify:
 
+- Identity Platform completes email, Google, and GitHub sign-in on an authorised domain, and the
+  API rejects a sign-in token issued for a different project;
 - all nine Cloud Run revisions use the expected image digests;
 - the four agent registrations report ready and resolve exactly one deployment per skill;
 - each registration carries a distinct Agent Identity and both governed gateway resources;

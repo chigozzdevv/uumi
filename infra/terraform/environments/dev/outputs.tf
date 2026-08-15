@@ -23,6 +23,11 @@ output "api_uri" {
   value       = module.runtime.api_uri
 }
 
+output "identity_platform_issuer" {
+  description = "Issuer of Identity Platform identity tokens for this project."
+  value       = module.identityplatform.issuer
+}
+
 output "publisher_uri" {
   description = "Private FireKey publisher URI, or null before the first image deployment."
   value       = module.runtime.publisher_uri
