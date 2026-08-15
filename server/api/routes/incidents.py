@@ -1,7 +1,16 @@
-from contracts import Contract, Identifier, Incident, IngestionEvent, RotationRun
+from typing import Annotated
+
+from contracts import (
+    Contract,
+    Identifier,
+    Incident,
+    IncidentStatus,
+    IngestionEvent,
+    RotationRun,
+)
 from core.auth import Permission
 from core.errors import ResourceConflictError
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from pydantic import AwareDatetime, Field
 
 from api.deps import IdempotencyKey, Identity, command_id, required, services
@@ -52,6 +61,22 @@ async def ingest(
     incident, applied = await required(api.incidents, "incidents").ingest(incident_id, body)
     response.status_code = status.HTTP_201_CREATED if applied else status.HTTP_200_OK
     return IncidentResponse(incident=incident, applied=applied)
+
+
+@router.get("", response_model=tuple[Incident, ...])
+async def list_incidents(
+    organisation_id: Identifier,
+    identity: Identity,
+    request: Request,
+    incident_status: Annotated[list[IncidentStatus] | None, Query(alias="status")] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> tuple[Incident, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    statuses = frozenset(incident_status) if incident_status is not None else None
+    return await required(api.incidents, "incidents").list_incidents(
+        organisation_id, statuses, limit
+    )
 
 
 @router.get("/{incident_id}", response_model=Incident)

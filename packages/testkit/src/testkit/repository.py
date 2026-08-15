@@ -119,6 +119,11 @@ class MemoryRunRepository:
                 raise RunNotFoundError(f"run {run_id} was not found")
             return run
 
+    async def list_runs(self, organisation_id: str, limit: int) -> tuple[RotationRun, ...]:
+        async with self._mutex:
+            runs = [run for (org_id, _), run in self._runs.items() if org_id == organisation_id]
+            return tuple(runs[:limit])
+
     async def mutate(
         self,
         command: RunCommand,

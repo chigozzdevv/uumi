@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from contracts import (
     CleanupRunCommand,
     CompleteRecoveryCommand,
@@ -13,6 +15,7 @@ from contracts import (
     RenewLeaseCommand,
     ResumeRunCommand,
     RotationRun,
+    RunStatus,
     RunStep,
     Stage,
     StageBindings,
@@ -22,7 +25,7 @@ from contracts import (
 )
 from core.auth import Permission
 from core.storage import MutationResult
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from pydantic import AwareDatetime, Field
 
 from api.deps import (
@@ -133,6 +136,20 @@ async def create_run(
     result = await api.workflow.create(command)
     response.status_code = status.HTTP_201_CREATED if result.applied else status.HTTP_200_OK
     return _response(result)
+
+
+@router.get("", response_model=tuple[RotationRun, ...])
+async def list_runs(
+    organisation_id: OrganisationId,
+    identity: Identity,
+    request: Request,
+    run_status: Annotated[list[RunStatus] | None, Query(alias="status")] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> tuple[RotationRun, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.RUN_READ)
+    statuses = frozenset(run_status) if run_status is not None else None
+    return await api.workflow.list_runs(organisation_id, statuses, limit)
 
 
 @router.get("/{run_id}", response_model=RotationRun)

@@ -27,6 +27,13 @@ class FirestorePlaybookRepository:
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
 
+    async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]:
+        path = f"{FirestorePaths.organisation(organisation_id)}/playbooks"
+        playbooks: list[Playbook] = []
+        async for snapshot in self._client.collection(path).limit(limit).stream():
+            playbooks.append(Playbook.model_validate(_data(snapshot)))
+        return tuple(playbooks)
+
     async def add_version(
         self,
         playbook_id: str,

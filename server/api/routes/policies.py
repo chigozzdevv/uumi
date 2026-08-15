@@ -1,6 +1,6 @@
 from contracts import Contract, Identifier, Policy, PolicyDefinition, PolicyVersion
 from core.auth import Permission
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Query, Request, status
 from pydantic import Field
 
 from api.deps import Identity, required, services
@@ -19,6 +19,18 @@ class CreatePolicyRequest(Contract):
 class CreateVersionRequest(Contract):
     id: Identifier
     definition: PolicyDefinition
+
+
+@router.get("", response_model=tuple[Policy, ...])
+async def list_policies(
+    organisation_id: Identifier,
+    identity: Identity,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> tuple[Policy, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.POLICY_READ)
+    return await required(api.policies, "policies").list_policies(organisation_id, limit)
 
 
 @router.post("", response_model=Policy, status_code=status.HTTP_201_CREATED)

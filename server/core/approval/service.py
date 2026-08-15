@@ -17,6 +17,8 @@ from policy import digest
 from core.audit.writer import AuditWriter
 from core.errors import ApprovalError
 
+_LIST_SCAN_LIMIT = 500
+
 
 @dataclass(frozen=True, slots=True)
 class ApprovalCapability:
@@ -26,6 +28,8 @@ class ApprovalCapability:
 
 class ApprovalRepository(Protocol):
     async def create(self, approval: Approval, action: ProtectedAction) -> Approval: ...
+
+    async def list_approvals(self, organisation_id: str, limit: int) -> tuple[Approval, ...]: ...
 
     async def decide(
         self,
@@ -137,6 +141,20 @@ class ApprovalService:
                 run_id=stored.run_id,
             )
         return ApprovalCapability(approval=stored, token=token)
+
+    async def list_approvals(
+        self,
+        organisation_id: str,
+        decisions: frozenset[ApprovalDecision] | None = None,
+        limit: int = 100,
+    ) -> tuple[Approval, ...]:
+        approvals = await self._repository.list_approvals(organisation_id, _LIST_SCAN_LIMIT)
+        if decisions is not None:
+            approvals = tuple(approval for approval in approvals if approval.decision in decisions)
+        ordered = sorted(
+            approvals, key=lambda approval: (approval.created_at, approval.id), reverse=True
+        )
+        return tuple(ordered[:limit])
 
     async def decide(
         self,

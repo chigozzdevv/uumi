@@ -87,6 +87,9 @@ class Repository:
     async def assign(self, assignment: PlaybookAssignment) -> PlaybookAssignment:
         raise AssertionError("not used")
 
+    async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]:
+        raise AssertionError("not used")
+
 
 class Workflow:
     def __init__(self) -> None:

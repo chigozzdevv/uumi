@@ -64,6 +64,13 @@ class FirestoreIncidentRepository:
             raise ResourceNotFoundError(f"incident {incident_id} was not found")
         return Incident.model_validate(_data(snapshot))
 
+    async def list_incidents(self, organisation_id: str, limit: int) -> tuple[Incident, ...]:
+        path = f"{FirestorePaths.organisation(organisation_id)}/incidents"
+        incidents: list[Incident] = []
+        async for snapshot in self._client.collection(path).limit(limit).stream():
+            incidents.append(Incident.model_validate(_data(snapshot)))
+        return tuple(incidents)
+
     async def correlate(
         self,
         organisation_id: str,

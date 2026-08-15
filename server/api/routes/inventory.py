@@ -106,6 +106,39 @@ async def import_credential(
     return result
 
 
+@router.get("/connections", response_model=tuple[Connection, ...])
+async def list_connections(
+    organisation_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> tuple[Connection, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").list_connections(organisation_id)
+
+
+@router.get("/applications", response_model=tuple[Application, ...])
+async def list_applications(
+    organisation_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> tuple[Application, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").list_applications(organisation_id)
+
+
+@router.get("/environments", response_model=tuple[Environment, ...])
+async def list_environments(
+    organisation_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> tuple[Environment, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").list_environments(organisation_id)
+
+
 @router.get("/graph", response_model=InventoryGraph)
 async def graph(
     organisation_id: Identifier,

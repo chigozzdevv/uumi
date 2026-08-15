@@ -27,6 +27,16 @@ class FirestorePolicyRepository:
             raise
         return policy
 
+    async def list_policies(self, organisation_id: str, limit: int) -> tuple[Policy, ...]:
+        path = f"{FirestorePaths.organisation(organisation_id)}/policies"
+        policies: list[Policy] = []
+        async for snapshot in self._client.collection(path).limit(limit).stream():
+            data = snapshot.to_dict()
+            if data is None:
+                raise StorageIntegrityError(f"policy {snapshot.id} has no data")
+            policies.append(Policy.model_validate(data))
+        return tuple(policies)
+
     async def create_version(
         self,
         organisation_id: str,

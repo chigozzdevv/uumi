@@ -37,6 +37,12 @@ class InventoryRepository(Protocol):
 
     async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]: ...
 
+    async def connections(self, organisation_id: str) -> tuple[Connection, ...]: ...
+
+    async def applications(self, organisation_id: str) -> tuple[Application, ...]: ...
+
+    async def environments(self, organisation_id: str) -> tuple[Environment, ...]: ...
+
     async def services(self, organisation_id: str) -> tuple[ConsumerService, ...]: ...
 
     async def bindings(self, organisation_id: str) -> tuple[ConsumerBinding, ...]: ...
@@ -93,6 +99,15 @@ class InventoryService:
         ):
             raise ResourceConflictError("credential binding lineage is inconsistent")
         return await self._repository.import_credential(credential, generation, bindings)
+
+    async def list_connections(self, organisation_id: str) -> tuple[Connection, ...]:
+        return await self._repository.connections(organisation_id)
+
+    async def list_applications(self, organisation_id: str) -> tuple[Application, ...]:
+        return await self._repository.applications(organisation_id)
+
+    async def list_environments(self, organisation_id: str) -> tuple[Environment, ...]:
+        return await self._repository.environments(organisation_id)
 
     async def graph(
         self,

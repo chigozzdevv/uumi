@@ -250,6 +250,15 @@ class FirestoreRunRepository:
         _tenant(run, organisation_id)
         return run
 
+    async def list_runs(self, organisation_id: str, limit: int) -> tuple[RotationRun, ...]:
+        path = f"{FirestorePaths.organisation(organisation_id)}/runs"
+        runs: list[RotationRun] = []
+        async for snapshot in self._client.collection(path).limit(limit).stream():
+            run = RotationRun.model_validate(_required_data(snapshot))
+            _tenant(run, organisation_id)
+            runs.append(run)
+        return tuple(runs)
+
     async def mutate(
         self,
         command: RunCommand,

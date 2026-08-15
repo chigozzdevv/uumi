@@ -39,6 +39,8 @@ class RunRepository(Protocol):
 
     async def get(self, organisation_id: str, run_id: str) -> RotationRun: ...
 
+    async def list_runs(self, organisation_id: str, limit: int) -> tuple[RotationRun, ...]: ...
+
     async def mutate(
         self,
         command: RunCommand,

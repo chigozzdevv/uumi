@@ -7,9 +7,13 @@ from policy import REQUIRED_CHECKS, GatePolicy, digest
 
 from core.errors import ResourceConflictError
 
+_LIST_SCAN_LIMIT = 500
+
 
 class PolicyRepository(Protocol):
     async def create(self, policy: Policy) -> Policy: ...
+
+    async def list_policies(self, organisation_id: str, limit: int) -> tuple[Policy, ...]: ...
 
     async def create_version(
         self,
@@ -48,6 +52,11 @@ class PolicyService:
                 updated_at=now,
             )
         )
+
+    async def list_policies(self, organisation_id: str, limit: int = 100) -> tuple[Policy, ...]:
+        policies = await self._repository.list_policies(organisation_id, _LIST_SCAN_LIMIT)
+        ordered = sorted(policies, key=lambda policy: (policy.created_at, policy.id), reverse=True)
+        return tuple(ordered[:limit])
 
     async def create_version(
         self,

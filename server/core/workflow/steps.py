@@ -13,6 +13,7 @@ from contracts import (
     RenewLeaseCommand,
     ResumeRunCommand,
     RotationRun,
+    RunStatus,
     StartRunCommand,
 )
 
@@ -23,6 +24,8 @@ from core.workflow.trigger import build_run
 
 Clock = Callable[[], datetime]
 IdFactory = Callable[[str], str]
+
+_LIST_SCAN_LIMIT = 500
 
 
 def utcnow() -> datetime:
@@ -49,6 +52,18 @@ class RunWorkflow:
 
     async def get(self, organisation_id: str, run_id: str) -> RotationRun:
         return await self._repository.get(organisation_id, run_id)
+
+    async def list_runs(
+        self,
+        organisation_id: str,
+        statuses: frozenset[RunStatus] | None = None,
+        limit: int = 100,
+    ) -> tuple[RotationRun, ...]:
+        runs = await self._repository.list_runs(organisation_id, _LIST_SCAN_LIMIT)
+        if statuses is not None:
+            runs = tuple(run for run in runs if run.status in statuses)
+        ordered = sorted(runs, key=lambda run: (run.created_at, run.id), reverse=True)
+        return tuple(ordered[:limit])
 
     async def start(self, command: StartRunCommand) -> MutationResult:
         now = self._clock()

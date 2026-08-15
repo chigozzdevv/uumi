@@ -120,6 +120,15 @@ class FirestoreInventoryRepository:
     async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]:
         return await self._list(f"organisations/{organisation_id}/credentials", ManagedCredential)
 
+    async def connections(self, organisation_id: str) -> tuple[Connection, ...]:
+        return await self._list(f"organisations/{organisation_id}/connections", Connection)
+
+    async def applications(self, organisation_id: str) -> tuple[Application, ...]:
+        return await self._list(f"organisations/{organisation_id}/applications", Application)
+
+    async def environments(self, organisation_id: str) -> tuple[Environment, ...]:
+        return await self._list(f"organisations/{organisation_id}/environments", Environment)
+
     async def services(self, organisation_id: str) -> tuple[ConsumerService, ...]:
         return await self._list(f"organisations/{organisation_id}/services", ConsumerService)
 

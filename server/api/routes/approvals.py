@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from contracts import (
     Approval,
     ApprovalDecision,
@@ -7,7 +9,7 @@ from contracts import (
 )
 from core.auth import Permission
 from core.errors import ResourceConflictError
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Query, Request, status
 from pydantic import AwareDatetime, Field
 
 from api.deps import Identity, required, services
@@ -42,6 +44,22 @@ class ConsumeRequest(Contract):
     action: ProtectedAction
     plan_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     evidence_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+@router.get("", response_model=tuple[Approval, ...])
+async def list_approvals(
+    organisation_id: Identifier,
+    identity: Identity,
+    request: Request,
+    decision: Annotated[list[ApprovalDecision] | None, Query()] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> tuple[Approval, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.APPROVAL_READ)
+    decisions = frozenset(decision) if decision is not None else None
+    return await required(api.approvals, "approvals").list_approvals(
+        organisation_id, decisions, limit
+    )
 
 
 @router.post("", response_model=ApprovalCapabilityResponse, status_code=status.HTTP_201_CREATED)

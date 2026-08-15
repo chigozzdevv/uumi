@@ -1,9 +1,36 @@
+import itertools
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from api.app import create_app
 from api.deps import ApiServices
+from contracts import (
+    Application,
+    Approval,
+    ApprovalDecision,
+    Connection,
+    ConnectionKind,
+    ConnectionStatus,
+    ConsumerBinding,
+    ConsumerService,
+    CredentialGeneration,
+    Environment,
+    Incident,
+    IncidentStatus,
+    IngestionEvent,
+    ManagedCredential,
+    Playbook,
+    PlaybookAssignment,
+    PlaybookDraft,
+    PlaybookVersion,
+    Policy,
+    PolicyVersion,
+    Severity,
+    SourceResource,
+)
+from contracts.incident import Confidence
+from core.approval import ApprovalService
 from core.auth import (
     AccessControl,
     AuthenticatedIdentity,
@@ -11,6 +38,10 @@ from core.auth import (
     Role,
 )
 from core.errors import AuthenticationError
+from core.incident import IncidentService
+from core.inventory import InventoryService
+from core.playbook import PlaybookService
+from core.policy import PolicyService
 from core.workflow import RunWorkflow
 from fastapi import FastAPI
 from testkit import MemoryRunRepository
@@ -44,17 +75,289 @@ class AccessRepository:
         return PrincipalGrant(subject=identity.subject, roles=frozenset({self._role}))
 
 
+class IncidentRepository:
+    def __init__(self) -> None:
+        self.incidents = (
+            _incident("incident_one", IncidentStatus.NEW, NOW),
+            _incident("incident_two", IncidentStatus.ACTION, NOW + timedelta(minutes=5)),
+        )
+
+    async def list_incidents(self, organisation_id: str, limit: int) -> tuple[Incident, ...]:
+        return self.incidents[:limit]
+
+    async def ingest(self, incident: Incident, event: IngestionEvent) -> tuple[Incident, bool]:
+        raise AssertionError("not used")
+
+    async def get(self, organisation_id: str, incident_id: str) -> Incident:
+        raise AssertionError("not used")
+
+    async def correlate(
+        self,
+        organisation_id: str,
+        incident_id: str,
+        expected_revision: int,
+        candidates: tuple[object, ...],
+        credential_id: str | None,
+        updated_at: datetime,
+    ) -> Incident:
+        raise AssertionError("not used")
+
+    async def link_run(
+        self,
+        organisation_id: str,
+        incident_id: str,
+        expected_revision: int,
+        credential_id: str,
+        run_id: str,
+        updated_at: datetime,
+    ) -> Incident:
+        raise AssertionError("not used")
+
+    async def advance_run(
+        self,
+        organisation_id: str,
+        run_id: str,
+        status: IncidentStatus,
+        updated_at: datetime,
+    ) -> tuple[Incident, ...]:
+        raise AssertionError("not used")
+
+
+class ApprovalRepository:
+    def __init__(self) -> None:
+        self.approvals = (
+            _approval("approval_one", ApprovalDecision.PENDING, NOW),
+            _approval(
+                "approval_two", ApprovalDecision.APPROVED, NOW + timedelta(minutes=5), decided=True
+            ),
+        )
+
+    async def list_approvals(self, organisation_id: str, limit: int) -> tuple[Approval, ...]:
+        return self.approvals[:limit]
+
+    async def create(self, approval: Approval, action: object) -> Approval:
+        raise AssertionError("not used")
+
+    async def decide(
+        self,
+        organisation_id: str,
+        approval_id: str,
+        expected_revision: int,
+        decision: ApprovalDecision,
+        actor_id: str,
+        decided_at: datetime,
+    ) -> Approval:
+        raise AssertionError("not used")
+
+    async def consume(
+        self,
+        organisation_id: str,
+        approval_id: str,
+        capability_hash: str,
+        action_digest: str,
+        plan_hash: str,
+        evidence_hash: str,
+        consumed_at: datetime,
+    ) -> Approval:
+        raise AssertionError("not used")
+
+
+class PolicyRepository:
+    def __init__(self) -> None:
+        self.policies = (
+            _policy_record("policy_one", NOW),
+            _policy_record("policy_two", NOW + timedelta(minutes=5)),
+        )
+
+    async def list_policies(self, organisation_id: str, limit: int) -> tuple[Policy, ...]:
+        return self.policies[:limit]
+
+    async def create(self, policy: Policy) -> Policy:
+        raise AssertionError("not used")
+
+    async def create_version(
+        self,
+        organisation_id: str,
+        policy_id: str,
+        factory: object,
+    ) -> PolicyVersion:
+        raise AssertionError("not used")
+
+    async def activate(
+        self,
+        organisation_id: str,
+        policy_id: str,
+        version_id: str,
+        actor_id: str,
+        now: datetime,
+    ) -> PolicyVersion:
+        raise AssertionError("not used")
+
+
+class PlaybookRepository:
+    def __init__(self) -> None:
+        self.playbooks = (
+            _playbook("playbook_one", NOW),
+            _playbook("playbook_two", NOW + timedelta(minutes=5)),
+        )
+
+    async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]:
+        return self.playbooks[:limit]
+
+    async def add_version(
+        self,
+        playbook_id: str,
+        version_id: str,
+        organisation_id: str,
+        definition: PlaybookDraft,
+        definition_digest: str,
+        actor_id: str,
+        created_at: datetime,
+        source_ids: tuple[str, ...],
+    ) -> tuple[Playbook, PlaybookVersion]:
+        raise AssertionError("not used")
+
+    async def get_version(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        version_id: str,
+    ) -> PlaybookVersion:
+        raise AssertionError("not used")
+
+    async def get_dryrun(self, organisation_id: str, playbook_id: str, dryrun_id: str) -> None:
+        raise AssertionError("not used")
+
+    async def validate_dryrun(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        version_id: str,
+        environment_id: str,
+        credential_id: str,
+    ) -> None:
+        raise AssertionError("not used")
+
+    async def activate(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        version_id: str,
+        dryrun_id: str,
+        actor_id: str,
+        activated_at: datetime,
+    ) -> PlaybookVersion:
+        raise AssertionError("not used")
+
+    async def assign(self, assignment: PlaybookAssignment) -> PlaybookAssignment:
+        raise AssertionError("not used")
+
+
+class InventoryRepository:
+    def __init__(self) -> None:
+        self.stored_connections = (
+            Connection(
+                id="connection_one",
+                organisation_id="org_one",
+                kind=ConnectionKind.PROVIDER,
+                provider="sendgrid",
+                display_name="SendGrid Admin",
+                auth_reference="projects/org-one/secrets/sendgrid-admin/versions/1",
+                capabilities=frozenset({"create", "revoke"}),
+                allowed_resources=("sendgrid:*",),
+                status=ConnectionStatus.READY,
+                region="us-east1",
+                created_at=NOW,
+                updated_at=NOW,
+            ),
+        )
+        self.stored_applications = (
+            Application(
+                id="application_one",
+                organisation_id="org_one",
+                display_name="Acme Store",
+                created_at=NOW,
+                updated_at=NOW,
+            ),
+        )
+        self.stored_environments = (
+            Environment(
+                id="environment_one",
+                organisation_id="org_one",
+                application_id="application_one",
+                display_name="Production",
+                production=True,
+                region="us-east1",
+                created_at=NOW,
+                updated_at=NOW,
+            ),
+        )
+
+    async def connections(self, organisation_id: str) -> tuple[Connection, ...]:
+        return self.stored_connections
+
+    async def applications(self, organisation_id: str) -> tuple[Application, ...]:
+        return self.stored_applications
+
+    async def environments(self, organisation_id: str) -> tuple[Environment, ...]:
+        return self.stored_environments
+
+    async def add_connection(self, value: Connection) -> Connection:
+        raise AssertionError("not used")
+
+    async def add_application(self, value: Application) -> Application:
+        raise AssertionError("not used")
+
+    async def add_environment(self, value: Environment) -> Environment:
+        raise AssertionError("not used")
+
+    async def add_service(self, value: ConsumerService) -> ConsumerService:
+        raise AssertionError("not used")
+
+    async def get_application(self, organisation_id: str, resource_id: str) -> Application:
+        raise AssertionError("not used")
+
+    async def get_environment(self, organisation_id: str, resource_id: str) -> Environment:
+        raise AssertionError("not used")
+
+    async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
+        raise AssertionError("not used")
+
+    async def import_credential(
+        self,
+        credential: ManagedCredential,
+        generation: CredentialGeneration,
+        bindings: tuple[ConsumerBinding, ...],
+    ) -> ManagedCredential:
+        raise AssertionError("not used")
+
+    async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]:
+        return ()
+
+    async def services(self, organisation_id: str) -> tuple[ConsumerService, ...]:
+        return ()
+
+    async def bindings(self, organisation_id: str) -> tuple[ConsumerBinding, ...]:
+        return ()
+
+
 def app(role: Role = Role.OPERATOR) -> FastAPI:
+    sequence = itertools.count(1)
     repository = MemoryRunRepository()
     workflow = RunWorkflow(
         repository,
         clock=lambda: NOW,
-        id_factory=lambda prefix: f"{prefix}_one",
+        id_factory=lambda prefix: f"{prefix}_{next(sequence)}",
     )
     services = ApiServices(
         workflow=workflow,
         access=AccessControl(AccessRepository(role)),
         tokens=TokenVerifier(),
+        inventory=InventoryService(InventoryRepository()),
+        playbooks=PlaybookService(PlaybookRepository(), clock=lambda: NOW),
+        approvals=ApprovalService(ApprovalRepository(), clock=lambda: NOW),
+        incidents=IncidentService(IncidentRepository(), clock=lambda: NOW),
+        policies=PolicyService(PolicyRepository(), clock=lambda: NOW),
     )
     return create_app(services)
 
@@ -76,6 +379,72 @@ def create_body() -> dict[str, str]:
         "urgency": "routine",
         "received_at": NOW.isoformat(),
     }
+
+
+def _incident(
+    incident_id: str,
+    incident_status: IncidentStatus,
+    created_at: datetime,
+) -> Incident:
+    return Incident(
+        id=incident_id,
+        organisation_id="org_one",
+        event_id=f"event_{incident_id}",
+        source="github_secret_scanning",
+        source_event_id=f"alert-{incident_id}",
+        severity=Severity.CRITICAL,
+        confidence=Confidence.HIGH,
+        status=incident_status,
+        resource=SourceResource(repository="acme/store-api", provider="sendgrid"),
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
+def _approval(
+    approval_id: str,
+    decision: ApprovalDecision,
+    created_at: datetime,
+    decided: bool = False,
+) -> Approval:
+    return Approval(
+        id=approval_id,
+        organisation_id="org_one",
+        run_id="run_one",
+        action_id="action_one",
+        action_digest="a" * 64,
+        plan_hash="b" * 64,
+        evidence_hash="c" * 64,
+        generation_id="gen_one",
+        requested_by="service_one",
+        capability_hash="d" * 64,
+        decision=decision,
+        approver_id="approver_one" if decided else None,
+        expires_at=created_at + timedelta(hours=1),
+        created_at=created_at,
+        decided_at=created_at if decided else None,
+    )
+
+
+def _policy_record(policy_id: str, created_at: datetime) -> Policy:
+    return Policy(
+        id=policy_id,
+        organisation_id="org_one",
+        name=f"Production SaaS Keys {policy_id}",
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
+def _playbook(playbook_id: str, created_at: datetime) -> Playbook:
+    return Playbook(
+        id=playbook_id,
+        organisation_id="org_one",
+        name=f"SendGrid Mail API Key Rotation {playbook_id}",
+        provider="sendgrid",
+        created_at=created_at,
+        updated_at=created_at,
+    )
 
 
 @pytest.fixture
@@ -148,3 +517,188 @@ async def test_create_and_start_are_authenticated_and_idempotent() -> None:
     assert started.json()["run"]["lease"]["owner_id"] == IDENTITY.actor_id
     assert duplicate.status_code == 200
     assert duplicate.json()["applied"] is False
+
+
+@pytest.mark.anyio
+async def test_list_runs_orders_newest_first_and_filters_status() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("request-first"),
+            json=create_body(),
+        )
+        second_body = {**create_body(), "credential_id": "cred_two", "event_id": "event-two"}
+        second = await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("request-second"),
+            json=second_body,
+        )
+        listed = await client.get(
+            "/v1/organisations/org_one/runs",
+            headers=headers(),
+        )
+        pending_only = await client.get(
+            "/v1/organisations/org_one/runs",
+            headers=headers(),
+            params=[("status", "pending")],
+        )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert listed.status_code == 200
+    assert [run["id"] for run in listed.json()] == [
+        second.json()["run"]["id"],
+        first.json()["run"]["id"],
+    ]
+    assert [run["id"] for run in pending_only.json()] == [
+        second.json()["run"]["id"],
+        first.json()["run"]["id"],
+    ]
+
+
+@pytest.mark.anyio
+async def test_list_runs_respects_limit_and_organisation() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("request-first"),
+            json=create_body(),
+        )
+        await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("request-second"),
+            json={**create_body(), "credential_id": "cred_two", "event_id": "event-two"},
+        )
+        limited = await client.get(
+            "/v1/organisations/org_one/runs",
+            headers=headers(),
+            params={"limit": 1},
+        )
+        foreign = await client.get(
+            "/v1/organisations/org_two/runs",
+            headers=headers(),
+        )
+
+    assert limited.status_code == 200
+    assert len(limited.json()) == 1
+    assert foreign.status_code == 403
+    assert foreign.json()["code"] == "forbidden"
+
+
+@pytest.mark.anyio
+async def test_list_incidents_filters_status_newest_first() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        listed = await client.get(
+            "/v1/organisations/org_one/incidents",
+            headers=headers(),
+        )
+        open_only = await client.get(
+            "/v1/organisations/org_one/incidents",
+            headers=headers(),
+            params=[("status", "new")],
+        )
+        action_only = await client.get(
+            "/v1/organisations/org_one/incidents",
+            headers=headers(),
+            params=[("status", "action-required")],
+        )
+
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == ["incident_two", "incident_one"]
+    assert [item["id"] for item in open_only.json()] == ["incident_one"]
+    assert [item["id"] for item in action_only.json()] == ["incident_two"]
+
+
+@pytest.mark.anyio
+async def test_list_approvals_filters_decision_newest_first() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        listed = await client.get(
+            "/v1/organisations/org_one/approvals",
+            headers=headers(),
+        )
+        pending = await client.get(
+            "/v1/organisations/org_one/approvals",
+            headers=headers(),
+            params=[("decision", "pending")],
+        )
+
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == ["approval_two", "approval_one"]
+    assert [item["id"] for item in pending.json()] == ["approval_one"]
+
+
+@pytest.mark.anyio
+async def test_list_policies_and_playbooks_newest_first() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        policies = await client.get(
+            "/v1/organisations/org_one/policies",
+            headers=headers(),
+        )
+        playbooks = await client.get(
+            "/v1/organisations/org_one/playbooks",
+            headers=headers(),
+        )
+
+    assert policies.status_code == 200
+    assert [item["id"] for item in policies.json()] == ["policy_two", "policy_one"]
+    assert playbooks.status_code == 200
+    assert [item["id"] for item in playbooks.json()] == ["playbook_two", "playbook_one"]
+
+
+@pytest.mark.anyio
+async def test_list_inventory_collections() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        connections = await client.get(
+            "/v1/organisations/org_one/inventory/connections",
+            headers=headers(),
+        )
+        applications = await client.get(
+            "/v1/organisations/org_one/inventory/applications",
+            headers=headers(),
+        )
+        environments = await client.get(
+            "/v1/organisations/org_one/inventory/environments",
+            headers=headers(),
+        )
+
+    assert connections.status_code == 200
+    assert [item["id"] for item in connections.json()] == ["connection_one"]
+    assert connections.json()[0]["auth_reference"] == (
+        "projects/org-one/secrets/sendgrid-admin/versions/1"
+    )
+    assert applications.status_code == 200
+    assert [item["id"] for item in applications.json()] == ["application_one"]
+    assert environments.status_code == 200
+    assert [item["id"] for item in environments.json()] == ["environment_one"]
+
+
+@pytest.mark.anyio
+async def test_viewer_reads_lists_but_cannot_mutate() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.VIEWER),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        runs = await client.get("/v1/organisations/org_one/runs", headers=headers())
+        incidents = await client.get("/v1/organisations/org_one/incidents", headers=headers())
+        approvals = await client.get("/v1/organisations/org_one/approvals", headers=headers())
+        policies = await client.get("/v1/organisations/org_one/policies", headers=headers())
+        playbooks = await client.get("/v1/organisations/org_one/playbooks", headers=headers())
+        create = await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("request-denied"),
+            json=create_body(),
+        )
+
+    assert runs.status_code == 200
+    assert incidents.status_code == 200
+    assert approvals.status_code == 200
+    assert policies.status_code == 200
+    assert playbooks.status_code == 200
+    assert create.status_code == 403

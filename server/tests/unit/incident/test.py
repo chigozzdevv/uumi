@@ -35,6 +35,9 @@ class Incidents:
     async def get(self, organisation_id: str, incident_id: str) -> Incident:
         return self.values[incident_id]
 
+    async def list_incidents(self, organisation_id: str, limit: int) -> tuple[Incident, ...]:
+        return tuple(self.values.values())[:limit]
+
     async def correlate(
         self,
         organisation_id: str,

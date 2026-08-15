@@ -7,7 +7,12 @@ from google.cloud.firestore_v1 import AsyncClient
 from google.cloud.firestore_v1.async_transaction import AsyncTransaction, async_transactional
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
-from core.errors import ApprovalError, ResourceConflictError, ResourceNotFoundError
+from core.errors import (
+    ApprovalError,
+    ResourceConflictError,
+    ResourceNotFoundError,
+    StorageIntegrityError,
+)
 from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 
@@ -51,6 +56,16 @@ class FirestoreApprovalRepository:
             return approval
 
         return await apply(self._client.transaction(max_attempts=5))
+
+    async def list_approvals(self, organisation_id: str, limit: int) -> tuple[Approval, ...]:
+        path = f"{FirestorePaths.organisation(organisation_id)}/approvals"
+        approvals: list[Approval] = []
+        async for snapshot in self._client.collection(path).limit(limit).stream():
+            approval = Approval.model_validate(_data(snapshot))
+            if approval.organisation_id != organisation_id:
+                raise StorageIntegrityError(f"approval {approval.id} crosses tenant boundary")
+            approvals.append(approval)
+        return tuple(approvals)
 
     async def decide(
         self,

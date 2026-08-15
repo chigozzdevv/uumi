@@ -110,6 +110,9 @@ class Playbooks:
     async def assign(self, assignment: PlaybookAssignment) -> PlaybookAssignment:
         return assignment
 
+    async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]:
+        return ()
+
 
 class Inventory:
     async def add_connection(self, value: object) -> object:

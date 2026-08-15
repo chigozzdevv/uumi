@@ -22,6 +22,8 @@ from policy import digest
 from core.errors import PlaybookError
 from core.storage.repository import MutationResult
 
+_LIST_SCAN_LIMIT = 500
+
 
 class DryRunWorkflow(Protocol):
     async def create(self, command: CreateRunCommand) -> MutationResult: ...
@@ -41,6 +43,8 @@ class PlaybookRepository(Protocol):
         created_at: datetime,
         source_ids: tuple[str, ...],
     ) -> tuple[Playbook, PlaybookVersion]: ...
+
+    async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]: ...
 
     async def get_version(
         self,
@@ -85,6 +89,13 @@ class PlaybookService:
         self._repository = repository
         self._clock = clock
         self._workflow = workflow
+
+    async def list_playbooks(self, organisation_id: str, limit: int = 100) -> tuple[Playbook, ...]:
+        playbooks = await self._repository.list_playbooks(organisation_id, _LIST_SCAN_LIMIT)
+        ordered = sorted(
+            playbooks, key=lambda playbook: (playbook.created_at, playbook.id), reverse=True
+        )
+        return tuple(ordered[:limit])
 
     async def create_version(
         self,

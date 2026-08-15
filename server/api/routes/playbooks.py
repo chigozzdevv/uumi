@@ -15,7 +15,7 @@ from contracts import (
 )
 from core.auth import Permission
 from core.errors import PlaybookError
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from pydantic import AwareDatetime, Field
 
 from api.deps import IdempotencyKey, Identity, command_id, required, services
@@ -74,6 +74,18 @@ class AssignmentRequest(Contract):
     connection_ids: tuple[Identifier, ...]
     dry_run_only: bool = False
     environment_id: Identifier | None = None
+
+
+@router.get("", response_model=tuple[Playbook, ...])
+async def list_playbooks(
+    organisation_id: Identifier,
+    identity: Identity,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> tuple[Playbook, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_READ)
+    return await required(api.playbooks, "playbooks").list_playbooks(organisation_id, limit)
 
 
 @router.post(
