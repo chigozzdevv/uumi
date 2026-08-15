@@ -88,6 +88,11 @@ class IncidentRepository:
     async def list_incidents(self, organisation_id: str, limit: int) -> tuple[Incident, ...]:
         return self.incidents[:limit]
 
+    async def count_incidents(
+        self, organisation_id: str, statuses: frozenset[IncidentStatus]
+    ) -> int:
+        return sum(1 for incident in self.incidents if incident.status in statuses)
+
     async def ingest(self, incident: Incident, event: IngestionEvent) -> tuple[Incident, bool]:
         raise AssertionError("not used")
 
@@ -137,6 +142,11 @@ class ApprovalRepository:
 
     async def list_approvals(self, organisation_id: str, limit: int) -> tuple[Approval, ...]:
         return self.approvals[:limit]
+
+    async def count_approvals(
+        self, organisation_id: str, decisions: frozenset[ApprovalDecision]
+    ) -> int:
+        return sum(1 for approval in self.approvals if approval.decision in decisions)
 
     async def create(self, approval: Approval, action: object) -> Approval:
         raise AssertionError("not used")
@@ -383,6 +393,9 @@ class InventoryRepository:
                 updated_at=NOW,
             ),
         )
+
+    async def count_credentials(self, organisation_id: str) -> int:
+        return len(await self.credentials(organisation_id))
 
     async def services(self, organisation_id: str) -> tuple[ConsumerService, ...]:
         return ()

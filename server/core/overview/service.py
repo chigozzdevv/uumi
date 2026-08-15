@@ -1,17 +1,12 @@
+import asyncio
 from typing import Protocol
 
 from contracts import (
-    Approval,
     ApprovalDecision,
-    Incident,
     IncidentStatus,
-    ManagedCredential,
     OverviewSummary,
-    RotationRun,
     RunStatus,
 )
-
-_LIST_SCAN_LIMIT = 500
 
 _ACTIVE_RUNS = frozenset(
     {
@@ -23,6 +18,8 @@ _ACTIVE_RUNS = frozenset(
     }
 )
 
+_FAILED_RUNS = frozenset({RunStatus.FAILED})
+
 _OPEN_INCIDENTS = frozenset(
     {
         IncidentStatus.NEW,
@@ -32,21 +29,27 @@ _OPEN_INCIDENTS = frozenset(
     }
 )
 
+_PENDING_APPROVALS = frozenset({ApprovalDecision.PENDING})
+
 
 class OverviewCredentials(Protocol):
-    async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]: ...
+    async def count_credentials(self, organisation_id: str) -> int: ...
 
 
 class OverviewRuns(Protocol):
-    async def list_runs(self, organisation_id: str, limit: int) -> tuple[RotationRun, ...]: ...
+    async def count_runs(self, organisation_id: str, statuses: frozenset[RunStatus]) -> int: ...
 
 
 class OverviewIncidents(Protocol):
-    async def list_incidents(self, organisation_id: str, limit: int) -> tuple[Incident, ...]: ...
+    async def count_incidents(
+        self, organisation_id: str, statuses: frozenset[IncidentStatus]
+    ) -> int: ...
 
 
 class OverviewApprovals(Protocol):
-    async def list_approvals(self, organisation_id: str, limit: int) -> tuple[Approval, ...]: ...
+    async def count_approvals(
+        self, organisation_id: str, decisions: frozenset[ApprovalDecision]
+    ) -> int: ...
 
 
 class OverviewService:
@@ -63,16 +66,23 @@ class OverviewService:
         self._approvals = approvals
 
     async def summary(self, organisation_id: str) -> OverviewSummary:
-        credentials = await self._credentials.credentials(organisation_id)
-        runs = await self._runs.list_runs(organisation_id, _LIST_SCAN_LIMIT)
-        incidents = await self._incidents.list_incidents(organisation_id, _LIST_SCAN_LIMIT)
-        approvals = await self._approvals.list_approvals(organisation_id, _LIST_SCAN_LIMIT)
+        (
+            credentials,
+            rotations_in_progress,
+            failed_rotations,
+            open_incidents,
+            pending_approvals,
+        ) = await asyncio.gather(
+            self._credentials.count_credentials(organisation_id),
+            self._runs.count_runs(organisation_id, _ACTIVE_RUNS),
+            self._runs.count_runs(organisation_id, _FAILED_RUNS),
+            self._incidents.count_incidents(organisation_id, _OPEN_INCIDENTS),
+            self._approvals.count_approvals(organisation_id, _PENDING_APPROVALS),
+        )
         return OverviewSummary(
-            credentials=len(credentials),
-            rotations_in_progress=sum(1 for run in runs if run.status in _ACTIVE_RUNS),
-            failed_rotations=sum(1 for run in runs if run.status is RunStatus.FAILED),
-            open_incidents=sum(1 for incident in incidents if incident.status in _OPEN_INCIDENTS),
-            pending_approvals=sum(
-                1 for approval in approvals if approval.decision is ApprovalDecision.PENDING
-            ),
+            credentials=credentials,
+            rotations_in_progress=rotations_in_progress,
+            failed_rotations=failed_rotations,
+            open_incidents=open_incidents,
+            pending_approvals=pending_approvals,
         )

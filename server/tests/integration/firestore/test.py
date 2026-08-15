@@ -3,7 +3,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from contracts import CreateRunCommand, StartRunCommand, Trigger
+from contracts import CreateRunCommand, RunStatus, StartRunCommand, Trigger
 from core.errors import IdempotencyConflictError
 from core.storage import FirestoreRunRepository
 from core.storage.paths import FirestorePaths
@@ -36,8 +36,9 @@ async def test_transactions_persist_and_deduplicate_run_commands() -> None:
     await client.document(FirestorePaths.policy_version(organisation_id, policy.id)).set(
         policy.model_dump(mode="json")
     )
+    repository = FirestoreRunRepository(client)
     workflow = RunWorkflow(
-        FirestoreRunRepository(client),
+        repository,
         clock=lambda: NOW,
         id_factory=lambda prefix: run_id,
     )
@@ -92,5 +93,12 @@ async def test_transactions_persist_and_deduplicate_run_commands() -> None:
         event_data = event.to_dict()
         assert event_data is not None
         assert event_data["event"]["revision"] == 1
+
+        listed = await workflow.list_runs(organisation_id)
+        running = await repository.count_runs(organisation_id, frozenset({RunStatus.RUNNING}))
+        pending = await repository.count_runs(organisation_id, frozenset({RunStatus.PENDING}))
+        assert [stored.id for stored in listed] == [run_id]
+        assert running == 1
+        assert pending == 0
     finally:
         client.close()  # type: ignore[no-untyped-call]

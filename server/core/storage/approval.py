@@ -13,6 +13,7 @@ from core.errors import (
     ResourceNotFoundError,
     StorageIntegrityError,
 )
+from core.storage.catalog import aggregate_count
 from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 
@@ -66,6 +67,15 @@ class FirestoreApprovalRepository:
                 raise StorageIntegrityError(f"approval {approval.id} crosses tenant boundary")
             approvals.append(approval)
         return tuple(approvals)
+
+    async def count_approvals(
+        self, organisation_id: str, decisions: frozenset[ApprovalDecision]
+    ) -> int:
+        path = f"{FirestorePaths.organisation(organisation_id)}/approvals"
+        query = self._client.collection(path).where(
+            "decision", "in", sorted(decision.value for decision in decisions)
+        )
+        return await aggregate_count(query)
 
     async def decide(
         self,

@@ -1,8 +1,11 @@
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from contracts import Contract
 from google.cloud.firestore_v1 import AsyncClient
+from google.cloud.firestore_v1.async_aggregation import AsyncAggregationQuery
+from google.cloud.firestore_v1.async_collection import AsyncCollectionReference
+from google.cloud.firestore_v1.async_query import AsyncQuery
 from google.cloud.firestore_v1.async_transaction import AsyncTransaction, async_transactional
 from pydantic import TypeAdapter
 
@@ -10,6 +13,13 @@ from core.errors import ResourceConflictError, ResourceNotFoundError, StorageInt
 from core.storage.codec import encode
 
 T = TypeVar("T", bound=Contract)
+
+
+async def aggregate_count(query: AsyncQuery | AsyncCollectionReference) -> int:
+    # google-cloud-firestore annotates Query.count as returning the query class; it is an instance
+    aggregation = cast(AsyncAggregationQuery, query.count("total"))
+    rows = await aggregation.get()
+    return int(rows[0][0].value)
 
 
 class FirestoreCatalog:

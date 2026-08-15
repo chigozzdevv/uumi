@@ -7,6 +7,7 @@ from google.cloud.firestore_v1.async_transaction import AsyncTransaction, async_
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from core.errors import ResourceConflictError, ResourceNotFoundError, StorageIntegrityError
+from core.storage.catalog import aggregate_count
 from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 
@@ -70,6 +71,15 @@ class FirestoreIncidentRepository:
         async for snapshot in self._client.collection(path).limit(limit).stream():
             incidents.append(Incident.model_validate(_data(snapshot)))
         return tuple(incidents)
+
+    async def count_incidents(
+        self, organisation_id: str, statuses: frozenset[IncidentStatus]
+    ) -> int:
+        path = f"{FirestorePaths.organisation(organisation_id)}/incidents"
+        query = self._client.collection(path).where(
+            "status", "in", sorted(status.value for status in statuses)
+        )
+        return await aggregate_count(query)
 
     async def correlate(
         self,

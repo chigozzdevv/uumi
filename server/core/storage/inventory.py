@@ -15,7 +15,7 @@ from google.cloud.firestore_v1.async_transaction import AsyncTransaction, async_
 from pydantic import TypeAdapter
 
 from core.errors import ResourceConflictError, ResourceNotFoundError, StorageIntegrityError
-from core.storage.catalog import FirestoreCatalog
+from core.storage.catalog import FirestoreCatalog, aggregate_count
 from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 
@@ -119,6 +119,10 @@ class FirestoreInventoryRepository:
 
     async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]:
         return await self._list(f"organisations/{organisation_id}/credentials", ManagedCredential)
+
+    async def count_credentials(self, organisation_id: str) -> int:
+        query = self._client.collection(f"organisations/{organisation_id}/credentials")
+        return await aggregate_count(query)
 
     async def connections(self, organisation_id: str) -> tuple[Connection, ...]:
         return await self._list(f"organisations/{organisation_id}/connections", Connection)

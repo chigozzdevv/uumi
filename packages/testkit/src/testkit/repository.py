@@ -124,6 +124,14 @@ class MemoryRunRepository:
             runs = [run for (org_id, _), run in self._runs.items() if org_id == organisation_id]
             return tuple(runs[:limit])
 
+    async def count_runs(self, organisation_id: str, statuses: frozenset[RunStatus]) -> int:
+        async with self._mutex:
+            return sum(
+                1
+                for (org_id, _), run in self._runs.items()
+                if org_id == organisation_id and run.status in statuses
+            )
+
     async def mutate(
         self,
         command: RunCommand,

@@ -30,6 +30,7 @@ from core.errors import (
     RunNotFoundError,
     StorageIntegrityError,
 )
+from core.storage.catalog import aggregate_count
 from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 from core.storage.repository import (
@@ -258,6 +259,13 @@ class FirestoreRunRepository:
             _tenant(run, organisation_id)
             runs.append(run)
         return tuple(runs)
+
+    async def count_runs(self, organisation_id: str, statuses: frozenset[RunStatus]) -> int:
+        path = f"{FirestorePaths.organisation(organisation_id)}/runs"
+        query = self._client.collection(path).where(
+            "status", "in", sorted(status.value for status in statuses)
+        )
+        return await aggregate_count(query)
 
     async def mutate(
         self,
