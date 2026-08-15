@@ -42,6 +42,7 @@ from core.auth import (
 from core.errors import AuthenticationError
 from core.incident import IncidentService
 from core.inventory import InventoryService
+from core.overview import OverviewService
 from core.playbook import PlaybookService
 from core.policy import PolicyService
 from core.workflow import RunWorkflow
@@ -368,7 +369,20 @@ class InventoryRepository:
         raise AssertionError("not used")
 
     async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]:
-        return ()
+        return (
+            ManagedCredential(
+                id="credential_one",
+                organisation_id="org_one",
+                connection_id="connection_one",
+                provider="sendgrid",
+                kind="api-key",
+                display_name="production-password-emailer",
+                policy_version="policy_version_one",
+                playbook_version="playbook_version_one",
+                created_at=NOW,
+                updated_at=NOW,
+            ),
+        )
 
     async def services(self, organisation_id: str) -> tuple[ConsumerService, ...]:
         return ()
@@ -385,16 +399,20 @@ def app(role: Role = Role.OPERATOR) -> FastAPI:
         clock=lambda: NOW,
         id_factory=lambda prefix: f"{prefix}_{next(sequence)}",
     )
+    inventory = InventoryRepository()
+    incidents = IncidentRepository()
+    approvals = ApprovalRepository()
     services = ApiServices(
         workflow=workflow,
         access=AccessControl(AccessRepository(role)),
         tokens=TokenVerifier(),
-        inventory=InventoryService(InventoryRepository()),
+        inventory=InventoryService(inventory),
         playbooks=PlaybookService(PlaybookRepository(), clock=lambda: NOW),
-        approvals=ApprovalService(ApprovalRepository(), clock=lambda: NOW),
-        incidents=IncidentService(IncidentRepository(), clock=lambda: NOW),
+        approvals=ApprovalService(approvals, clock=lambda: NOW),
+        incidents=IncidentService(incidents, clock=lambda: NOW),
         policies=PolicyService(PolicyRepository(), clock=lambda: NOW),
         audit=AuditWriter(AuditRepository(), "us-east1", lambda: NOW),
+        overview=OverviewService(inventory, repository, incidents, approvals),
     )
     return create_app(services)
 
@@ -821,3 +839,56 @@ async def test_operator_cannot_read_audit() -> None:
 
     assert response.status_code == 403
     assert response.json()["code"] == "forbidden"
+
+
+@pytest.mark.anyio
+async def test_overview_counts_active_work() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("request-first"),
+            json=create_body(),
+        )
+        await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("request-second"),
+            json={**create_body(), "credential_id": "cred_two", "event_id": "event-two"},
+        )
+        summary = await client.get(
+            "/v1/organisations/org_one/overview",
+            headers=headers(),
+        )
+        foreign = await client.get(
+            "/v1/organisations/org_two/overview",
+            headers=headers(),
+        )
+
+    assert summary.status_code == 200
+    assert summary.json() == {
+        "credentials": 1,
+        "rotations_in_progress": 2,
+        "failed_rotations": 0,
+        "open_incidents": 2,
+        "pending_approvals": 1,
+    }
+    assert foreign.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_viewer_reads_overview() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.VIEWER),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        summary = await client.get(
+            "/v1/organisations/org_one/overview",
+            headers=headers(),
+        )
+
+    assert summary.status_code == 200
+    assert summary.json()["credentials"] == 1
+    assert summary.json()["rotations_in_progress"] == 0
+    assert summary.json()["open_incidents"] == 2
+    assert summary.json()["pending_approvals"] == 1

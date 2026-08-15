@@ -29,6 +29,7 @@ from api.routes import (
     incidents_router,
     inventory_router,
     notifications_router,
+    overview_router,
     playbooks_router,
     policies_router,
     probes_router,
@@ -55,6 +56,7 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.include_router(incidents_router)
     app.include_router(walkthroughs_router)
     app.include_router(audit_router)
+    app.include_router(overview_router)
     app.add_exception_handler(FireKeyError, _firekey_error)
     app.add_exception_handler(PolicyViolationError, _policy_error)
     instrument(app, "firekey-api")

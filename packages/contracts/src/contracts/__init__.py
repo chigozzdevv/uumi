@@ -74,6 +74,7 @@ from contracts.notification import (
     NotificationProvider,
     NotificationState,
 )
+from contracts.overview import OverviewSummary
 from contracts.plan import RotationPlan, RotationStrategy
 from contracts.playbook import (
     DryRun,
@@ -184,6 +185,7 @@ __all__ = [
     "NotificationProvider",
     "NotificationState",
     "OutboxEvent",
+    "OverviewSummary",
     "PageCheckpoint",
     "PauseRunCommand",
     "Playbook",

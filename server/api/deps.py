@@ -29,6 +29,7 @@ from core.errors import AuthenticationError
 from core.incident import IncidentService
 from core.inventory import InventoryService
 from core.notification import NotificationService
+from core.overview import OverviewService
 from core.playbook import PlaybookService, WalkthroughService
 from core.policy import PolicyService
 from core.storage import (
@@ -68,6 +69,7 @@ class ApiServices:
     probes: ProbeService | None = None
     notifications: NotificationService | None = None
     audit: AuditWriter | None = None
+    overview: OverviewService | None = None
 
 
 def build_services(settings: Settings | None = None) -> ApiServices:
@@ -86,7 +88,11 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         finally:
             secret.clear()
 
-    workflow = RunWorkflow(FirestoreRunRepository(client))
+    runs = FirestoreRunRepository(client)
+    inventory_repository = FirestoreInventoryRepository(client)
+    incident_repository = FirestoreIncidentRepository(client)
+    approval_repository = FirestoreApprovalRepository(client)
+    workflow = RunWorkflow(runs)
     agent_repository = AgentRepository(client)
     continuity = AgentContinuityService(
         agent_repository,
@@ -101,13 +107,13 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         workflow=workflow,
         access=AccessControl(FirestoreAccessRepository(client)),
         tokens=GoogleTokenVerifier(configured.oidc_audience),
-        inventory=InventoryService(FirestoreInventoryRepository(client)),
+        inventory=InventoryService(inventory_repository),
         playbooks=PlaybookService(FirestorePlaybookRepository(client), _now, workflow),
-        approvals=ApprovalService(FirestoreApprovalRepository(client), _now, notifications, audit),
+        approvals=ApprovalService(approval_repository, _now, notifications, audit),
         incidents=IncidentService(
-            FirestoreIncidentRepository(client),
+            incident_repository,
             _now,
-            FirestoreInventoryRepository(client),
+            inventory_repository,
             workflow,
             notifications,
             audit,
@@ -139,6 +145,12 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         probes=ProbeService(FirestoreProbeRepository(client), _now),
         notifications=notifications,
         audit=audit,
+        overview=OverviewService(
+            inventory_repository,
+            runs,
+            incident_repository,
+            approval_repository,
+        ),
     )
 
 
