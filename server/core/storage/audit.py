@@ -131,6 +131,16 @@ class FirestoreAuditRepository:
 
         return await apply(self._client.transaction(max_attempts=8))
 
+    async def list_events(self, organisation_id: str, limit: int) -> tuple[AuditEvent, ...]:
+        path = f"{FirestorePaths.organisation(organisation_id)}/audit"
+        events: list[AuditEvent] = []
+        async for snapshot in self._client.collection(path).limit(limit).stream():
+            event = AuditEvent.model_validate(_data(snapshot))
+            if event.organisation_id != organisation_id:
+                raise StorageIntegrityError(f"audit event {event.id} crosses tenant boundary")
+            events.append(event)
+        return tuple(events)
+
 
 def _data(snapshot: DocumentSnapshot) -> dict[str, Any]:
     data = snapshot.to_dict()

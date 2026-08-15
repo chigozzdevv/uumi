@@ -67,6 +67,7 @@ class ApiServices:
     policies: PolicyService | None = None
     probes: ProbeService | None = None
     notifications: NotificationService | None = None
+    audit: AuditWriter | None = None
 
 
 def build_services(settings: Settings | None = None) -> ApiServices:
@@ -137,6 +138,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         policies=PolicyService(FirestorePolicyRepository(client), _now),
         probes=ProbeService(FirestoreProbeRepository(client), _now),
         notifications=notifications,
+        audit=audit,
     )
 
 

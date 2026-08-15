@@ -9,6 +9,7 @@ from contracts import (
     Application,
     Approval,
     ApprovalDecision,
+    AuditEvent,
     Connection,
     ConnectionKind,
     ConnectionStatus,
@@ -31,6 +32,7 @@ from contracts import (
 )
 from contracts.incident import Confidence
 from core.approval import ApprovalService
+from core.audit import AuditWriter
 from core.auth import (
     AccessControl,
     AuthenticatedIdentity,
@@ -253,6 +255,40 @@ class PlaybookRepository:
         raise AssertionError("not used")
 
 
+class AuditRepository:
+    def __init__(self) -> None:
+        self.events = (
+            _audit_event("audit_one", 0, "run.created", "0" * 64, NOW, run_id="run_one"),
+            _audit_event(
+                "audit_two",
+                1,
+                "approval.approved",
+                "a" * 64,
+                NOW + timedelta(minutes=1),
+                run_id="run_one",
+            ),
+            _audit_event("audit_three", 2, "run.completed", "b" * 64, NOW + timedelta(minutes=2)),
+        )
+
+    async def list_events(self, organisation_id: str, limit: int) -> tuple[AuditEvent, ...]:
+        return self.events[:limit]
+
+    async def append(
+        self,
+        event_id: str,
+        organisation_id: str,
+        kind: str,
+        actor_id: str,
+        resource: str,
+        run_id: str | None,
+        payload: dict[str, str | int | float | bool | None],
+        evidence_ids: tuple[str, ...],
+        occurred_at: datetime,
+        region: str,
+    ) -> AuditEvent:
+        raise AssertionError("not used")
+
+
 class InventoryRepository:
     def __init__(self) -> None:
         self.stored_connections = (
@@ -358,6 +394,7 @@ def app(role: Role = Role.OPERATOR) -> FastAPI:
         approvals=ApprovalService(ApprovalRepository(), clock=lambda: NOW),
         incidents=IncidentService(IncidentRepository(), clock=lambda: NOW),
         policies=PolicyService(PolicyRepository(), clock=lambda: NOW),
+        audit=AuditWriter(AuditRepository(), "us-east1", lambda: NOW),
     )
     return create_app(services)
 
@@ -444,6 +481,29 @@ def _playbook(playbook_id: str, created_at: datetime) -> Playbook:
         provider="sendgrid",
         created_at=created_at,
         updated_at=created_at,
+    )
+
+
+def _audit_event(
+    event_id: str,
+    sequence: int,
+    kind: str,
+    previous_hash: str,
+    occurred_at: datetime,
+    run_id: str | None = None,
+) -> AuditEvent:
+    return AuditEvent(
+        id=event_id,
+        organisation_id="org_one",
+        sequence=sequence,
+        kind=kind,
+        actor_id="service_one",
+        resource="runs/run_one",
+        run_id=run_id,
+        previous_hash=previous_hash,
+        event_hash="e" * 64,
+        occurred_at=occurred_at,
+        region="us-east1",
     )
 
 
@@ -702,3 +762,62 @@ async def test_viewer_reads_lists_but_cannot_mutate() -> None:
     assert policies.status_code == 200
     assert playbooks.status_code == 200
     assert create.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_audit_search_orders_by_sequence_and_filters() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.VIEWER),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        listed = await client.get("/v1/organisations/org_one/audit", headers=headers())
+        for_run = await client.get(
+            "/v1/organisations/org_one/audit",
+            headers=headers(),
+            params={"run_id": "run_one"},
+        )
+        by_kind = await client.get(
+            "/v1/organisations/org_one/audit",
+            headers=headers(),
+            params={"kind": "run.completed"},
+        )
+
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [
+        "audit_three",
+        "audit_two",
+        "audit_one",
+    ]
+    assert [item["id"] for item in for_run.json()] == ["audit_two", "audit_one"]
+    assert [item["id"] for item in by_kind.json()] == ["audit_three"]
+
+
+@pytest.mark.anyio
+async def test_audit_search_respects_limit() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.VIEWER),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        limited = await client.get(
+            "/v1/organisations/org_one/audit",
+            headers=headers(),
+            params={"limit": 2},
+        )
+
+    assert limited.status_code == 200
+    assert [item["id"] for item in limited.json()] == ["audit_three", "audit_two"]
+
+
+@pytest.mark.anyio
+async def test_operator_cannot_read_audit() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.OPERATOR),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/v1/organisations/org_one/audit", headers=headers())
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "forbidden"

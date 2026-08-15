@@ -266,6 +266,9 @@ class Audits:
     def __init__(self) -> None:
         self.events: list[AuditEvent] = []
 
+    async def list_events(self, organisation_id: str, limit: int) -> tuple[AuditEvent, ...]:
+        return tuple(self.events)[:limit]
+
     async def append(
         self,
         event_id: str,

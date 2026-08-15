@@ -1,5 +1,6 @@
 from api.routes.agents import router as agents_router
 from api.routes.approvals import router as approvals_router
+from api.routes.audit import router as audit_router
 from api.routes.browsers import router as browsers_router
 from api.routes.health import router as health_router
 from api.routes.incidents import router as incidents_router
@@ -14,6 +15,7 @@ from api.routes.walkthroughs import router as walkthroughs_router
 __all__ = [
     "agents_router",
     "approvals_router",
+    "audit_router",
     "browsers_router",
     "health_router",
     "incidents_router",
