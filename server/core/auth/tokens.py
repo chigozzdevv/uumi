@@ -60,6 +60,47 @@ class IapTokenVerifier:
         return _identity(claims)
 
 
+class FirebaseTokenVerifier:
+    def __init__(self, project_id: str) -> None:
+        self._project_id = project_id
+        session = cachecontrol.CacheControl(requests.Session())
+        self._request = Request(session=session)
+
+    async def verify(self, token: str) -> AuthenticatedIdentity:
+        try:
+            claims = await asyncio.to_thread(self._verify, token)
+        except ValueError as error:
+            raise AuthenticationError("identity platform token is invalid") from error
+        if claims.get("iss") != f"https://securetoken.google.com/{self._project_id}":
+            raise AuthenticationError("identity platform token issuer is invalid")
+        return _identity(claims)
+
+    def _verify(self, token: str) -> Mapping[str, Any]:
+        claims = id_token.verify_firebase_token(  # type: ignore[no-untyped-call]
+            token,
+            self._request,
+            audience=self._project_id,
+            clock_skew_in_seconds=30,
+        )
+        return dict(claims)
+
+
+class CompositeTokenVerifier:
+    def __init__(self, verifiers: tuple[IdentityTokenVerifier, ...]) -> None:
+        if not verifiers:
+            raise ValueError("composite verifier requires at least one verifier")
+        self._verifiers = verifiers
+
+    async def verify(self, token: str) -> AuthenticatedIdentity:
+        last: AuthenticationError | None = None
+        for verifier in self._verifiers:
+            try:
+                return await verifier.verify(token)
+            except AuthenticationError as error:
+                last = error
+        raise AuthenticationError("identity token is invalid") from last
+
+
 def _identity(claims: Mapping[str, Any]) -> AuthenticatedIdentity:
     subject = claims.get("sub")
     issuer = claims.get("iss")

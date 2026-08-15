@@ -1,12 +1,17 @@
+from collections.abc import Mapping
+from typing import Any
+
 import pytest
 from core.auth import (
     AccessControl,
     AuthenticatedIdentity,
+    CompositeTokenVerifier,
+    FirebaseTokenVerifier,
     Permission,
     PrincipalGrant,
     Role,
 )
-from core.errors import AuthorizationError
+from core.errors import AuthenticationError, AuthorizationError
 
 IDENTITY = AuthenticatedIdentity(
     subject="107777777777777777777",
@@ -71,3 +76,88 @@ def test_actor_identity_is_stable_and_contract_safe() -> None:
     assert IDENTITY.actor_id == IDENTITY.actor_id
     assert IDENTITY.actor_id.startswith("actor_")
     assert len(IDENTITY.actor_id) == 38
+
+
+class StubFirebase(FirebaseTokenVerifier):
+    def __init__(self, project_id: str, claims: dict[str, Any] | None = None) -> None:
+        super().__init__(project_id)
+        self._claims = claims
+
+    def _verify(self, token: str) -> Mapping[str, Any]:
+        if self._claims is None:
+            raise ValueError("invalid signature")
+        return self._claims
+
+
+class StubVerifier:
+    def __init__(self, identity: AuthenticatedIdentity | None) -> None:
+        self._identity = identity
+
+    async def verify(self, token: str) -> AuthenticatedIdentity:
+        if self._identity is None:
+            raise AuthenticationError("identity token is invalid")
+        return self._identity
+
+
+GCIP_CLAIMS = {
+    "iss": "https://securetoken.google.com/firekey-project",
+    "sub": "gcip-user-one",
+    "email": "chigozie@acme.example",
+}
+
+GCIP_IDENTITY = AuthenticatedIdentity(
+    subject="gcip-user-one",
+    issuer="https://securetoken.google.com/firekey-project",
+    email="chigozie@acme.example",
+)
+
+
+@pytest.mark.anyio
+async def test_identity_platform_token_maps_to_identity() -> None:
+    verifier = StubFirebase("firekey-project", GCIP_CLAIMS)
+
+    identity = await verifier.verify("user-token")
+
+    assert identity == GCIP_IDENTITY
+    assert identity.actor_id.startswith("actor_")
+
+
+@pytest.mark.anyio
+async def test_identity_platform_rejects_foreign_project_issuer() -> None:
+    claims = {**GCIP_CLAIMS, "iss": "https://securetoken.google.com/other-project"}
+    verifier = StubFirebase("firekey-project", claims)
+
+    with pytest.raises(AuthenticationError, match="issuer is invalid"):
+        await verifier.verify("user-token")
+
+
+@pytest.mark.anyio
+async def test_identity_platform_rejects_invalid_signature() -> None:
+    verifier = StubFirebase("firekey-project")
+
+    with pytest.raises(AuthenticationError, match="identity platform token is invalid"):
+        await verifier.verify("forged-token")
+
+
+@pytest.mark.anyio
+async def test_composite_falls_through_to_the_next_verifier() -> None:
+    verifier = CompositeTokenVerifier(
+        (StubVerifier(None), StubVerifier(IDENTITY)),
+    )
+
+    identity = await verifier.verify("workload-token")
+
+    assert identity == IDENTITY
+
+
+@pytest.mark.anyio
+async def test_composite_rejects_when_every_verifier_fails() -> None:
+    verifier = CompositeTokenVerifier((StubVerifier(None), StubVerifier(None)))
+
+    with pytest.raises(AuthenticationError, match="identity token is invalid"):
+        await verifier.verify("unknown-token")
+
+
+def test_composite_requires_at_least_one_verifier() -> None:
+    with pytest.raises(ValueError, match="at least one verifier"):
+        CompositeTokenVerifier(())

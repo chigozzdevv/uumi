@@ -20,6 +20,8 @@ from core.audit import AuditWriter
 from core.auth import (
     AccessControl,
     AuthenticatedIdentity,
+    CompositeTokenVerifier,
+    FirebaseTokenVerifier,
     FirestoreAccessRepository,
     GoogleTokenVerifier,
     IdentityTokenVerifier,
@@ -106,7 +108,12 @@ def build_services(settings: Settings | None = None) -> ApiServices:
     return ApiServices(
         workflow=workflow,
         access=AccessControl(FirestoreAccessRepository(client)),
-        tokens=GoogleTokenVerifier(configured.oidc_audience),
+        tokens=CompositeTokenVerifier(
+            (
+                FirebaseTokenVerifier(configured.project_id),
+                GoogleTokenVerifier(configured.oidc_audience),
+            )
+        ),
         inventory=InventoryService(inventory_repository),
         playbooks=PlaybookService(FirestorePlaybookRepository(client), _now, workflow),
         approvals=ApprovalService(approval_repository, _now, notifications, audit),
