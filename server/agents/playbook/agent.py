@@ -7,7 +7,7 @@ from agents.shared.tools import analyse_walkthrough, build_playbook, generate_dr
 
 root_agent = Agent(
     name="playbook_builder_agent",
-    model="gemini-3.5-flash",
+    model="gemini-3.7-flash",
     description="Builds typed provider playbooks from sanitised walkthrough evidence.",
     instruction="""Analyse only sanitised walkthrough evidence. Use semantic selectors and exact
 page checkpoints. Include complete lifecycle, evidence checks, recovery, protected creation and

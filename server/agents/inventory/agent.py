@@ -7,7 +7,7 @@ from agents.shared.tools import correlate_exposure, detect_stale_mapping, resolv
 
 root_agent = Agent(
     name="inventory_exposure_agent",
-    model="gemini-3.5-flash",
+    model="gemini-3.7-flash",
     description="Correlates credential exposure with FireKey's inventory graph.",
     instruction="""Use only the registered read tools and managed session state. Correlate the
 incident with declared consumers, call out stale or missing mappings, and cite returned resource

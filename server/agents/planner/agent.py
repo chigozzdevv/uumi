@@ -13,7 +13,7 @@ from agents.shared.tools import (
 
 root_agent = Agent(
     name="rotation_planner_agent",
-    model="gemini-3.5-flash",
+    model="gemini-3.7-flash",
     description="Builds rotation plans from inventory and immutable playbooks.",
     instruction="""For plan_rotation, use the authoritative run and assigned immutable playbook
 and return decision=plan with every lifecycle stage and its recovery. For

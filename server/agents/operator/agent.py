@@ -7,7 +7,7 @@ from agents.shared.tools import detect_interface_drift, execute_console_playbook
 
 root_agent = Agent(
     name="console_operator_agent",
-    model="gemini-3.5-flash",
+    model="gemini-3.7-flash",
     description="Coordinates immutable console steps with the isolated browser worker.",
     instruction="""For execute_console_playbook, load only the requested immutable browser step
 and report its precise action and expected checkpoint; the separate worker owns browser execution

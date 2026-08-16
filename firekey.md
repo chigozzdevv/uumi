@@ -1320,7 +1320,7 @@ flowchart TB
     WF --> PLAN
     WF --> BUILD
     WF --> CONSOLE
-    INV <--> GEMINI["Gemini 3.5 Flash"]
+    INV <--> GEMINI["Gemini 3.7 Flash"]
     PLAN <--> GEMINI
     BUILD <--> GEMINI
     CONSOLE <--> GEMINI
@@ -1890,7 +1890,7 @@ A complete FireKey flow demonstrates all of the following:
 | --- | --- | --- |
 | Web application and API | Dashboard, API, ingestion endpoints | Cloud Run |
 | Agent framework | Four specialised institutional agents and typed tools | Google Agent Development Kit |
-| Model | Correlation, planning, playbook construction, Computer Use, and recovery reasoning | Gemini 3.5 Flash on Gemini Enterprise Agent Platform |
+| Model | Correlation, planning, playbook construction, Computer Use, and recovery reasoning | Gemini 3.7 Flash on Gemini Enterprise Agent Platform |
 | Agent catalogue | Versioned agent discovery and cross-department skills | Agent Registry |
 | Managed agent execution | Four separately deployed agents | Agent Runtime |
 | Agent context | Per-run interaction history and safe cross-run lessons | Agent Platform Sessions and Memory Bank |

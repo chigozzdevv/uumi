@@ -20,7 +20,7 @@ class ComputerUseClient:
         self,
         client: GoogleRestClient,
         project_id: str,
-        model: str = "gemini-3.5-flash",
+        model: str = "gemini-3.7-flash",
         location: str = "global",
     ) -> None:
         self._client = client
