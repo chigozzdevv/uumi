@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from contracts import Connection, RotationRun
 
@@ -29,6 +29,7 @@ class Connector(Protocol):
     ) -> ConnectorResponse: ...
 
 
+@runtime_checkable
 class ReconcilesMutations(Protocol):
     async def prepare(
         self,

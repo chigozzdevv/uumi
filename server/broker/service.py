@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from connectors import Connector, ConnectorContext, ConnectorResponse
+from connectors.base.connector import ReconcilesMutations
 from connectors.base.errors import ConnectorError
 from connectors.secrets import SecretManagerConnector
 from contracts import (
@@ -252,10 +253,9 @@ class BrokerService:
         request: ToolRequest,
         context: ConnectorContext,
     ) -> dict[str, str | int | bool | tuple[str, ...]]:
-        prepare = getattr(connector, "prepare", None)
-        if not callable(prepare):
+        if not isinstance(connector, ReconcilesMutations):
             return {}
-        value = await prepare(request.tool, request.payload, context)
+        value = await connector.prepare(request.tool, request.payload, context)
         if not isinstance(value, dict) or _contains_sensitive(value):
             raise ConnectorError(
                 "invalid-reconciliation-state",
@@ -270,13 +270,12 @@ class BrokerService:
         context: ConnectorContext,
         state: dict[str, str | int | bool | tuple[str, ...]],
     ) -> ConnectorResponse | None:
-        reconcile = getattr(connector, "reconcile", None)
-        if not callable(reconcile):
+        if not isinstance(connector, ReconcilesMutations):
             raise ConnectorError(
                 "stale-mutation-unrecoverable",
                 "connector cannot reconcile an expired mutation attempt",
             )
-        value = await reconcile(request.tool, request.payload, state, context)
+        value = await connector.reconcile(request.tool, request.payload, state, context)
         if value is not None and not isinstance(value, ConnectorResponse):
             raise ConnectorError(
                 "invalid-reconciliation-result",
