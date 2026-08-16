@@ -1,4 +1,4 @@
-from contracts import BrowserSession, RotationRun
+from contracts import BrowserSession, RotationRun, SetupSession
 from core.storage import FirestoreCatalog
 from core.storage.paths import FirestorePaths
 from google.cloud.firestore_v1 import AsyncClient
@@ -15,3 +15,8 @@ class FirestoreGatewayRepository:
 
     async def run(self, organisation_id: str, run_id: str) -> RotationRun:
         return await self._catalog.get(FirestorePaths.run(organisation_id, run_id), RotationRun)
+
+    async def setup(self, organisation_id: str, setup_id: str) -> SetupSession:
+        return await self._catalog.get(
+            FirestorePaths.setup(organisation_id, setup_id), SetupSession
+        )

@@ -1,11 +1,13 @@
 import asyncio
+import hashlib
+import hmac
 import ipaddress
 import json
 from datetime import datetime
 from typing import Any, Protocol
 
 from broker.capability import CapabilityVerifier, request_digest
-from contracts import BrowserSession, RotationRun
+from contracts import BrowserSession, RotationRun, SetupSession, SetupStatus
 from core.auth import AccessControl, AuthenticatedIdentity, IdentityTokenVerifier, Permission
 from core.errors import AuthenticationError, CapabilityError, ResourceConflictError
 from fastapi import WebSocket
@@ -16,6 +18,8 @@ class GatewayRepository(Protocol):
     async def browser(self, organisation_id: str, session_id: str) -> BrowserSession: ...
 
     async def run(self, organisation_id: str, run_id: str) -> RotationRun: ...
+
+    async def setup(self, organisation_id: str, setup_id: str) -> SetupSession: ...
 
 
 class BrowserSessionGateway:
@@ -59,6 +63,54 @@ class BrowserSessionGateway:
                 )
         except Exception as error:
             await websocket.close(code=4403, reason=_safe_error(error))
+
+    async def bridge_setup(self, websocket: WebSocket) -> None:
+        assertion = websocket.headers.get("x-goog-iap-jwt-assertion")
+        if not assertion:
+            await websocket.close(code=4401, reason="IAP identity is required")
+            return
+        try:
+            identity = await self._identities.verify(assertion)
+        except AuthenticationError:
+            await websocket.close(code=4401, reason="IAP identity is invalid")
+            return
+        await websocket.accept()
+        try:
+            initial = await websocket.receive_json()
+            _organisation_id, session, token = await self._authorise_setup(initial, identity)
+            address = _private_address(session.internal_address)
+            async with connect(
+                f"ws://{address}:8080/v1/setup/live",
+                additional_headers={"x-firekey-setup": token},
+                open_timeout=10,
+                max_size=5 * 1024 * 1024,
+            ) as worker:
+                await asyncio.gather(
+                    self._worker_to_user(worker, websocket),
+                    self._user_to_worker(websocket, worker, "setup"),
+                )
+        except Exception as error:
+            await websocket.close(code=4403, reason=_safe_error(error))
+
+    async def _authorise_setup(
+        self, initial: Any, identity: AuthenticatedIdentity
+    ) -> tuple[str, SetupSession, str]:
+        if not isinstance(initial, dict):
+            raise CapabilityError("setup gateway handshake is invalid")
+        organisation_id = _string(initial, "organisation_id")
+        setup_id = _string(initial, "setup_id")
+        token = _string(initial, "token")
+        await self._access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+        session = await self._repository.setup(organisation_id, setup_id)
+        if session.status is not SetupStatus.READY or session.expires_at <= datetime.now(
+            session.expires_at.tzinfo
+        ):
+            raise CapabilityError("setup session is no longer available")
+        if session.subject != identity.subject:
+            raise CapabilityError("setup session belongs to another operator")
+        if not hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), session.token_hash):
+            raise CapabilityError("setup token is invalid")
+        return organisation_id, session, token
 
     async def _authorise(
         self, initial: Any, identity: AuthenticatedIdentity
@@ -127,13 +179,13 @@ class BrowserSessionGateway:
                 await worker.send(text)
             elif isinstance(text, str):
                 value = json.loads(text)
-                if not isinstance(value, dict) or value.get("type") not in {
-                    "frame",
-                    "action",
-                    "secure-key",
-                    "secure-input",
-                }:
-                    raise CapabilityError("takeover message type is invalid")
+                allowed = (
+                    {"frame", "action"}
+                    if mode == "setup"
+                    else {"frame", "action", "secure-key", "secure-input"}
+                )
+                if not isinstance(value, dict) or value.get("type") not in allowed:
+                    raise CapabilityError("browser message type is invalid")
                 await worker.send(text)
             elif isinstance(data, bytes):
                 await worker.send(data)

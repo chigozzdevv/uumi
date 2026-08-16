@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     capability_secret: str = Field(default="", min_length=20)
     browser_gateway_url: str = Field(default="", min_length=12)
     walkthrough_bucket: str = Field(default="", min_length=3)
+    browser_zone: str = ""
+    browser_template: str = ""
+    browser_worker_image: str = ""
+    capability_public_key: str = ""
+    evidence_bucket: str = ""
 
     @model_validator(mode="after")
     def require_runtime_configuration(self) -> "Settings":

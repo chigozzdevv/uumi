@@ -1,3 +1,4 @@
+from browser.setup import BrowserSetupApi
 from contracts import (
     Application,
     Connection,
@@ -8,12 +9,14 @@ from contracts import (
     Environment,
     Identifier,
     ManagedCredential,
+    SetupSession,
 )
 from core.auth import Permission
 from core.errors import ResourceConflictError
 from fastapi import APIRouter, Request, Response, status
+from pydantic import AwareDatetime, Field
 
-from api.deps import Identity, required, services
+from api.deps import ApiServices, Identity, required, services
 
 router = APIRouter(
     prefix="/v1/organisations/{organisation_id}/inventory",
@@ -31,6 +34,35 @@ class InventoryGraph(Contract):
     credentials: tuple[ManagedCredential, ...]
     services: tuple[ConsumerService, ...]
     bindings: tuple[ConsumerBinding, ...]
+
+
+class BeginSetupRequest(Contract):
+    secret_container: str = Field(
+        pattern=r"^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+$", max_length=1024
+    )
+    extra_domains: tuple[str, ...] = Field(default=(), max_length=20)
+
+
+class BeginSetupResponse(Contract):
+    session: SetupSession
+    token: str = Field(min_length=32)
+    gateway_url: str = Field(min_length=12)
+    expires_at: AwareDatetime
+
+
+class CompleteSetupRequest(Contract):
+    expected_revision: int = Field(ge=0)
+    token: str = Field(min_length=32, max_length=256)
+
+
+class CompleteSetupResponse(Contract):
+    session: SetupSession
+    connection: Connection
+    resumed_run_ids: tuple[Identifier, ...] = ()
+
+
+class AbortSetupRequest(Contract):
+    expected_revision: int = Field(ge=0)
 
 
 @router.post("/connections", response_model=Connection, status_code=status.HTTP_201_CREATED)
@@ -157,6 +189,93 @@ async def graph(
     )
 
 
+@router.post(
+    "/connections/{connection_id}/setup",
+    response_model=BeginSetupResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def begin_setup(
+    organisation_id: Identifier,
+    connection_id: Identifier,
+    body: BeginSetupRequest,
+    identity: Identity,
+    request: Request,
+) -> BeginSetupResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    setup = _setup(api)
+    session, token = await setup.begin(
+        organisation_id,
+        connection_id,
+        body.secret_container,
+        identity.subject,
+        body.extra_domains,
+    )
+    return BeginSetupResponse(
+        session=session,
+        token=token,
+        gateway_url=setup.gateway_url,
+        expires_at=session.expires_at,
+    )
+
+
+@router.get("/setups/{setup_id}", response_model=SetupSession)
+async def get_setup(
+    organisation_id: Identifier,
+    setup_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> SetupSession:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await _setup(api).get(organisation_id, setup_id)
+
+
+@router.post("/setups/{setup_id}/complete", response_model=CompleteSetupResponse)
+async def complete_setup(
+    organisation_id: Identifier,
+    setup_id: Identifier,
+    body: CompleteSetupRequest,
+    identity: Identity,
+    request: Request,
+) -> CompleteSetupResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    session, connection, resumed = await _setup(api).complete(
+        organisation_id,
+        setup_id,
+        body.expected_revision,
+        body.token,
+        identity.subject,
+        identity.actor_id,
+    )
+    return CompleteSetupResponse(session=session, connection=connection, resumed_run_ids=resumed)
+
+
+@router.post("/setups/{setup_id}/abort", response_model=SetupSession)
+async def abort_setup(
+    organisation_id: Identifier,
+    setup_id: Identifier,
+    body: AbortSetupRequest,
+    identity: Identity,
+    request: Request,
+) -> SetupSession:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    return await _setup(api).abort(
+        organisation_id,
+        setup_id,
+        body.expected_revision,
+        identity.subject,
+    )
+
+
 def _organisation(actual: str, expected: str) -> None:
     if actual != expected:
         raise ResourceConflictError("request body crosses organisation boundary")
+
+
+def _setup(api: ApiServices) -> BrowserSetupApi:
+    if api.browser_setup is None:
+        raise ResourceConflictError("browser setup is not configured")
+    return api.browser_setup

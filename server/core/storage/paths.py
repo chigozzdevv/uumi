@@ -149,6 +149,15 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/browsers/{_segment(session_id)}"
 
     @staticmethod
+    def setup(organisation_id: str, setup_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/setups/{_segment(setup_id)}"
+
+    @staticmethod
+    def connection_waiter(organisation_id: str, connection_id: str) -> str:
+        root = FirestorePaths.organisation(organisation_id)
+        return f"{root}/connection-waiters/{_segment(connection_id)}"
+
+    @staticmethod
     def replay(organisation_id: str, session_id: str, checkpoint_id: str) -> str:
         root = FirestorePaths.browser(organisation_id, session_id)
         return f"{root}/replay/{_segment(checkpoint_id)}"

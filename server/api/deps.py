@@ -9,7 +9,9 @@ from agents.runtime import AgentRuntimeService
 from agents.storage import AgentRepository
 from broker import CapabilitySigner
 from browser.access import BrowserAccessService
+from browser.compute import BrowserVmManager
 from browser.service import BrowserService
+from browser.setup import BrowserSetupApi, BrowserSetupService, WorkflowRunResumer
 from browser.storage import FirestoreBrowserRepository
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
@@ -72,6 +74,7 @@ class ApiServices:
     notifications: NotificationService | None = None
     audit: AuditWriter | None = None
     overview: OverviewService | None = None
+    browser_setup: BrowserSetupApi | None = None
 
 
 def build_services(settings: Settings | None = None) -> ApiServices:
@@ -105,6 +108,34 @@ def build_services(settings: Settings | None = None) -> ApiServices:
     )
     notifications = NotificationService(FirestoreNotificationRepository(client), _now)
     audit = AuditWriter(FirestoreAuditRepository(client), configured.region, _now)
+    browser_setup = None
+    if all(
+        (
+            configured.browser_zone,
+            configured.browser_template,
+            configured.browser_worker_image,
+            configured.capability_public_key,
+            configured.evidence_bucket,
+        )
+    ):
+        browser_setup = BrowserSetupService(
+            FirestoreCatalog(client),
+            inventory_repository,
+            BrowserVmManager(
+                google,
+                configured.project_id,
+                configured.browser_zone,
+                configured.browser_template,
+                configured.capability_public_key,
+                configured.evidence_bucket,
+                configured.region,
+                configured.browser_worker_image,
+            ),
+            secret_manager,
+            configured.browser_gateway_url,
+            _now,
+            runs=WorkflowRunResumer(workflow, _now),
+        )
     return ApiServices(
         workflow=workflow,
         access=AccessControl(FirestoreAccessRepository(client)),
@@ -115,7 +146,12 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             )
         ),
         inventory=InventoryService(inventory_repository),
-        playbooks=PlaybookService(FirestorePlaybookRepository(client), _now, workflow),
+        playbooks=PlaybookService(
+            FirestorePlaybookRepository(client),
+            _now,
+            workflow,
+            inventory_repository,
+        ),
         approvals=ApprovalService(approval_repository, _now, notifications, audit),
         incidents=IncidentService(
             incident_repository,
@@ -158,6 +194,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             incident_repository,
             approval_repository,
         ),
+        browser_setup=browser_setup,
     )
 
 

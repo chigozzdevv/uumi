@@ -16,6 +16,7 @@ from contracts import (
     BrowserStatus,
     Connection,
     ConnectionKind,
+    ConnectionStatus,
     PlaybookAssignment,
     PlaybookStep,
     PlaybookVersion,
@@ -163,6 +164,8 @@ class BrowserStepExecutor:
                 FirestorePaths.browser(run.organisation_id, session_id), BrowserSession
             )
         except ResourceNotFoundError:
+            session = None
+        if session is None or session.status is BrowserStatus.TERMINATED:
             version = await self._catalog.get(
                 FirestorePaths.playbook_version(
                     run.organisation_id, assignment.playbook_id, assignment.version_id
@@ -170,38 +173,64 @@ class BrowserStepExecutor:
                 PlaybookVersion,
             )
             now = datetime.now(UTC)
-            provider_connections = []
+            browser_connections = []
             for connection_id in assignment.connection_ids:
                 connection = await self._catalog.get(
                     FirestorePaths.connection(run.organisation_id, connection_id),
                     Connection,
                 )
-                if connection.kind is ConnectionKind.PROVIDER:
-                    provider_connections.append(connection)
-            if len(provider_connections) != 1:
-                raise RuntimeError("browser run requires exactly one provider connection") from None
-            session = await self._sessions.create(
-                BrowserSession(
-                    id=session_id,
-                    organisation_id=run.organisation_id,
-                    run_id=run.id,
-                    playbook_id=assignment.playbook_id,
-                    playbook_version=assignment.version_id,
-                    provider_connection_id=provider_connections[0].id,
-                    status=BrowserStatus.PROVISIONING,
-                    policy=BrowserPolicy(
-                        allowed_domains=version.definition.allowed_domains,
-                        allowed_actions=frozenset(BrowserActionKind),
-                        protected_operations=frozenset(
-                            step.operation for step in version.definition.steps if step.protected
-                        ),
-                    ),
-                    fencing_token=run.fencing_token,
-                    created_at=now,
-                    expires_at=now + timedelta(hours=2),
-                    updated_at=now,
+                if connection.kind is ConnectionKind.BROWSER:
+                    browser_connections.append(connection)
+            if len(browser_connections) != 1:
+                raise RuntimeError("browser run requires exactly one browser connection") from None
+            browser_connection = browser_connections[0]
+            if (
+                browser_connection.status is not ConnectionStatus.READY
+                or browser_connection.auth_reference is None
+            ):
+                raise BrowserPauseError(
+                    "connection still needs login",
+                    {
+                        "authentication_required": True,
+                        "session_id": session_id,
+                        "connection_id": browser_connection.id,
+                    },
                 )
+            policy = BrowserPolicy(
+                allowed_domains=version.definition.allowed_domains,
+                allowed_actions=frozenset(BrowserActionKind),
+                protected_operations=frozenset(
+                    step.operation for step in version.definition.steps if step.protected
+                ),
+                login_url_pattern=version.definition.login_url_pattern,
             )
+            if session is None:
+                session = await self._sessions.create(
+                    BrowserSession(
+                        id=session_id,
+                        organisation_id=run.organisation_id,
+                        run_id=run.id,
+                        playbook_id=assignment.playbook_id,
+                        playbook_version=assignment.version_id,
+                        provider_connection_id=browser_connection.id,
+                        status=BrowserStatus.PROVISIONING,
+                        policy=policy,
+                        fencing_token=run.fencing_token,
+                        created_at=now,
+                        expires_at=now + timedelta(hours=2),
+                        updated_at=now,
+                    )
+                )
+            else:
+                session = await self._sessions.reprovision(
+                    session.organisation_id,
+                    session.id,
+                    session.revision,
+                    browser_connection.id,
+                    policy,
+                    run.fencing_token,
+                    now + timedelta(hours=2),
+                )
             vm = await self._vms.create(run.organisation_id, session.id, session.expires_at)
             session = await self._sessions.attach(
                 session.organisation_id,
@@ -261,7 +290,21 @@ class BrowserStepExecutor:
             headers={"X-FireKey-Capability": capability},
             json=payload,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 409 and _code(error.response) == (
+                "authentication-required"
+            ):
+                raise BrowserPauseError(
+                    "provider session requires reauthentication",
+                    {
+                        "authentication_required": True,
+                        "session_id": session.id,
+                        "connection_id": session.provider_connection_id,
+                    },
+                ) from error
+            raise
         value = response.json()
         if not isinstance(value, dict):
             raise RuntimeError("browser worker returned a non-object response")
@@ -281,6 +324,15 @@ class BrowserStepExecutor:
 
 def _session_id(run_id: str) -> str:
     return f"browser_{run_id.removeprefix('run_')}"[:128]
+
+
+def _code(response: httpx.Response) -> str | None:
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    code = body.get("code") if isinstance(body, dict) else None
+    return code if isinstance(code, str) else None
 
 
 def _safe_parameters(value: Mapping[str, object]) -> str:

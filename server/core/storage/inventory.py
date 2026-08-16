@@ -1,8 +1,10 @@
+from datetime import datetime
 from typing import Any, TypeVar
 
 from contracts import (
     Application,
     Connection,
+    ConnectionStatus,
     ConsumerBinding,
     ConsumerService,
     Contract,
@@ -63,6 +65,45 @@ class FirestoreInventoryRepository:
         return await self._catalog.get(
             FirestorePaths.connection(organisation_id, resource_id), Connection
         )
+
+    async def update_authentication(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        expected_revision: int,
+        auth_reference: str,
+        status: ConnectionStatus,
+        updated_at: datetime,
+    ) -> Connection:
+        reference = self._client.document(FirestorePaths.connection(organisation_id, connection_id))
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> Connection:
+            snapshot = await reference.get(transaction=transaction)
+            if not snapshot.exists:
+                raise ResourceNotFoundError(f"connection {connection_id} was not found")
+            data = snapshot.to_dict()
+            if data is None:
+                raise StorageIntegrityError(f"connection {connection_id} has no data")
+            current = Connection.model_validate(data)
+            if current.organisation_id != organisation_id:
+                raise StorageIntegrityError(f"connection {connection_id} crosses tenant boundary")
+            if current.revision != expected_revision:
+                raise ResourceConflictError(
+                    f"connection expected revision {expected_revision}, found {current.revision}"
+                )
+            changed = current.model_copy(
+                update={
+                    "auth_reference": auth_reference,
+                    "status": status,
+                    "updated_at": updated_at,
+                    "revision": current.revision + 1,
+                }
+            )
+            transaction.set(reference, encode(changed))
+            return changed
+
+        return await apply(self._client.transaction(max_attempts=5))
 
     async def import_credential(
         self,

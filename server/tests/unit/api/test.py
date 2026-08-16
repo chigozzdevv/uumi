@@ -27,6 +27,8 @@ from contracts import (
     PlaybookVersion,
     Policy,
     PolicyVersion,
+    SetupSession,
+    SetupStatus,
     Severity,
     SourceResource,
 )
@@ -47,7 +49,7 @@ from core.playbook import PlaybookService
 from core.policy import PolicyService
 from core.workflow import RunWorkflow
 from fastapi import FastAPI
-from testkit import MemoryRunRepository
+from testkit import MemoryRunRepository, make_http_provider_api
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 IDENTITY = AuthenticatedIdentity(
@@ -265,6 +267,11 @@ class PlaybookRepository:
     async def assign(self, assignment: PlaybookAssignment) -> PlaybookAssignment:
         raise AssertionError("not used")
 
+    async def get_assignment(
+        self, organisation_id: str, credential_id: str
+    ) -> PlaybookAssignment | None:
+        return None
+
 
 class AuditRepository:
     def __init__(self) -> None:
@@ -312,6 +319,7 @@ class InventoryRepository:
                 auth_reference="projects/org-one/secrets/sendgrid-admin/versions/1",
                 capabilities=frozenset({"create", "revoke"}),
                 allowed_resources=("sendgrid:*",),
+                http=make_http_provider_api(),
                 status=ConnectionStatus.READY,
                 region="us-east1",
                 created_at=NOW,
@@ -370,6 +378,17 @@ class InventoryRepository:
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
         raise AssertionError("not used")
 
+    async def update_authentication(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        expected_revision: int,
+        auth_reference: str,
+        status: ConnectionStatus,
+        updated_at: datetime,
+    ) -> Connection:
+        raise AssertionError("not used")
+
     async def import_credential(
         self,
         credential: ManagedCredential,
@@ -426,8 +445,104 @@ def app(role: Role = Role.OPERATOR) -> FastAPI:
         policies=PolicyService(PolicyRepository(), clock=lambda: NOW),
         audit=AuditWriter(AuditRepository(), "us-east1", lambda: NOW),
         overview=OverviewService(inventory, repository, incidents, approvals),
+        browser_setup=BrowserSetup(),
     )
     return create_app(services)
+
+
+class BrowserSetup:
+    def __init__(self) -> None:
+        self.gateway_url = "https://gateway.firekey.example"
+        self.session: SetupSession | None = None
+        self.token = "t" * 43
+
+    async def begin(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        secret_container: str,
+        subject: str,
+        extra_domains: tuple[str, ...] = (),
+    ) -> tuple[SetupSession, str]:
+        del extra_domains
+        self.session = SetupSession(
+            id="setup_browser",
+            organisation_id=organisation_id,
+            connection_id=connection_id,
+            secret_container=secret_container,
+            token_hash="a" * 64,
+            subject=subject,
+            allowed_domains=("*.vendor.example.com",),
+            worker_instance="instances/setup",
+            internal_address="10.0.0.2",
+            status=SetupStatus.READY,
+            created_at=NOW,
+            expires_at=NOW + timedelta(minutes=30),
+            updated_at=NOW,
+        )
+        return self.session, self.token
+
+    async def get(self, organisation_id: str, setup_id: str) -> SetupSession:
+        assert self.session is not None
+        assert organisation_id == self.session.organisation_id
+        assert setup_id == self.session.id
+        return self.session
+
+    async def complete(
+        self,
+        organisation_id: str,
+        setup_id: str,
+        expected_revision: int,
+        token: str,
+        subject: str,
+        actor_id: str | None = None,
+    ) -> tuple[SetupSession, Connection, tuple[str, ...]]:
+        session = await self.get(organisation_id, setup_id)
+        assert expected_revision == session.revision
+        assert token == self.token
+        assert subject == IDENTITY.subject
+        del actor_id
+        connection = Connection(
+            id=session.connection_id,
+            organisation_id=organisation_id,
+            kind=ConnectionKind.BROWSER,
+            provider="vendor",
+            display_name="Vendor console",
+            auth_reference=f"{session.secret_container}/versions/2",
+            capabilities=frozenset({"browser.execute"}),
+            allowed_resources=("*.vendor.example.com",),
+            status=ConnectionStatus.READY,
+            region="us-east1",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        self.session = session.model_copy(
+            update={
+                "status": SetupStatus.COMPLETE,
+                "auth_reference": connection.auth_reference,
+                "revision": session.revision + 1,
+            }
+        )
+        return self.session, connection, ()
+
+    async def abort(
+        self,
+        organisation_id: str,
+        setup_id: str,
+        expected_revision: int,
+        subject: str,
+    ) -> SetupSession:
+        session = await self.get(organisation_id, setup_id)
+        assert expected_revision == session.revision
+        assert subject == IDENTITY.subject
+        self.session = session.model_copy(
+            update={
+                "status": SetupStatus.TERMINATED,
+                "terminated_at": NOW,
+                "revision": session.revision + 1,
+            }
+        )
+        return self.session
 
 
 def headers(key: str = "request-one") -> dict[str, str]:
@@ -905,3 +1020,84 @@ async def test_viewer_reads_overview() -> None:
     assert summary.json()["rotations_in_progress"] == 0
     assert summary.json()["open_incidents"] == 2
     assert summary.json()["pending_approvals"] == 1
+
+
+@pytest.mark.anyio
+async def test_administrator_can_run_browser_connection_setup() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.ADMINISTRATOR),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        begun = await client.post(
+            "/v1/organisations/org_one/inventory/connections/connection_browser/setup",
+            headers=headers(),
+            json={"secret_container": "projects/project-one/secrets/vendor-session"},
+        )
+        setup_id = begun.json()["session"]["id"]
+        fetched = await client.get(
+            f"/v1/organisations/org_one/inventory/setups/{setup_id}",
+            headers=headers(),
+        )
+        completed = await client.post(
+            f"/v1/organisations/org_one/inventory/setups/{setup_id}/complete",
+            headers=headers(),
+            json={"expected_revision": 0, "token": "t" * 43},
+        )
+
+    assert begun.status_code == 201
+    assert begun.json()["gateway_url"] == "https://gateway.firekey.example"
+    assert fetched.status_code == 200
+    assert completed.status_code == 200
+    assert completed.json()["connection"]["status"] == "ready"
+    assert completed.json()["session"]["status"] == "complete"
+
+
+@pytest.mark.anyio
+async def test_operator_cannot_begin_browser_setup() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.OPERATOR),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        begun = await client.post(
+            "/v1/organisations/org_one/inventory/connections/connection_browser/setup",
+            headers=headers(),
+            json={"secret_container": "projects/project-one/secrets/vendor-session"},
+        )
+
+    assert begun.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_setup_without_browser_runtime_is_a_conflict() -> None:
+    sequence = itertools.count(1)
+    repository = MemoryRunRepository()
+    workflow = RunWorkflow(
+        repository,
+        clock=lambda: NOW,
+        id_factory=lambda prefix: f"{prefix}_{next(sequence)}",
+    )
+    inventory = InventoryRepository()
+    services = ApiServices(
+        workflow=workflow,
+        access=AccessControl(AccessRepository(Role.ADMINISTRATOR)),
+        tokens=TokenVerifier(),
+        inventory=InventoryService(inventory),
+        playbooks=PlaybookService(PlaybookRepository(), clock=lambda: NOW),
+        approvals=ApprovalService(ApprovalRepository(), clock=lambda: NOW),
+        incidents=IncidentService(IncidentRepository(), clock=lambda: NOW),
+        policies=PolicyService(PolicyRepository(), clock=lambda: NOW),
+        audit=AuditWriter(AuditRepository(), "us-east1", lambda: NOW),
+        overview=OverviewService(inventory, repository, IncidentRepository(), ApprovalRepository()),
+    )
+    transport = httpx.ASGITransport(app=create_app(services), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        begun = await client.post(
+            "/v1/organisations/org_one/inventory/connections/connection_browser/setup",
+            headers=headers(),
+            json={"secret_container": "projects/project-one/secrets/vendor-session"},
+        )
+
+    assert begun.status_code == 409
+    assert begun.json()["code"] == "conflict"

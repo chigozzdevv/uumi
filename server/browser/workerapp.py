@@ -1,7 +1,8 @@
 import asyncio
 import base64
 import binascii
-from collections.abc import AsyncIterator
+import hmac
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Any, cast
@@ -17,6 +18,7 @@ from contracts import (
     ApprovalDecision,
     BrowserAction,
     BrowserActionKind,
+    BrowserPolicy,
     BrowserSession,
     BrowserStatus,
     Connection,
@@ -28,22 +30,23 @@ from contracts import (
     SecureCaptureResult,
     Selector,
 )
-from core.errors import CapabilityError, ResourceConflictError
+from core.errors import CapabilityError, ResourceConflictError, ResourceNotFoundError
 from core.ids import new_id
 from core.storage import FirestoreCatalog
 from core.storage.paths import FirestorePaths
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi import FastAPI, Header, Request, WebSocket
+from fastapi.responses import JSONResponse
 from google.cloud.firestore_v1 import AsyncClient
-from playwright.async_api import Browser, Playwright, async_playwright
+from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
 from policy import digest
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from telemetry import instrument
 
 from browser.auth import BrowserAuthBroker
-from browser.driver import BrowserDriver
+from browser.driver import AuthenticationRequiredError, BrowserDriver
 from browser.model import ComputerProposal, ComputerUseClient
 from browser.replay import ReplayRecorder
 from browser.service import BrowserService
@@ -61,7 +64,19 @@ class WorkerSettings(BaseSettings):
     capability_public_key: str = Field(min_length=40, max_length=64)
     evidence_bucket: str = Field(min_length=3)
     region: str = Field(min_length=3, max_length=32)
-    model: str = "gemini-3.5-flash"
+    model: str = "gemini-3.7-flash"
+    setup: bool = False
+    setup_token: str = ""
+    setup_domains: str = ""
+
+
+class SetupRuntime:
+    # Setup VMs run no model and record no replay; the human drives a fresh
+    # profile and only the exported session leaves the machine.
+    def __init__(self, context: BrowserContext, driver: BrowserDriver, token: str) -> None:
+        self.context = context
+        self.driver = driver
+        self.token = token
 
 
 class ProposeRequest(Contract):
@@ -130,8 +145,12 @@ class WorkerRuntime:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = WorkerSettings()  # type: ignore[call-arg]
+    if settings.setup:
+        async with _setup_lifespan(app, settings):
+            yield
+        return
     firestore = AsyncClient(project=settings.project_id, database=settings.firestore_database)
     catalog = FirestoreCatalog(firestore)
     session = await _wait_session(catalog, settings.organisation_id, settings.session_id)
@@ -143,7 +162,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     storage_state = await BrowserAuthBroker(SecretManagerConnector(google)).storage_state(
         connection,
-        session.policy.allowed_domains,
+        connection.allowed_resources,
     )
     engine = await async_playwright().start()
     browser = await engine.chromium.launch(
@@ -185,6 +204,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         sessions,
         capture,
         new_id,
+        masked_selectors,
     )
     app.state.worker = worker
     app.state.sessions = sessions
@@ -208,6 +228,77 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="FireKey Browser Worker", docs_url=None, lifespan=lifespan)
 instrument(app, "firekey-browser")
 Capability = Annotated[str, Header(alias="X-FireKey-Capability", min_length=32)]
+SetupToken = Annotated[str, Header(alias="X-FireKey-Setup", min_length=32)]
+
+
+@app.exception_handler(AuthenticationRequiredError)
+async def _authentication_required(
+    request: Request, error: AuthenticationRequiredError
+) -> JSONResponse:
+    del request
+    return JSONResponse(
+        status_code=409,
+        content={"code": "authentication-required", "message": str(error)},
+    )
+
+
+@app.exception_handler(CapabilityError)
+async def _capability_error(request: Request, error: CapabilityError) -> JSONResponse:
+    del request
+    return JSONResponse(status_code=403, content={"code": "forbidden", "message": str(error)})
+
+
+@asynccontextmanager
+async def _setup_lifespan(app: FastAPI, settings: WorkerSettings) -> AsyncGenerator[None, None]:
+    if not settings.setup_token or not settings.setup_domains:
+        raise RuntimeError("setup mode requires a token and allowed domains")
+    domains = tuple(value.strip() for value in settings.setup_domains.split(",") if value.strip())
+    if not domains:
+        raise RuntimeError("setup mode requires at least one allowed domain")
+    engine = await async_playwright().start()
+    browser = await engine.chromium.launch(
+        headless=True,
+        args=["--disable-dev-shm-usage", "--disable-extensions", "--no-first-run"],
+    )
+    context = await browser.new_context(
+        viewport={"width": 1440, "height": 900},
+        accept_downloads=False,
+        service_workers="block",
+    )
+    page = await context.new_page()
+    driver = BrowserDriver(
+        page,
+        BrowserPolicy(
+            allowed_domains=domains,
+            allowed_actions=frozenset(BrowserActionKind),
+        ),
+    )
+    await driver.enforce_egress()
+    app.state.setup = SetupRuntime(context, driver, settings.setup_token)
+    try:
+        yield
+    finally:
+        await browser.close()
+        await engine.stop()
+
+
+def _runtime(request: Request) -> WorkerRuntime:
+    runtime = getattr(request.app.state, "runtime", None)
+    if runtime is None:
+        raise ResourceNotFoundError("browser worker is in connection setup mode")
+    return cast(WorkerRuntime, runtime)
+
+
+def _setup(request: Request) -> SetupRuntime:
+    setup = getattr(request.app.state, "setup", None)
+    if setup is None:
+        raise ResourceNotFoundError("browser worker is not in setup mode")
+    return cast(SetupRuntime, setup)
+
+
+def _authorise_setup(setup: SetupRuntime, token: str | None) -> None:
+    if not token or not hmac.compare_digest(token, setup.token):
+        raise CapabilityError("setup token is invalid")
 
 
 @app.get("/health/live")
@@ -221,7 +312,7 @@ async def propose(
     capability: Capability,
     request: Request,
 ) -> ProposeResponse:
-    runtime: WorkerRuntime = request.app.state.runtime
+    runtime = _runtime(request)
     session, _, _ = await _authorise(
         runtime,
         capability,
@@ -257,7 +348,7 @@ async def execute(
     capability: Capability,
     request: Request,
 ) -> ExecuteResponse:
-    runtime: WorkerRuntime = request.app.state.runtime
+    runtime = _runtime(request)
     session, _, claims = await _authorise(
         runtime,
         capability,
@@ -308,7 +399,7 @@ async def navigate(
     capability: Capability,
     request: Request,
 ) -> ExecuteResponse:
-    runtime: WorkerRuntime = request.app.state.runtime
+    runtime = _runtime(request)
     payload = {"step": body.step.model_dump(mode="json")}
     session, _, claims = await _authorise(runtime, capability, "browser.navigate", payload)
     await _validate_step(runtime, session, body.step)
@@ -360,7 +451,10 @@ async def navigate(
 
 @app.websocket("/v1/live")
 async def live_browser(websocket: WebSocket) -> None:
-    runtime: WorkerRuntime = websocket.app.state.runtime
+    runtime = getattr(websocket.app.state, "runtime", None)
+    if runtime is None:
+        await websocket.close(code=4404, reason="browser worker is in setup mode")
+        return
     capability = websocket.headers.get("x-firekey-capability")
     if capability is None:
         await websocket.close(code=4401, reason="browser capability is required")
@@ -666,3 +760,47 @@ async def _secure_input(
     finally:
         for index in range(len(plaintext)):
             plaintext[index] = 0
+
+
+@app.post("/v1/setup/export")
+async def setup_export(request: Request, token: SetupToken) -> dict[str, Any]:
+    setup = _setup(request)
+    _authorise_setup(setup, token)
+    state = await setup.context.storage_state()
+    return {"storage_state": state}
+
+
+@app.websocket("/v1/setup/live")
+async def setup_live(websocket: WebSocket) -> None:
+    setup = getattr(websocket.app.state, "setup", None)
+    if setup is None:
+        await websocket.close(code=4404, reason="browser worker is not in setup mode")
+        return
+    token = websocket.headers.get("x-firekey-setup")
+    if not token or not hmac.compare_digest(token, setup.token):
+        await websocket.close(code=4403, reason="setup token is invalid")
+        return
+    await websocket.accept()
+    while True:
+        message = await websocket.receive_json()
+        if not isinstance(message, dict):
+            await websocket.close(code=4400, reason="invalid setup message")
+            return
+        kind = message.get("type")
+        if kind == "frame":
+            await websocket.send_bytes(await setup.driver.setup_screenshot())
+        elif kind == "action":
+            raw = message.get("action")
+            if not isinstance(raw, dict):
+                await websocket.close(code=4400, reason="setup action is invalid")
+                return
+            action = BrowserAction.model_validate({**raw, "fencing_token": 1})
+            try:
+                await setup.driver.execute(action)
+            except Exception:
+                await websocket.send_json({"type": "action", "succeeded": False})
+            else:
+                await websocket.send_json({"type": "action", "succeeded": True})
+        else:
+            await websocket.close(code=4403, reason="setup message is not authorised")
+            return

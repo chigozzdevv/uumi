@@ -39,11 +39,34 @@ class BrowserVmManager:
         organisation_id: str,
         session_id: str,
         expires_at: datetime,
+        setup_token: str | None = None,
+        allowed_domains: tuple[str, ...] = (),
     ) -> BrowserVm:
         name = _name(session_id)
         base = (
             f"https://compute.googleapis.com/compute/v1/projects/{self._project}/zones/{self._zone}"
         )
+        metadata = [
+            {"key": "firekey-organisation", "value": organisation_id},
+            {"key": "firekey-session", "value": session_id},
+            {"key": "firekey-expires", "value": expires_at.isoformat()},
+            {"key": "firekey-project", "value": self._project},
+            {
+                "key": "firekey-capability-public",
+                "value": self._capability_public,
+            },
+            {"key": "firekey-evidence", "value": self._evidence},
+            {"key": "firekey-region", "value": self._region},
+            {"key": "firekey-worker-image", "value": self._image},
+        ]
+        if setup_token is not None:
+            metadata.extend(
+                [
+                    {"key": "firekey-setup", "value": "true"},
+                    {"key": "firekey-setup-token", "value": setup_token},
+                    {"key": "firekey-setup-domains", "value": ",".join(allowed_domains)},
+                ]
+            )
         operation = await self._client.request(
             "POST",
             f"{base}/instances",
@@ -54,21 +77,7 @@ class BrowserVmManager:
                     "firekey-browser": "true",
                     "firekey-session": _label(session_id),
                 },
-                "metadata": {
-                    "items": [
-                        {"key": "firekey-organisation", "value": organisation_id},
-                        {"key": "firekey-session", "value": session_id},
-                        {"key": "firekey-expires", "value": expires_at.isoformat()},
-                        {"key": "firekey-project", "value": self._project},
-                        {
-                            "key": "firekey-capability-public",
-                            "value": self._capability_public,
-                        },
-                        {"key": "firekey-evidence", "value": self._evidence},
-                        {"key": "firekey-region", "value": self._region},
-                        {"key": "firekey-worker-image", "value": self._image},
-                    ]
-                },
+                "metadata": {"items": metadata},
             },
         )
         await self._client.wait_operation(_operation(operation), base_url=f"{base}/operations")

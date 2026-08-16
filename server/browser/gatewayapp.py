@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from broker import CapabilityVerifier
@@ -23,7 +23,7 @@ class GatewaySettings(BaseSettings):
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = GatewaySettings()  # type: ignore[call-arg]
     firestore = AsyncClient(project=settings.project_id, database=settings.firestore_database)
     verifier = CapabilityVerifier.decode(settings.capability_public_key)
@@ -50,3 +50,9 @@ async def live() -> dict[str, str]:
 async def browser_live(websocket: WebSocket) -> None:
     gateway: BrowserSessionGateway = websocket.app.state.gateway
     await gateway.bridge(websocket)
+
+
+@app.websocket("/v1/setup/live")
+async def setup_live(websocket: WebSocket) -> None:
+    gateway: BrowserSessionGateway = websocket.app.state.gateway
+    await gateway.bridge_setup(websocket)

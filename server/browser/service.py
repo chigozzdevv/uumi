@@ -7,6 +7,7 @@ from contracts import (
     BrowserActionKind,
     BrowserActionRecord,
     BrowserActionStatus,
+    BrowserPolicy,
     BrowserSession,
     BrowserStatus,
     ReplayCheckpoint,
@@ -268,6 +269,40 @@ class BrowserService:
         if checkpoint.session_id != session.id or checkpoint.sequence != session.step_count:
             raise ResourceConflictError("replay checkpoint sequence is inconsistent")
         return await self._repository.save_checkpoint(checkpoint)
+
+    async def reprovision(
+        self,
+        organisation_id: str,
+        session_id: str,
+        revision: int,
+        provider_connection_id: str,
+        policy: BrowserPolicy,
+        fencing_token: int,
+        expires_at: datetime,
+    ) -> BrowserSession:
+        current = await self._repository.get(organisation_id, session_id)
+        if current.revision != revision:
+            raise ResourceConflictError(
+                f"browser expected revision {revision}, found {current.revision}"
+            )
+        if current.status is not BrowserStatus.TERMINATED:
+            raise ResourceConflictError("only a terminated browser can be reprovisioned")
+        changed = self._change(
+            current,
+            status=BrowserStatus.PROVISIONING,
+            provider_connection_id=provider_connection_id,
+            policy=policy,
+            fencing_token=fencing_token,
+            worker_instance=None,
+            internal_address=None,
+            terminated_at=None,
+            step_count=0,
+            model_paused=True,
+            recording_paused=True,
+            takeover_subject=None,
+            expires_at=expires_at,
+        )
+        return await self._repository.update(organisation_id, session_id, revision, changed)
 
     async def terminate(
         self,

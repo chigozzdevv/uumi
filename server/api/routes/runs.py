@@ -24,11 +24,13 @@ from contracts import (
     Trigger,
 )
 from core.auth import Permission
+from core.playbook import require_ready_browser_connections
 from core.storage import MutationResult
 from fastapi import APIRouter, Query, Request, Response, status
 from pydantic import AwareDatetime, Field
 
 from api.deps import (
+    ApiServices,
     IdempotencyKey,
     Identity,
     command_id,
@@ -285,6 +287,8 @@ async def resume_run(
 ) -> MutationResponse:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.RUN_WRITE)
+    run = await api.workflow.get(organisation_id, run_id)
+    await _require_ready_browser_session(api, run)
     result = await api.workflow.resume(
         ResumeRunCommand(
             id=command_id(identity, organisation_id, key),
@@ -399,3 +403,18 @@ async def complete_recovery(
         )
     )
     return _response(result)
+
+
+async def _require_ready_browser_session(api: ApiServices, run: RotationRun) -> None:
+    if api.playbooks is None or api.inventory is None:
+        return
+    assignment = await api.playbooks.get_assignment(run.organisation_id, run.credential_id)
+    if assignment is None:
+        return
+    connections = tuple(
+        [
+            await api.inventory.get_connection(run.organisation_id, item)
+            for item in assignment.connection_ids
+        ]
+    )
+    require_ready_browser_connections(connections)

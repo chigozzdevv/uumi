@@ -94,6 +94,7 @@ class BrowserPolicy(Contract):
     allow_downloads: bool = False
     allow_uploads: bool = False
     allow_clipboard: bool = False
+    login_url_pattern: str | None = Field(default=None, max_length=1024)
 
 
 class BrowserSession(Contract):
@@ -166,3 +167,52 @@ class BrowserAccessGrant(Contract):
     capability: str = Field(min_length=32)
     expires_at: AwareDatetime
     session: BrowserSession
+
+
+class SetupStatus(StrEnum):
+    PROVISIONING = "provisioning"
+    READY = "ready"
+    CAPTURING = "capturing"
+    COMPLETE = "complete"
+    TERMINATED = "terminated"
+
+
+class SetupSession(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    connection_id: Identifier
+    secret_container: str = Field(
+        pattern=r"^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+$", max_length=1024
+    )
+    token_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    subject: str = Field(min_length=1, max_length=512)
+    allowed_domains: tuple[str, ...] = Field(min_length=1)
+    worker_instance: str | None = Field(default=None, max_length=512)
+    internal_address: str | None = Field(default=None, max_length=128)
+    status: SetupStatus
+    auth_reference: str | None = Field(default=None, max_length=1024)
+    created_at: AwareDatetime
+    expires_at: AwareDatetime
+    updated_at: AwareDatetime
+    terminated_at: AwareDatetime | None = None
+    revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> "SetupSession":
+        completed = self.status is SetupStatus.COMPLETE
+        if completed != (self.auth_reference is not None):
+            raise ValueError("a completed setup session requires its authentication reference")
+        if self.status is SetupStatus.TERMINATED and self.terminated_at is None:
+            raise ValueError("terminated setup sessions require a termination time")
+        if self.status in {SetupStatus.READY, SetupStatus.CAPTURING} and (
+            self.worker_instance is None or self.internal_address is None
+        ):
+            raise ValueError("an active setup session requires its worker binding")
+        return self
+
+
+class ConnectionWaiter(Contract):
+    organisation_id: Identifier
+    connection_id: Identifier
+    run_ids: tuple[Identifier, ...] = ()
+    revision: int = Field(default=0, ge=0)

@@ -17,19 +17,29 @@ from core.errors import ResourceConflictError
 from playwright.async_api import Locator, Page, Request, Route
 
 
+class AuthenticationRequiredError(RuntimeError):
+    pass
+
+
 class BrowserDriver:
     def __init__(self, page: Page, policy: BrowserPolicy) -> None:
         self._page = page
         self._policy = policy
+        self._blocked_egress = False
 
     @property
     def url(self) -> str:
         return self._page.url
 
+    @property
+    def domains(self) -> tuple[str, ...]:
+        return self._policy.allowed_domains
+
     async def enforce_egress(self) -> None:
         await self._page.route("**/*", self._route)
 
     async def execute(self, action: BrowserAction) -> None:
+        self._blocked_egress = False
         if action.kind not in self._policy.allowed_actions:
             raise ResourceConflictError("browser action is excluded by policy")
         if action.kind is BrowserActionKind.NAVIGATE:
@@ -82,6 +92,9 @@ class BrowserDriver:
         ]
         return await self._page.screenshot(type="png", animations="disabled", mask=masks)
 
+    async def setup_screenshot(self) -> bytes:
+        return await self._page.screenshot(type="png", animations="disabled")
+
     async def validate_coordinate(self, selector: Selector, x: int, y: int) -> None:
         if not 0 <= x <= 999 or not 0 <= y <= 999:
             raise ResourceConflictError("model coordinate is outside the normalised viewport")
@@ -102,6 +115,8 @@ class BrowserDriver:
     async def validate_step(self, step: PlaybookStep) -> None:
         if step.checkpoint is None:
             raise ResourceConflictError("browser step has no deterministic checkpoint")
+        self._check_blocked_egress()
+        self._check_authentication()
         self.validate_url(self._page.url)
         if not fnmatch.fnmatchcase(self._page.url, step.checkpoint.url_pattern):
             raise ResourceConflictError("browser URL does not match the approved checkpoint")
@@ -155,7 +170,7 @@ class BrowserDriver:
             raise ResourceConflictError("browser navigation requires a credential-free HTTPS URL")
         hostname = parsed.hostname.lower().rstrip(".")
         if not any(_domain(hostname, value) for value in self._policy.allowed_domains):
-            raise ResourceConflictError(f"browser domain {hostname} is outside the allowlist")
+            raise AuthenticationRequiredError(f"provider session left the allowlist at {hostname}")
 
     async def _route(self, route: Route, request: Request) -> None:
         parsed = urlparse(request.url)
@@ -164,16 +179,31 @@ class BrowserDriver:
             return
         try:
             self.validate_url(request.url)
+        except AuthenticationRequiredError:
+            self._blocked_egress = True
+            await route.abort("blockedbyclient")
+            return
         except ResourceConflictError:
             await route.abort("blockedbyclient")
             return
         await route.continue_()
 
     async def _validate_checkpoint(self, action: BrowserAction) -> None:
+        self._check_blocked_egress()
+        self._check_authentication()
         self.validate_url(self._page.url)
         if action.expected_url and not fnmatch.fnmatchcase(self._page.url, action.expected_url):
             raise ResourceConflictError("browser URL does not match the approved checkpoint")
         await self._validate_text(action.expected_text, action.forbidden_text)
+
+    def _check_authentication(self) -> None:
+        pattern = self._policy.login_url_pattern
+        if pattern and fnmatch.fnmatchcase(self._page.url, pattern):
+            raise AuthenticationRequiredError("provider session landed on the login page")
+
+    def _check_blocked_egress(self) -> None:
+        if self._blocked_egress:
+            raise AuthenticationRequiredError("provider session redirected off the allowlist")
 
     async def _validate_text(self, required: tuple[str, ...], forbidden: tuple[str, ...]) -> None:
         for text in required:

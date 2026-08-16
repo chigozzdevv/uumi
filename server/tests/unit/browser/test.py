@@ -1,13 +1,21 @@
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
+import httpx
 import pytest
 from broker import CapabilitySigner
 from browser.access import BrowserAccessService
 from browser.auth import BrowserAuthBroker
-from browser.driver import BrowserDriver
+from browser.compute import BrowserVm
+from browser.driver import AuthenticationRequiredError, BrowserDriver
+from browser.gateway import BrowserSessionGateway
 from browser.model import ComputerUseClient
 from browser.service import BrowserService
+from browser.setup import BrowserSetupService
+from browser.worker import ComputerUseWorker
+from connectors.base import SecretValue
 from connectors.base.errors import ConnectorError
 from contracts import (
     BrowserAccessMode,
@@ -21,15 +29,34 @@ from contracts import (
     Connection,
     ConnectionKind,
     ConnectionStatus,
+    ConnectionWaiter,
+    ExecutionMethod,
+    NotificationKind,
+    PageCheckpoint,
+    PlaybookAssignment,
+    PlaybookDraft,
+    PlaybookState,
+    PlaybookStep,
+    PlaybookVersion,
+    RecoveryAction,
+    RecoveryBranch,
     ReplayCheckpoint,
     RotationRun,
     RunStatus,
     SecureCaptureResult,
+    SecureField,
     Selector,
     SelectorKind,
+    SetupSession,
+    SetupStatus,
+    Stage,
     Trigger,
 )
-from core.errors import ResourceConflictError
+from coordinator.browser import BrowserPauseError, BrowserStepExecutor
+from coordinator.service import _flag_reauthentication
+from core.auth import AccessControl, AuthenticatedIdentity, PrincipalGrant, Role
+from core.errors import CapabilityError, ResourceConflictError, ResourceNotFoundError
+from testkit import make_http_provider_api, make_run
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
@@ -268,11 +295,50 @@ async def test_computer_use_rejects_model_navigation() -> None:
         await client.propose("go to an approved URL", b"image")
 
 
+@pytest.mark.anyio
+async def test_computer_worker_masks_declared_secret_fields_before_model_proposal() -> None:
+    class Driver:
+        def __init__(self) -> None:
+            self.masked: tuple[Selector, ...] = ()
+
+        async def screenshot(
+            self, session: BrowserSession, masked_selectors: tuple[Selector, ...]
+        ) -> bytes:
+            del session
+            self.masked = masked_selectors
+            return b"masked-frame"
+
+        async def validate_step(self, step: PlaybookStep) -> None:
+            del step
+
+    class Model:
+        async def propose(self, *args: object) -> None:
+            return None
+
+    selector = Selector(kind=SelectorKind.TEST_ID, value="new-api-key")
+    driver = Driver()
+    worker = ComputerUseWorker(
+        cast(Any, Model()),
+        cast(Any, driver),
+        cast(Any, None),
+        cast(Any, None),
+        lambda prefix: prefix,
+        (selector,),
+    )
+    session = _session().model_copy(update={"status": BrowserStatus.RUNNING})
+    step = _computer_version().definition.steps[0]
+
+    proposal = await worker.propose(session, step, "inspect the approved page")
+
+    assert proposal is None
+    assert driver.masked == (selector,)
+
+
 def test_browser_domain_allowlist_does_not_accept_lookalikes() -> None:
     driver = BrowserDriver(None, _session().policy)  # type: ignore[arg-type]
 
     driver.validate_url("https://console.vendor.example.com/keys")
-    with pytest.raises(ResourceConflictError, match="outside"):
+    with pytest.raises(AuthenticationRequiredError, match="allowlist"):
         driver.validate_url("https://console.vendor.example.com.attacker.test/keys")
     with pytest.raises(ResourceConflictError, match="credential-free"):
         driver.validate_url("https://user:password@console.vendor.example.com/keys")
@@ -284,7 +350,7 @@ async def test_auth_broker_accepts_only_allowlisted_playwright_state() -> None:
     connection = Connection(
         id="provider_one",
         organisation_id="org_one",
-        kind=ConnectionKind.PROVIDER,
+        kind=ConnectionKind.BROWSER,
         provider="vendor",
         display_name="Vendor console",
         auth_reference="projects/project/secrets/session/versions/1",
@@ -307,7 +373,7 @@ async def test_auth_broker_rejects_cross_domain_cookie() -> None:
     connection = Connection(
         id="provider_one",
         organisation_id="org_one",
-        kind=ConnectionKind.PROVIDER,
+        kind=ConnectionKind.BROWSER,
         provider="vendor",
         display_name="Vendor console",
         auth_reference="projects/project/secrets/session/versions/1",
@@ -320,6 +386,29 @@ async def test_auth_broker_rejects_cross_domain_cookie() -> None:
     )
 
     with pytest.raises(ResourceConflictError, match="outside"):
+        await broker.storage_state(connection, ("*.vendor.example.com",))
+
+
+@pytest.mark.anyio
+async def test_auth_broker_rejects_api_provider_connections() -> None:
+    broker = BrowserAuthBroker(AuthSecrets("console.vendor.example.com"))  # type: ignore[arg-type]
+    connection = Connection(
+        id="provider_one",
+        organisation_id="org_one",
+        kind=ConnectionKind.PROVIDER,
+        provider="sendgrid",
+        display_name="SendGrid Admin",
+        auth_reference="projects/project/secrets/admin/versions/1",
+        capabilities=frozenset({"create", "revoke"}),
+        allowed_resources=("sendgrid:*",),
+        http=make_http_provider_api(),
+        status=ConnectionStatus.READY,
+        region="us-central1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    with pytest.raises(ResourceConflictError, match="browser connection"):
         await broker.storage_state(connection, ("*.vendor.example.com",))
 
 
@@ -417,10 +506,10 @@ class AuthSecrets:
     def __init__(self, domain: str) -> None:
         self.domain = domain
 
-    async def access(self, reference: str) -> AuthSecret:
+    async def access(self, version: str) -> AuthSecret:
         import json
 
-        assert reference.endswith("/versions/1")
+        assert version.endswith("/versions/1")
         return AuthSecret(
             json.dumps(
                 {
@@ -436,3 +525,1009 @@ class AuthSecrets:
                 }
             ).encode()
         )
+
+
+class SetupCatalog:
+    def __init__(self) -> None:
+        self.values: dict[str, Any] = {}
+
+    async def create(self, path: str, value: Any) -> None:
+        self.values[path] = value
+
+    async def get[T](self, path: str, model: type[T]) -> T:
+        from core.errors import ResourceNotFoundError
+
+        if path not in self.values:
+            raise ResourceNotFoundError(path)
+        return cast(T, self.values[path])
+
+    async def replace[T](
+        self,
+        path: str,
+        model: type[T],
+        expected_revision: int,
+        update: Any,
+    ) -> T:
+        current = cast(Any, self.values[path])
+        assert current.revision == expected_revision
+        changed = update(current)
+        assert changed.revision == expected_revision + 1
+        self.values[path] = changed
+        return cast(T, changed)
+
+
+class SetupConnections:
+    def __init__(self, connection: Connection) -> None:
+        self.connection = connection
+
+    async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
+        return self.connection
+
+    async def update_authentication(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        expected_revision: int,
+        auth_reference: str,
+        status: ConnectionStatus,
+        updated_at: datetime,
+    ) -> Connection:
+        assert self.connection.revision == expected_revision
+        self.connection = self.connection.model_copy(
+            update={
+                "auth_reference": auth_reference,
+                "status": status,
+                "updated_at": updated_at,
+                "revision": expected_revision + 1,
+            }
+        )
+        return self.connection
+
+
+class SetupVms:
+    def __init__(self) -> None:
+        self.created: list[dict[str, Any]] = []
+        self.deleted: list[str | None] = []
+
+    async def create(
+        self,
+        organisation_id: str,
+        session_id: str,
+        expires_at: datetime,
+        setup_token: str | None = None,
+        allowed_domains: tuple[str, ...] = (),
+    ) -> BrowserVm:
+        self.created.append(
+            {"session_id": session_id, "setup_token": setup_token, "domains": allowed_domains}
+        )
+        return BrowserVm(
+            instance=f"projects/p/zones/z/instances/fk-{session_id}",
+            internal_address="10.0.0.2",
+        )
+
+    async def delete(self, instance: str) -> None:
+        self.deleted.append(instance)
+
+
+class SetupSecrets:
+    def __init__(self, versions_error: Exception | None = None) -> None:
+        self.written: list[bytes] = []
+        self.versions_error = versions_error
+
+    async def add_version(self, secret: str, value: SecretValue) -> dict[str, Any]:
+        self.written.append(value.bytes())
+        return {"secret_reference": f"{secret}/versions/2"}
+
+    async def versions(self, secret: str) -> tuple[dict[str, Any], ...]:
+        if self.versions_error is not None:
+            raise self.versions_error
+        return ({"name": f"{secret}/versions/1"},)
+
+
+def _browser_connection() -> Connection:
+    return Connection(
+        id="connection_browser",
+        organisation_id="org_one",
+        kind=ConnectionKind.BROWSER,
+        provider="internal-vendor",
+        display_name="Vendor console",
+        capabilities=frozenset({"browser.execute"}),
+        allowed_resources=("*.vendor.example.com",),
+        status=ConnectionStatus.DISABLED,
+        region="us-east1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def _exported_state() -> dict[str, Any]:
+    return {
+        "cookies": [
+            {
+                "name": "session",
+                "value": "vendor-cookie",
+                "domain": "app.vendor.example.com",
+                "path": "/",
+            },
+            {
+                "name": "sso",
+                "value": "idp-cookie",
+                "domain": "accounts.google.com",
+                "path": "/",
+            },
+        ],
+        "origins": [],
+    }
+
+
+def _setup_service(
+    catalog: SetupCatalog,
+    connection: Connection,
+    state: dict[str, Any] | None = None,
+    versions_error: Exception | None = None,
+    runs: Any = None,
+) -> tuple[BrowserSetupService, SetupVms, SetupSecrets, SetupConnections]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health/live":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/v1/setup/export":
+            return httpx.Response(200, json={"storage_state": state or {}})
+        raise AssertionError(f"unexpected {request.url.path}")
+
+    vms = SetupVms()
+    secrets = SetupSecrets(versions_error)
+    connections = SetupConnections(connection)
+    service = BrowserSetupService(
+        catalog,
+        connections,
+        vms,
+        secrets,
+        "https://gateway.firekey.example",
+        lambda: NOW,
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        runs=runs,
+    )
+    return service, vms, secrets, connections
+
+
+@pytest.mark.anyio
+async def test_setup_begin_boots_isolated_worker_with_setup_token() -> None:
+    catalog = SetupCatalog()
+    service, vms, _, _ = _setup_service(catalog, _browser_connection())
+
+    session, token = await service.begin(
+        "org_one",
+        "connection_browser",
+        "projects/project-one/secrets/vendor-session",
+        "user_one",
+        ("accounts.google.com",),
+    )
+
+    assert session.status is SetupStatus.READY
+    assert session.revision == 1
+    assert session.internal_address == "10.0.0.2"
+    assert session.token_hash == hashlib.sha256(token.encode()).hexdigest()
+    assert token not in json.dumps(session.model_dump(mode="json"))
+    created = vms.created[0]
+    assert created["setup_token"] == token
+    assert created["domains"] == ("*.vendor.example.com", "accounts.google.com")
+
+
+@pytest.mark.anyio
+async def test_setup_begin_rejects_api_connections() -> None:
+    catalog = SetupCatalog()
+    connection = _browser_connection().model_copy(update={"kind": ConnectionKind.PROVIDER})
+    service, _, _, _ = _setup_service(catalog, connection)
+
+    with pytest.raises(ResourceConflictError, match="browser connection"):
+        await service.begin(
+            "org_one",
+            "connection_browser",
+            "projects/project-one/secrets/vendor-session",
+            "user_one",
+        )
+
+
+@pytest.mark.anyio
+async def test_setup_complete_captures_only_the_provider_session() -> None:
+    catalog = SetupCatalog()
+    service, vms, secrets, _ = _setup_service(
+        catalog, _browser_connection(), state=_exported_state()
+    )
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    completed, connection, resumed = await service.complete(
+        "org_one", session.id, session.revision, token, "user_one"
+    )
+    assert resumed == ()
+
+    assert completed.status is SetupStatus.COMPLETE
+    assert completed.auth_reference == "projects/project-one/secrets/vendor-session/versions/2"
+    assert connection.status is ConnectionStatus.READY
+    assert connection.auth_reference == completed.auth_reference
+    assert vms.deleted == [completed.worker_instance]
+    written = json.loads(secrets.written[0].decode())
+    domains = {cookie["domain"] for cookie in written["cookies"]}
+    assert domains == {"app.vendor.example.com"}
+
+
+@pytest.mark.anyio
+async def test_setup_complete_rejects_a_wrong_token() -> None:
+    catalog = SetupCatalog()
+    service, _, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
+    session, _ = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    with pytest.raises(ResourceConflictError, match="token is invalid"):
+        await service.complete("org_one", session.id, session.revision, "x" * 43, "user_one")
+
+
+@pytest.mark.anyio
+async def test_setup_complete_belongs_to_its_operator() -> None:
+    catalog = SetupCatalog()
+    service, _, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    with pytest.raises(ResourceConflictError, match="another operator"):
+        await service.complete("org_one", session.id, session.revision, token, "user_two")
+
+
+@pytest.mark.anyio
+async def test_setup_complete_requires_a_captured_provider_session() -> None:
+    foreign_only = {
+        "cookies": [{"name": "sso", "value": "idp", "domain": "accounts.google.com", "path": "/"}],
+        "origins": [],
+    }
+    catalog = SetupCatalog()
+    service, _, _, _ = _setup_service(catalog, _browser_connection(), state=foreign_only)
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    with pytest.raises(ResourceConflictError, match="no provider session"):
+        await service.complete("org_one", session.id, session.revision, token, "user_one")
+
+
+@pytest.mark.anyio
+async def test_setup_abort_terminates_the_worker() -> None:
+    catalog = SetupCatalog()
+    service, vms, _, _ = _setup_service(catalog, _browser_connection())
+    session, _ = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    aborted = await service.abort("org_one", session.id, session.revision, "user_one")
+
+    assert aborted.status is SetupStatus.TERMINATED
+    assert aborted.terminated_at is not None
+    assert vms.deleted == [aborted.worker_instance]
+
+
+@pytest.mark.anyio
+async def test_setup_export_requires_the_setup_token() -> None:
+    from browser.workerapp import SetupRuntime, app
+
+    class ExportContext:
+        async def storage_state(self) -> dict[str, Any]:
+            return {"cookies": [], "origins": []}
+
+    app.state.setup = SetupRuntime(cast(Any, ExportContext()), cast(Any, None), "t" * 43)
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            missing = await client.post("/v1/setup/export")
+            wrong = await client.post("/v1/setup/export", headers={"X-FireKey-Setup": "x" * 43})
+            exported = await client.post("/v1/setup/export", headers={"X-FireKey-Setup": "t" * 43})
+    finally:
+        del app.state.setup
+
+    assert missing.status_code == 422
+    assert wrong.status_code == 403
+    assert exported.status_code == 200
+    assert exported.json()["storage_state"] == {"cookies": [], "origins": []}
+
+
+class _LoginPage:
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+
+def _login_driver(url: str) -> BrowserDriver:
+    policy = BrowserPolicy(
+        allowed_domains=("*.vendor.example.com",),
+        allowed_actions=frozenset({BrowserActionKind.NAVIGATE}),
+        login_url_pattern="https://*.vendor.example.com/login*",
+    )
+    return BrowserDriver(cast(Any, _LoginPage(url)), policy)
+
+
+@pytest.mark.anyio
+async def test_driver_detects_the_provider_login_wall() -> None:
+    driver = _login_driver("https://app.vendor.example.com/login")
+    step = PlaybookStep(
+        id="step_one",
+        stage=Stage.CREATE,
+        tool="browser.click",
+        operation="create-key",
+        objective="create the replacement key",
+        selectors=(Selector(kind=SelectorKind.TEST_ID, value="create"),),
+        checkpoint=PageCheckpoint(url_pattern="https://app.vendor.example.com/keys"),
+        evidence_checks=frozenset({"created"}),
+    )
+
+    with pytest.raises(AuthenticationRequiredError, match="login page"):
+        await driver.validate_step(step)
+
+
+@pytest.mark.anyio
+async def test_driver_detects_a_login_redirect_after_navigation() -> None:
+    class NavigatingPage:
+        def __init__(self) -> None:
+            self.url = "https://app.vendor.example.com/keys"
+
+        async def goto(self, url: str, wait_until: str = "") -> None:
+            self.url = url
+
+    driver = BrowserDriver(cast(Any, NavigatingPage()), _login_driver("")._policy)
+    action = BrowserAction(
+        id="action_one",
+        session_id="session_one",
+        kind=BrowserActionKind.NAVIGATE,
+        url="https://app.vendor.example.com/login",
+        fencing_token=1,
+    )
+
+    with pytest.raises(AuthenticationRequiredError, match="login page"):
+        await driver.execute(action)
+
+
+@pytest.mark.anyio
+async def test_coordinator_maps_the_login_wall_to_a_reauthentication_pause() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409, json={"code": "authentication-required", "message": "login page"}
+        )
+
+    executor = BrowserStepExecutor(
+        cast(Any, None),
+        cast(Any, None),
+        cast(Any, None),
+        CapabilitySigner(b"\x01" * 32),
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    run = make_run(NOW).model_copy(update={"fencing_token": 3})
+    session = _session().model_copy(update={"internal_address": "10.0.0.2"})
+
+    with pytest.raises(BrowserPauseError) as captured:
+        await executor._post(run, session, "browser.operate", "/v1/steps/propose", {})
+
+    assert captured.value.output["authentication_required"] is True
+    assert captured.value.output["connection_id"] == "provider_one"
+
+
+class FlagCatalog:
+    def __init__(self, connection: Connection) -> None:
+        self.connection = connection
+        self.replaced = False
+        self.waiters: dict[str, ConnectionWaiter] = {}
+
+    async def get[T](self, path: str, model: type[T]) -> T:
+        if model is ConnectionWaiter:
+            if path not in self.waiters:
+                raise ResourceNotFoundError(path)
+            return cast(T, self.waiters[path])
+        return cast(T, self.connection)
+
+    async def create(self, path: str, value: ConnectionWaiter) -> None:
+        self.waiters[path] = value
+
+    async def replace[T](
+        self,
+        path: str,
+        model: type[T],
+        expected_revision: int,
+        update: Any,
+    ) -> T:
+        if model is ConnectionWaiter:
+            current = self.waiters[path]
+            changed = update(current)
+            self.waiters[path] = changed
+            return cast(T, changed)
+        self.replaced = True
+        self.connection = update(self.connection)
+        return cast(T, self.connection)
+
+
+class FlagNotifications:
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+
+    async def emit(
+        self,
+        event_id: str,
+        organisation_id: str,
+        kind: Any,
+        severity: Any,
+        title: str,
+        body: str,
+        link_path: str,
+        resource_id: str,
+        **kwargs: Any,
+    ) -> tuple[Any, bool]:
+        self.sent.append({"kind": kind, "resource_id": resource_id, "run_id": kwargs.get("run_id")})
+        return None, True
+
+
+@pytest.mark.anyio
+async def test_reauthentication_flags_the_connection_and_notifies() -> None:
+    connection = _browser_connection().model_copy(
+        update={
+            "status": ConnectionStatus.READY,
+            "auth_reference": "projects/p/secrets/s/versions/1",
+        }
+    )
+    catalog = FlagCatalog(connection)
+    notifications = FlagNotifications()
+
+    await _flag_reauthentication(
+        cast(Any, catalog),
+        cast(Any, notifications),
+        NOW,
+        make_run(NOW),
+        {"authentication_required": True, "connection_id": "connection_browser"},
+        "execution_one",
+    )
+
+    assert catalog.connection.status is ConnectionStatus.REAUTHENTICATION
+    assert notifications.sent[0]["kind"] is NotificationKind.CONNECTION_UNHEALTHY
+    waiter = next(iter(catalog.waiters.values()))
+    assert waiter.run_ids == ("run_one",)
+    assert notifications.sent[0]["run_id"] == "run_one"
+
+
+@pytest.mark.anyio
+async def test_reauthentication_ignores_output_without_a_connection() -> None:
+    catalog = FlagCatalog(_browser_connection())
+    notifications = FlagNotifications()
+
+    await _flag_reauthentication(
+        cast(Any, catalog),
+        cast(Any, notifications),
+        NOW,
+        make_run(NOW),
+        {"authentication_required": True},
+        "execution_one",
+    )
+
+    assert not catalog.replaced
+    assert notifications.sent == []
+
+
+@pytest.mark.anyio
+async def test_reauthentication_remembers_the_paused_run_when_connection_flagging_fails() -> None:
+    class FailingConnectionCatalog(FlagCatalog):
+        async def replace[T](
+            self,
+            path: str,
+            model: type[T],
+            expected_revision: int,
+            update: Any,
+        ) -> T:
+            if model is Connection:
+                raise RuntimeError("catalog unavailable")
+            return await super().replace(path, model, expected_revision, update)
+
+    catalog = FailingConnectionCatalog(_browser_connection())
+    notifications = FlagNotifications()
+
+    await _flag_reauthentication(
+        cast(Any, catalog),
+        cast(Any, notifications),
+        NOW,
+        make_run(NOW),
+        {"authentication_required": True, "connection_id": "connection_browser"},
+        "execution_one",
+    )
+
+    waiter = next(iter(catalog.waiters.values()))
+    assert waiter.run_ids == ("run_one",)
+    assert notifications.sent[0]["run_id"] == "run_one"
+
+
+class GatewayRepository:
+    def __init__(self, session: SetupSession) -> None:
+        self._session = session
+
+    async def setup(self, organisation_id: str, setup_id: str) -> SetupSession:
+        return self._session
+
+
+class GatewayAccess:
+    async def get(
+        self, organisation_id: str, identity: AuthenticatedIdentity
+    ) -> PrincipalGrant | None:
+        return PrincipalGrant(subject=identity.subject, roles=frozenset({Role.ADMINISTRATOR}))
+
+
+def _setup_session(
+    token: str,
+    subject: str = "user_one",
+    status: SetupStatus = SetupStatus.READY,
+) -> SetupSession:
+    return SetupSession(
+        id="setup_one",
+        organisation_id="org_one",
+        connection_id="connection_browser",
+        secret_container="projects/project-one/secrets/vendor-session",
+        token_hash=hashlib.sha256(token.encode()).hexdigest(),
+        subject=subject,
+        allowed_domains=("*.vendor.example.com",),
+        worker_instance="projects/p/zones/z/instances/fk-setup_one",
+        internal_address="10.0.0.2",
+        status=status,
+        created_at=NOW,
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        updated_at=NOW,
+    )
+
+
+@pytest.mark.anyio
+async def test_setup_gateway_authorises_the_owning_operator() -> None:
+    token = "t" * 43
+    gateway = BrowserSessionGateway(
+        cast(Any, GatewayRepository(_setup_session(token))),
+        AccessControl(GatewayAccess()),
+        cast(Any, None),
+        cast(Any, None),
+    )
+    identity = AuthenticatedIdentity(subject="user_one", issuer="test")
+
+    organisation_id, session, returned = await gateway._authorise_setup(
+        {"organisation_id": "org_one", "setup_id": "setup_one", "token": token},
+        identity,
+    )
+
+    assert organisation_id == "org_one"
+    assert session.id == "setup_one"
+    assert returned == token
+
+
+@pytest.mark.anyio
+async def test_setup_gateway_rejects_foreign_operators_and_bad_tokens() -> None:
+    token = "t" * 43
+    gateway = BrowserSessionGateway(
+        cast(Any, GatewayRepository(_setup_session(token))),
+        AccessControl(GatewayAccess()),
+        cast(Any, None),
+        cast(Any, None),
+    )
+
+    with pytest.raises(CapabilityError, match="another operator"):
+        await gateway._authorise_setup(
+            {"organisation_id": "org_one", "setup_id": "setup_one", "token": token},
+            AuthenticatedIdentity(subject="user_two", issuer="test"),
+        )
+
+    with pytest.raises(CapabilityError, match="token is invalid"):
+        await gateway._authorise_setup(
+            {"organisation_id": "org_one", "setup_id": "setup_one", "token": "x" * 43},
+            AuthenticatedIdentity(subject="user_one", issuer="test"),
+        )
+
+
+@pytest.mark.anyio
+async def test_setup_begin_rejects_an_unwritable_secret_container() -> None:
+    catalog = SetupCatalog()
+    service, vms, _, _ = _setup_service(
+        catalog, _browser_connection(), versions_error=RuntimeError("missing")
+    )
+
+    with pytest.raises(ResourceConflictError, match="secret container is not writable"):
+        await service.begin(
+            "org_one",
+            "connection_browser",
+            "projects/project-one/secrets/vendor-session",
+            "user_one",
+        )
+    assert vms.created == []
+
+
+@pytest.mark.anyio
+async def test_setup_begin_terminates_the_session_when_worker_readiness_fails() -> None:
+    from core.storage.paths import FirestorePaths
+
+    catalog = SetupCatalog()
+    service, vms, _, _ = _setup_service(catalog, _browser_connection())
+
+    async def not_ready(session: SetupSession) -> None:
+        del session
+        raise ResourceConflictError("setup worker did not become ready")
+
+    service._wait_ready = not_ready  # type: ignore[method-assign]
+
+    with pytest.raises(ResourceConflictError, match="did not become ready"):
+        await service.begin(
+            "org_one",
+            "connection_browser",
+            "projects/project-one/secrets/vendor-session",
+            "user_one",
+        )
+
+    stored = await catalog.get(FirestorePaths.setup("org_one", "setup_browser"), SetupSession)
+    assert stored.status is SetupStatus.TERMINATED
+    assert vms.deleted == [stored.worker_instance]
+
+
+@pytest.mark.anyio
+async def test_setup_complete_resumes_paused_runs_waiting_on_the_connection() -> None:
+    from core.storage.paths import FirestorePaths
+
+    class Resumer:
+        def __init__(self) -> None:
+            self.ids: tuple[str, ...] = ()
+
+        async def resume(
+            self, organisation_id: str, run_ids: tuple[str, ...], actor_id: str
+        ) -> tuple[str, ...]:
+            del organisation_id, actor_id
+            self.ids = run_ids
+            return run_ids
+
+    catalog = SetupCatalog()
+    resumer = Resumer()
+    service, _, _, _ = _setup_service(
+        catalog, _browser_connection(), state=_exported_state(), runs=resumer
+    )
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+    waiter_path = FirestorePaths.connection_waiter("org_one", "connection_browser")
+    await catalog.create(
+        waiter_path,
+        ConnectionWaiter(
+            organisation_id="org_one",
+            connection_id="connection_browser",
+            run_ids=("run_one", "run_two"),
+        ),
+    )
+
+    _, _, resumed = await service.complete(
+        "org_one", session.id, session.revision, token, "user_one", "actor_one"
+    )
+
+    assert resumed == ("run_one", "run_two")
+    assert resumer.ids == ("run_one", "run_two")
+    waiter = await catalog.get(waiter_path, ConnectionWaiter)
+    assert waiter.run_ids == ()
+
+
+@pytest.mark.anyio
+async def test_setup_completion_keeps_waiting_runs_that_did_not_resume() -> None:
+    from core.storage.paths import FirestorePaths
+
+    class PartialResumer:
+        async def resume(
+            self, organisation_id: str, run_ids: tuple[str, ...], actor_id: str
+        ) -> tuple[str, ...]:
+            del organisation_id, actor_id
+            assert run_ids == ("run_one", "run_two")
+            return ("run_one",)
+
+    catalog = SetupCatalog()
+    service, _, _, _ = _setup_service(
+        catalog, _browser_connection(), state=_exported_state(), runs=PartialResumer()
+    )
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+    waiter_path = FirestorePaths.connection_waiter("org_one", "connection_browser")
+    await catalog.create(
+        waiter_path,
+        ConnectionWaiter(
+            organisation_id="org_one",
+            connection_id="connection_browser",
+            run_ids=("run_one", "run_two"),
+        ),
+    )
+
+    _, _, resumed = await service.complete(
+        "org_one", session.id, session.revision, token, "user_one"
+    )
+
+    assert resumed == ("run_one",)
+    waiter = await catalog.get(waiter_path, ConnectionWaiter)
+    assert waiter.run_ids == ("run_two",)
+
+
+@pytest.mark.anyio
+async def test_setup_completion_claims_the_session_before_writing_a_secret() -> None:
+    from core.storage.paths import FirestorePaths
+
+    class CapturingSecrets(SetupSecrets):
+        async def add_version(self, secret: str, value: SecretValue) -> dict[str, Any]:
+            current = await catalog.get(
+                FirestorePaths.setup("org_one", "setup_browser"), SetupSession
+            )
+            assert current.status is SetupStatus.CAPTURING
+            return await super().add_version(secret, value)
+
+    catalog = SetupCatalog()
+    service, _, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
+    service._secrets = cast(Any, CapturingSecrets())
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    completed, _, _ = await service.complete(
+        "org_one", session.id, session.revision, token, "user_one"
+    )
+
+    assert completed.status is SetupStatus.COMPLETE
+
+
+@pytest.mark.anyio
+async def test_setup_completion_replays_without_creating_another_secret_version() -> None:
+    catalog = SetupCatalog()
+    service, _, secrets, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+    completed, connection, _ = await service.complete(
+        "org_one", session.id, session.revision, token, "user_one"
+    )
+
+    replayed, replayed_connection, resumed = await service.complete(
+        "org_one", session.id, session.revision, token, "user_one"
+    )
+
+    assert replayed == completed
+    assert replayed_connection == connection
+    assert resumed == ()
+    assert len(secrets.written) == 1
+
+
+def test_blocked_redirect_is_authentication_required() -> None:
+    driver = _login_driver("https://app.vendor.example.com/keys")
+    driver._blocked_egress = True
+
+    with pytest.raises(AuthenticationRequiredError, match="off the allowlist"):
+        driver._check_blocked_egress()
+
+
+def test_ready_browser_connections_are_required_before_resume() -> None:
+    from core.playbook import require_ready_browser_connections
+
+    waiting = _browser_connection()
+    with pytest.raises(ResourceConflictError, match="still needs login"):
+        require_ready_browser_connections((waiting,))
+    ready = waiting.model_copy(
+        update={
+            "status": ConnectionStatus.READY,
+            "auth_reference": "projects/p/secrets/s/versions/1",
+        }
+    )
+    require_ready_browser_connections((ready,))
+
+
+@pytest.mark.anyio
+async def test_setup_begin_rejects_a_second_active_session() -> None:
+    catalog = SetupCatalog()
+    service, _, _, _ = _setup_service(catalog, _browser_connection())
+    await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    with pytest.raises(ResourceConflictError, match="already active"):
+        await service.begin(
+            "org_one",
+            "connection_browser",
+            "projects/project-one/secrets/vendor-session",
+            "user_one",
+        )
+
+
+@pytest.mark.anyio
+async def test_setup_begin_replaces_a_finished_session() -> None:
+    catalog = SetupCatalog()
+    service, vms, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+    await service.complete("org_one", session.id, session.revision, token, "user_one")
+
+    restarted, _ = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_two"
+    )
+
+    assert restarted.id == session.id
+    assert restarted.status is SetupStatus.READY
+    assert restarted.subject == "user_two"
+    assert restarted.revision > session.revision
+    assert len(vms.created) == 2
+
+
+@pytest.mark.anyio
+async def test_terminated_browser_can_be_reprovisioned() -> None:
+    repository = Repository()
+    service = BrowserService(repository, lambda: NOW)
+    session = await service.create(_session())
+    session = await service.attach(
+        "org_one", session.id, session.revision, "instances/worker", "10.2.0.4"
+    )
+    session = await service.terminate("org_one", session.id, session.revision)
+
+    session = await service.reprovision(
+        "org_one",
+        session.id,
+        session.revision,
+        "connection_browser",
+        session.policy,
+        4,
+        NOW + timedelta(hours=2),
+    )
+
+    assert session.status is BrowserStatus.PROVISIONING
+    assert session.provider_connection_id == "connection_browser"
+    assert session.worker_instance is None
+    assert session.fencing_token == 4
+    assert session.terminated_at is None
+
+
+@pytest.mark.anyio
+async def test_executor_binds_the_browser_connection() -> None:
+    connection = _browser_connection().model_copy(
+        update={
+            "status": ConnectionStatus.READY,
+            "auth_reference": "projects/p/secrets/s/versions/1",
+        }
+    )
+    version = _computer_version()
+    run = make_run(NOW).model_copy(update={"fencing_token": 3})
+    assignment = PlaybookAssignment(
+        id="assignment_one",
+        organisation_id="org_one",
+        credential_id="cred_one",
+        playbook_id="playbook_one",
+        version_id="version_one",
+        connection_ids=("connection_browser",),
+        assigned_by="admin_one",
+        assigned_at=NOW,
+    )
+    catalog = SessionCatalog(version, {"connection_browser": connection})
+    vms = SetupVms()
+    sessions = BrowserService(Repository(), lambda: NOW)
+    executor = BrowserStepExecutor(
+        cast(Any, catalog),
+        sessions,
+        cast(Any, vms),
+        CapabilitySigner(b"\x01" * 32),
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"status": "ok"})
+            )
+        ),
+    )
+
+    session = await executor._session(run, assignment)
+
+    assert session.provider_connection_id == "connection_browser"
+    assert session.policy.login_url_pattern == "https://*.vendor.example.com/login*"
+    assert vms.created[0]["session_id"] == session.id
+
+
+def test_computer_use_preflight_requires_a_browser_connection() -> None:
+    from coordinator.service import required_connection_kinds
+
+    assert ConnectionKind.BROWSER in required_connection_kinds(ExecutionMethod.COMPUTER)
+    assert ConnectionKind.PROVIDER not in required_connection_kinds(ExecutionMethod.COMPUTER)
+    assert ConnectionKind.PROVIDER in required_connection_kinds(ExecutionMethod.API)
+    assert ConnectionKind.BROWSER not in required_connection_kinds(ExecutionMethod.API)
+
+
+class SessionCatalog:
+    def __init__(self, version: PlaybookVersion, connections: dict[str, Connection]) -> None:
+        self.version = version
+        self.connections = connections
+        self.session: BrowserSession | None = None
+
+    async def get[T](self, path: str, model: type[T]) -> T:
+        from core.errors import ResourceNotFoundError
+
+        if model is BrowserSession:
+            if self.session is None:
+                raise ResourceNotFoundError(path)
+            return self.session  # type: ignore[return-value]
+        if model is PlaybookVersion:
+            return self.version  # type: ignore[return-value]
+        if model is Connection:
+            for connection_id, connection in self.connections.items():
+                if path.endswith(f"/{connection_id}"):
+                    return connection  # type: ignore[return-value]
+            raise ResourceNotFoundError(path)
+        raise AssertionError(f"unexpected catalog model for {path}")
+
+
+def _computer_version() -> PlaybookVersion:
+    from policy import digest
+
+    stages = (
+        Stage.CREATE,
+        Stage.STORE,
+        Stage.DEPLOY,
+        Stage.VERIFY,
+        Stage.ROLLOUT,
+        Stage.OBSERVE,
+        Stage.REVOKE,
+    )
+    steps = tuple(
+        PlaybookStep(
+            id=f"step_{stage.value}",
+            stage=stage,
+            tool="browser.secure-capture" if stage is Stage.CREATE else f"test.{stage.value}",
+            operation=stage.value,
+            objective=f"Execute the {stage.value} lifecycle stage",
+            selectors=(
+                (Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),)
+                if stage is Stage.CREATE
+                else ()
+            ),
+            checkpoint=PageCheckpoint(url_pattern="https://app.vendor.example.com/keys")
+            if stage is Stage.CREATE
+            else None,
+            protected=stage in {Stage.CREATE, Stage.REVOKE},
+            secure_field=SecureField(
+                name="api_key",
+                selector=Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),
+                sink_connection_id="sink_one",
+                secret_resource="projects/project-one/secrets/key",
+                provider_id_selector=Selector(kind=SelectorKind.TEST_ID, value="new-key-id"),
+            )
+            if stage is Stage.CREATE
+            else None,
+            evidence_checks=frozenset({f"{stage.value}-passed"}),
+        )
+        for stage in stages
+    )
+    definition = PlaybookDraft(
+        name="Vendor rotation",
+        provider="vendor",
+        execution=ExecutionMethod.COMPUTER,
+        allowed_domains=("*.vendor.example.com",),
+        allowed_tools=frozenset(step.tool for step in steps),
+        required_connections=("connection_browser", "secret_one", "runtime_one"),
+        steps=steps,
+        recovery={
+            stage.value: RecoveryBranch(
+                mode="rollforward" if stage is Stage.REVOKE else "rollback",
+                actions=(
+                    RecoveryAction(
+                        tool="test.recover",
+                        operation="recover",
+                        parameters={"connection_id": "runtime_one"},
+                    ),
+                ),
+                preserves_old_generation=stage is not Stage.REVOKE,
+            )
+            for stage in stages
+        },
+        login_url_pattern="https://*.vendor.example.com/login*",
+    )
+    return PlaybookVersion(
+        id="version_one",
+        organisation_id="org_one",
+        playbook_id="playbook_one",
+        number=1,
+        definition=definition,
+        digest=digest(definition),
+        state=PlaybookState.ACTIVE,
+        dry_run_id="dryrun_one",
+        approved_by="admin_one",
+        approved_at=NOW,
+        created_by="author_one",
+        created_at=NOW,
+    )

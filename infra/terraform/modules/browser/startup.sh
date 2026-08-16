@@ -6,6 +6,9 @@ header="Metadata-Flavor: Google"
 get() {
   curl --fail --silent --show-error --header "$header" "$metadata/$1"
 }
+maybe() {
+  curl --fail --silent --header "$header" "$metadata/$1" 2>/dev/null || true
+}
 
 organisation="$(get firekey-organisation)"
 session="$(get firekey-session)"
@@ -14,17 +17,29 @@ capability_public="$(get firekey-capability-public)"
 evidence="$(get firekey-evidence)"
 region="$(get firekey-region)"
 image="$(get firekey-worker-image)"
+setup="$(maybe firekey-setup)"
 
 docker-credential-gcr configure-docker --registries="${region}-docker.pkg.dev"
 docker pull "$image"
-docker run --detach --restart=no --init --network=host --name=firekey-browser \
-  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=512m --shm-size=1g \
-  --security-opt=no-new-privileges --cap-drop=ALL \
-  --env FIREKEY_PROJECT_ID="$project" \
-  --env FIREKEY_ORGANISATION_ID="$organisation" \
-  --env FIREKEY_SESSION_ID="$session" \
-  --env FIREKEY_CAPABILITY_PUBLIC_KEY="$capability_public" \
-  --env FIREKEY_EVIDENCE_BUCKET="$evidence" \
-  --env FIREKEY_REGION="$region" \
-  --env FIREKEY_TELEMETRY_ENABLED=true \
-  "$image"
+
+args=(
+  --detach --restart=no --init --network=host --name=firekey-browser
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=512m --shm-size=1g
+  --security-opt=no-new-privileges --cap-drop=ALL
+  --env "FIREKEY_PROJECT_ID=$project"
+  --env "FIREKEY_ORGANISATION_ID=$organisation"
+  --env "FIREKEY_SESSION_ID=$session"
+  --env "FIREKEY_CAPABILITY_PUBLIC_KEY=$capability_public"
+  --env "FIREKEY_EVIDENCE_BUCKET=$evidence"
+  --env "FIREKEY_REGION=$region"
+  --env FIREKEY_TELEMETRY_ENABLED=true
+)
+if [[ "$setup" == "true" ]]; then
+  args+=(
+    --env FIREKEY_SETUP=true
+    --env "FIREKEY_SETUP_TOKEN=$(get firekey-setup-token)"
+    --env "FIREKEY_SETUP_DOMAINS=$(get firekey-setup-domains)"
+  )
+fi
+
+docker run "${args[@]}" "$image"

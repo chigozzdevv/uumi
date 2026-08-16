@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import json
 from collections.abc import Callable
@@ -17,14 +18,17 @@ from contracts import (
     Connection,
     ConnectionKind,
     ConnectionStatus,
+    ConnectionWaiter,
     ConsumerBinding,
     CredentialGeneration,
     DryRun,
     DryRunStatus,
     Environment,
+    ExecutionMethod,
     GenerationState,
     IncidentStatus,
     ManagedCredential,
+    NotificationKind,
     PlaybookAssignment,
     PlaybookState,
     PlaybookStep,
@@ -43,6 +47,7 @@ from contracts import (
     RotationRun,
     RotationStrategy,
     RunStatus,
+    Severity,
     Stage,
     StageBindings,
     StageExecutionRequest,
@@ -54,8 +59,10 @@ from contracts import (
 )
 from core.audit.chain import GENESIS, event_hash
 from core.audit.writer import AuditWriter
+from core.errors import ResourceConflictError, ResourceNotFoundError
 from core.generation import GenerationService
 from core.incident import IncidentService
+from core.notification import NotificationService
 from core.storage.catalog import FirestoreCatalog
 from core.storage.paths import FirestorePaths
 from policy import GatePolicy, digest
@@ -85,6 +92,7 @@ class StageCoordinator:
         evidence: GcsEvidenceSink,
         audit: AuditWriter,
         clock: Callable[[], datetime],
+        notifications: NotificationService | None = None,
     ) -> None:
         self._catalog = catalog
         self._broker = broker
@@ -96,6 +104,7 @@ class StageCoordinator:
         self._evidence = evidence
         self._audit = audit
         self._clock = clock
+        self._notifications = notifications
         self._policies: dict[tuple[str, str], tuple[PolicyVersion, GatePolicy]] = {}
 
     async def execute(self, request: StageExecutionRequest) -> StageExecutionResult:
@@ -105,8 +114,6 @@ class StageCoordinator:
         try:
             current = await self._catalog.get(path, StageExecutionResult)
         except Exception as error:
-            from core.errors import ResourceNotFoundError
-
             if not isinstance(error, ResourceNotFoundError):
                 raise
         else:
@@ -154,6 +161,17 @@ class StageCoordinator:
                     )
                 )
         except BrowserPauseError as pause:
+            if pause.output.get("authentication_required") is True:
+                await _flag_reauthentication(
+                    self._catalog,
+                    self._notifications,
+                    self._clock(),
+                    run,
+                    pause.output,
+                    execution_id,
+                )
+                with contextlib.suppress(Exception):
+                    await self._browser.terminate(run)
             result = StageExecutionResult(
                 id=execution_id,
                 organisation_id=run.organisation_id,
@@ -432,10 +450,10 @@ class StageCoordinator:
         if any(item.status is not ConnectionStatus.READY for item in connections):
             raise ValueError("one or more playbook connections are not ready")
         kinds = {item.kind for item in connections}
-        if not {ConnectionKind.PROVIDER, ConnectionKind.SECRET, ConnectionKind.RUNTIME}.issubset(
-            kinds
-        ):
-            raise ValueError("provider, secret store, and runtime connections are required")
+        required = required_connection_kinds(version.definition.execution)
+        if not required.issubset(kinds):
+            names = ", ".join(sorted(item.value for item in required))
+            raise ValueError(f"{names} connections are required")
         bindings = await self._bindings(run, credential)
         if {item.service_id for item in bindings} != set(credential.consumer_ids):
             raise ValueError("consumer bindings do not cover credential inventory")
@@ -1362,9 +1380,107 @@ def _execution_id(request: StageExecutionRequest) -> str:
     return _id("stage", request.run_id, request.stage.value, str(request.expected_revision))
 
 
+def required_connection_kinds(execution: ExecutionMethod) -> frozenset[ConnectionKind]:
+    core = {ConnectionKind.SECRET, ConnectionKind.RUNTIME}
+    if execution is ExecutionMethod.COMPUTER:
+        return frozenset({ConnectionKind.BROWSER, *core})
+    return frozenset({ConnectionKind.PROVIDER, *core})
+
+
 def _id(prefix: str, *values: str) -> str:
     checksum = hashlib.sha256("\0".join(values).encode()).hexdigest()[:40]
     return f"{prefix}_{checksum}"
+
+
+async def _flag_reauthentication(
+    catalog: FirestoreCatalog,
+    notifications: NotificationService | None,
+    now: datetime,
+    run: RotationRun,
+    output: dict[str, Any],
+    execution_id: str,
+) -> None:
+    # The paused run is the authoritative state; the connection flag and the
+    # notification are best-effort signals that must not fail the pause.
+    connection_id = output.get("connection_id")
+    if not isinstance(connection_id, str):
+        return
+    with contextlib.suppress(Exception):
+        path = FirestorePaths.connection(run.organisation_id, connection_id)
+        connection = await catalog.get(path, Connection)
+        if connection.status is not ConnectionStatus.REAUTHENTICATION:
+            await catalog.replace(
+                path,
+                Connection,
+                connection.revision,
+                lambda current: current.model_copy(
+                    update={
+                        "status": ConnectionStatus.REAUTHENTICATION,
+                        "updated_at": now,
+                        "revision": current.revision + 1,
+                    }
+                ),
+            )
+    with contextlib.suppress(Exception):
+        await _remember_waiting_run(catalog, run, connection_id, now)
+    if notifications is not None:
+        with contextlib.suppress(Exception):
+            await notifications.emit(
+                _id("reauthentication", execution_id),
+                run.organisation_id,
+                NotificationKind.CONNECTION_UNHEALTHY,
+                Severity.HIGH,
+                "Provider session requires reauthentication",
+                f"Run {run.id} paused: the browser session for {connection_id} "
+                "landed on the provider login page.",
+                f"/organisations/{run.organisation_id}/connections/{connection_id}",
+                connection_id,
+                run_id=run.id,
+            )
+
+
+async def _remember_waiting_run(
+    catalog: FirestoreCatalog,
+    run: RotationRun,
+    connection_id: str,
+    now: datetime,
+) -> None:
+    del now
+    path = FirestorePaths.connection_waiter(run.organisation_id, connection_id)
+    for _ in range(3):
+        try:
+            waiter = await catalog.get(path, ConnectionWaiter)
+        except ResourceNotFoundError:
+            try:
+                await catalog.create(
+                    path,
+                    ConnectionWaiter(
+                        organisation_id=run.organisation_id,
+                        connection_id=connection_id,
+                        run_ids=(run.id,),
+                    ),
+                )
+                return
+            except ResourceConflictError:
+                continue
+        if run.id in waiter.run_ids:
+            return
+        try:
+            await catalog.replace(
+                path,
+                ConnectionWaiter,
+                waiter.revision,
+                lambda current: current.model_copy(
+                    update={
+                        "run_ids": (*current.run_ids, run.id),
+                        "revision": current.revision + 1,
+                    }
+                ),
+            )
+            return
+        except ResourceConflictError:
+            continue
+    raise ResourceConflictError("could not record a paused run waiting for reauthentication")
 
 
 def _json_digest(value: Any) -> str:

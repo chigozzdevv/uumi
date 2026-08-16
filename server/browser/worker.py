@@ -11,6 +11,7 @@ from contracts import (
     BrowserStatus,
     PlaybookStep,
     SecureCaptureResult,
+    Selector,
 )
 from core.errors import ResourceConflictError
 
@@ -34,12 +35,14 @@ class ComputerUseWorker:
         sessions: BrowserService,
         capture: SecureCapture,
         id_factory: Callable[[str], str],
+        masked_selectors: tuple[Selector, ...] = (),
     ) -> None:
         self._model = model
         self._driver = driver
         self._sessions = sessions
         self._capture = capture
         self._id = id_factory
+        self._masked_selectors = masked_selectors
 
     async def propose(
         self,
@@ -51,7 +54,7 @@ class ComputerUseWorker:
     ) -> ProposedBrowserAction | None:
         if session.status is not BrowserStatus.RUNNING:
             raise ResourceConflictError("Computer Use requires a running browser session")
-        frame = await self._driver.screenshot(session)
+        frame = await self._driver.screenshot(session, self._masked_selectors)
         proposal = await self._model.propose(objective, frame, previous, outcome)
         if proposal is None:
             await self._driver.validate_step(step)

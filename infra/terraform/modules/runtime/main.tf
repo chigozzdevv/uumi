@@ -436,6 +436,31 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
+        name  = "FIREKEY_BROWSER_ZONE"
+        value = var.browser_zone
+      }
+
+      env {
+        name  = "FIREKEY_BROWSER_TEMPLATE"
+        value = var.browser_template
+      }
+
+      env {
+        name  = "FIREKEY_BROWSER_WORKER_IMAGE"
+        value = coalesce(var.browser_image, "")
+      }
+
+      env {
+        name  = "FIREKEY_CAPABILITY_PUBLIC_KEY"
+        value = var.capability_public_key
+      }
+
+      env {
+        name  = "FIREKEY_EVIDENCE_BUCKET"
+        value = var.evidence_bucket
+      }
+
+      env {
         name  = "FIREKEY_WALKTHROUGH_BUCKET"
         value = var.walkthrough_bucket
       }
