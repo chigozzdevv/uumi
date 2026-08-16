@@ -3,7 +3,7 @@ import binascii
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -78,7 +78,7 @@ class Runtime:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     runtime = Runtime(AuditLogSettings())
     app.state.runtime = runtime
     try:

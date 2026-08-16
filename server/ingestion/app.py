@@ -2,7 +2,7 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -75,7 +75,7 @@ class Runtime:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = IngestionSettings()  # type: ignore[call-arg]
     firestore = AsyncClient(project=settings.project_id, database=settings.firestore_database)
     runtime = Runtime(settings, firestore, GoogleRestClient())
