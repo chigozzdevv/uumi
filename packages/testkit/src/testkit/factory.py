@@ -1,6 +1,10 @@
 from datetime import UTC, datetime
 
 from contracts import (
+    HttpAuth,
+    HttpAuthScheme,
+    HttpOperation,
+    HttpProviderApi,
     PolicyDefinition,
     PolicyState,
     PolicyVersion,
@@ -11,6 +15,39 @@ from contracts import (
     Trigger,
 )
 from policy import REQUIRED_CHECKS, GatePolicy, digest
+
+
+def make_http_provider_api(
+    base_url: str = "https://api.sendgrid.com/v3",
+    scheme: HttpAuthScheme = HttpAuthScheme.BEARER,
+) -> HttpProviderApi:
+    return HttpProviderApi(
+        base_url=base_url,
+        auth=HttpAuth(scheme=scheme),
+        list_credentials=HttpOperation(
+            method="GET",
+            path="/api_keys",
+            success_statuses=(200,),
+            query={"limit": "500"},
+            list_items="result",
+            provider_id_field="api_key_id",
+            name_field="name",
+        ),
+        create_credential=HttpOperation(
+            method="POST",
+            path="/api_keys",
+            success_statuses=(201,),
+            body={"name": "${name}", "scopes": "${scopes}"},
+            provider_id_field="api_key_id",
+            secret_field="api_key",
+            name_field="name",
+        ),
+        revoke_credential=HttpOperation(
+            method="DELETE",
+            path="/api_keys/{provider_id}",
+            success_statuses=(204,),
+        ),
+    )
 
 
 def make_policy_version(

@@ -6,8 +6,8 @@ from typing import Any
 
 from connectors.cloudrun import CloudRunConnector
 from connectors.google import GoogleRestClient
+from connectors.http import HttpProviderConnector
 from connectors.secrets import SecretManagerConnector
-from connectors.sendgrid import SendGridConnector
 from contracts import ConnectionKind, ToolRequest, ToolResult
 from core.audit import AuditWriter
 from core.storage import FirestoreAuditRepository
@@ -52,7 +52,7 @@ async def lifespan(_: MCPServer[Any]) -> Any:
     signer = CapabilityVerifier.decode(settings.capability_public_key)
     connectors = ConnectorRegistry()
     connectors.register(ConnectionKind.SECRET, "google-secret-manager", secrets)
-    connectors.register(ConnectionKind.PROVIDER, "sendgrid", SendGridConnector(secrets))
+    connectors.register(ConnectionKind.PROVIDER, "*", HttpProviderConnector(secrets))
     connectors.register(ConnectionKind.RUNTIME, "cloud-run", CloudRunConnector(google))
     service = BrokerService(
         FirestoreBrokerRepository(firestore),

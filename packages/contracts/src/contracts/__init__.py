@@ -22,8 +22,11 @@ from contracts.browser import (
     BrowserPolicy,
     BrowserSession,
     BrowserStatus,
+    ConnectionWaiter,
     ReplayCheckpoint,
     SecureCaptureResult,
+    SetupSession,
+    SetupStatus,
 )
 from contracts.command import (
     CleanupRunCommand,
@@ -48,6 +51,7 @@ from contracts.credential import ManagedCredential
 from contracts.event import EventKind, OutboxEvent, RunEvent
 from contracts.evidence import StageProof
 from contracts.generation import CredentialGeneration
+from contracts.http import HttpAuth, HttpAuthScheme, HttpOperation, HttpProviderApi
 from contracts.incident import (
     Confidence,
     CorrelationCandidate,
@@ -151,6 +155,7 @@ __all__ = [
     "Connection",
     "ConnectionKind",
     "ConnectionStatus",
+    "ConnectionWaiter",
     "ConnectorCapabilities",
     "ConsumerBinding",
     "ConsumerService",
@@ -169,6 +174,10 @@ __all__ = [
     "Failure",
     "GenerationBinding",
     "GenerationState",
+    "HttpAuth",
+    "HttpAuthScheme",
+    "HttpOperation",
+    "HttpProviderApi",
     "Identifier",
     "Incident",
     "IncidentStatus",
@@ -225,6 +234,8 @@ __all__ = [
     "SecureField",
     "Selector",
     "SelectorKind",
+    "SetupSession",
+    "SetupStatus",
     "Severity",
     "SourceResource",
     "Stage",

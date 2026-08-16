@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from time import monotonic
@@ -15,8 +15,8 @@ from browser.service import BrowserService
 from browser.storage import FirestoreBrowserRepository
 from connectors.cloudrun import CloudRunConnector
 from connectors.google import GoogleRestClient
+from connectors.http import HttpProviderConnector
 from connectors.secrets import SecretManagerConnector
-from connectors.sendgrid import SendGridConnector
 from contracts import (
     ConnectionKind,
     StageExecutionRequest,
@@ -33,11 +33,13 @@ from core.auth import (
 )
 from core.generation import GenerationService
 from core.incident import IncidentService
+from core.notification import NotificationService
 from core.storage import (
     FirestoreAuditRepository,
     FirestoreCatalog,
     FirestoreGenerationRepository,
     FirestoreIncidentRepository,
+    FirestoreNotificationRepository,
 )
 from fastapi import Depends, FastAPI, Header, Request
 from google.cloud.firestore_v1 import AsyncClient
@@ -72,7 +74,7 @@ class Runtime:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = CoordinatorSettings()
     firestore = AsyncClient(project=settings.project_id, database=settings.firestore_database)
     catalog = FirestoreCatalog(firestore)
@@ -83,7 +85,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     evidence = GcsEvidenceSink(google, firestore, settings.evidence_bucket, settings.region)
     connectors = ConnectorRegistry()
     connectors.register(ConnectionKind.SECRET, "google-secret-manager", secrets)
-    connectors.register(ConnectionKind.PROVIDER, "sendgrid", SendGridConnector(secrets))
+    connectors.register(ConnectionKind.PROVIDER, "*", HttpProviderConnector(secrets))
     connectors.register(ConnectionKind.RUNTIME, "cloud-run", CloudRunConnector(google))
     agent_repository = AgentRepository(firestore)
     fleet = AgentFleetService(agent_repository)
@@ -131,6 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         evidence,
         AuditWriter(FirestoreAuditRepository(firestore), settings.region, _now),
         _now,
+        notifications=NotificationService(FirestoreNotificationRepository(firestore), _now),
     )
     app.state.runtime = Runtime(
         coordinator,

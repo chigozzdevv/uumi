@@ -104,6 +104,8 @@ class ConnectorRegistry:
 
     def resolve(self, connection: Connection, tool: str) -> Connector:
         connector = self._connectors.get((connection.kind, connection.provider))
+        if connector is None and connection.kind is ConnectionKind.PROVIDER:
+            connector = self._connectors.get((connection.kind, "*"))
         if connector is None or tool not in connector.tools:
             raise CapabilityError(
                 f"no connector provides {tool} for {connection.kind.value}/{connection.provider}"

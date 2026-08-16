@@ -475,6 +475,8 @@ def _connection(
         if kind is ConnectionKind.SECRET
         else "provider-key-one"
     )
+    from testkit import make_http_provider_api
+
     return Connection(
         id=connection_id,
         organisation_id="org_one",
@@ -484,6 +486,7 @@ def _connection(
         auth_reference="projects/project-one/secrets/auth/versions/1",
         capabilities=tools,
         allowed_resources=(resources,),
+        http=make_http_provider_api() if kind is ConnectionKind.PROVIDER else None,
         status=ConnectionStatus.READY,
         region="us-east1",
         created_at=NOW,

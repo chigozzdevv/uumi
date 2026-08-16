@@ -11,18 +11,21 @@ from connectors.base import ConnectorContext
 from connectors.base.errors import AmbiguousMutationError
 from connectors.github import GitHubWebhook
 from connectors.google import GoogleRestClient
+from connectors.http import HttpProviderConnector
 from connectors.scc import SecurityCommandCenterFinding
 from connectors.secrets import SecretManagerConnector
-from connectors.sendgrid import SendGridConnector
 from contracts import (
     Connection,
     ConnectionKind,
     ConnectionStatus,
+    HttpOperation,
+    HttpProviderApi,
     RunStatus,
     Stage,
 )
 from google.oauth2.credentials import Credentials
-from testkit import make_run
+from pydantic import ValidationError
+from testkit import make_http_provider_api, make_run
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
@@ -40,8 +43,9 @@ def _context() -> ConnectorContext:
         provider="sendgrid",
         display_name="SendGrid production",
         auth_reference="projects/project-one/secrets/admin/versions/1",
-        capabilities=SendGridConnector.tools,
+        capabilities=HttpProviderConnector.tools,
         allowed_resources=("sendgrid",),
+        http=make_http_provider_api(),
         status=ConnectionStatus.READY,
         region="us-east1",
         created_at=NOW,
@@ -125,7 +129,7 @@ async def test_sendgrid_creation_returns_one_time_secret_for_direct_transfer() -
         )
 
     google = _google(google_handler)
-    connector = SendGridConnector(
+    connector = HttpProviderConnector(
         SecretManagerConnector(google),
         httpx.AsyncClient(
             base_url="https://api.sendgrid.com/v3",
@@ -173,7 +177,7 @@ async def test_sendgrid_timeout_deletes_attributable_orphan_and_stops() -> None:
         raise httpx.ReadTimeout("response lost", request=request)
 
     google = _google(google_handler)
-    connector = SendGridConnector(
+    connector = HttpProviderConnector(
         SecretManagerConnector(google),
         httpx.AsyncClient(
             base_url="https://api.sendgrid.com/v3",
@@ -247,7 +251,7 @@ async def test_sendgrid_stale_reconcile_cleans_provider_and_secret_orphans() -> 
         raise AssertionError(f"unexpected SendGrid request {request.method} {request.url}")
 
     google = _google(google_handler)
-    connector = SendGridConnector(
+    connector = HttpProviderConnector(
         SecretManagerConnector(google),
         httpx.AsyncClient(
             base_url="https://api.sendgrid.com/v3",
@@ -266,6 +270,140 @@ async def test_sendgrid_stale_reconcile_cleans_provider_and_secret_orphans() -> 
     assert deleted == ["/v3/api_keys/orphan-one"]
     assert disabled == ["/v1/projects/project-one/secrets/key/versions/2:disable"]
     await google.close()
+
+
+@pytest.mark.anyio
+async def test_declared_header_auth_sends_the_configured_api_key() -> None:
+    from contracts import HttpAuth, HttpAuthScheme
+
+    seen: list[str] = []
+
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"org-admin-token").decode()}},
+        )
+
+    def vendor_handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["X-Api-Key"])
+        if request.method == "GET":
+            return httpx.Response(200, json={"keys": []})
+        return httpx.Response(
+            201,
+            json={"id": "key-one", "token": "workload-secret"},
+        )
+
+    api = HttpProviderApi(
+        base_url="https://keys.vendor.example/v1",
+        auth=HttpAuth(scheme=HttpAuthScheme.HEADER, header="X-Api-Key"),
+        list_credentials=HttpOperation(
+            method="GET",
+            path="/keys",
+            success_statuses=(200,),
+            list_items="keys",
+            provider_id_field="id",
+            name_field="name",
+        ),
+        create_credential=HttpOperation(
+            method="POST",
+            path="/keys",
+            success_statuses=(201,),
+            body={"name": "${name}"},
+            provider_id_field="id",
+            secret_field="token",
+            name_field="name",
+        ),
+        revoke_credential=HttpOperation(
+            method="DELETE",
+            path="/keys/{provider_id}",
+            success_statuses=(204,),
+        ),
+    )
+    context = _context()
+    context = ConnectorContext(
+        request_id=context.request_id,
+        agent_id=context.agent_id,
+        connection=context.connection.model_copy(
+            update={"provider": "internal-vendor", "http": api}
+        ),
+        run=context.run,
+        now=context.now,
+        idempotency_key=context.idempotency_key,
+    )
+    google = _google(google_handler)
+    connector = HttpProviderConnector(
+        SecretManagerConnector(google),
+        httpx.AsyncClient(transport=httpx.MockTransport(vendor_handler)),
+    )
+    response = await connector.execute(
+        "provider.createCredential",
+        {"name": "rotate"},
+        context,
+    )
+
+    assert seen == ["org-admin-token", "org-admin-token"]
+    assert response.result["provider_id"] == "key-one"
+    assert response.secret is not None
+    assert response.secret.bytes() == b"workload-secret"
+    response.secret.clear()
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_http_connector_encodes_provider_ids_before_building_paths() -> None:
+    seen: list[bytes] = []
+
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"admin-key").decode()}},
+        )
+
+    def provider_handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.raw_path)
+        return httpx.Response(204)
+
+    google = _google(google_handler)
+    connector = HttpProviderConnector(
+        SecretManagerConnector(google),
+        httpx.AsyncClient(
+            base_url="https://api.sendgrid.com/v3",
+            transport=httpx.MockTransport(provider_handler),
+        ),
+    )
+
+    response = await connector.execute(
+        "provider.revokeCredential",
+        {"provider_id": "key?scope=all/#fragment"},
+        _context(),
+    )
+
+    assert response.result == {"provider_id": "key?scope=all/#fragment", "revoked": True}
+    assert seen == [b"/v3/api_keys/key%3Fscope%3Dall%2F%23fragment"]
+    await google.close()
+
+
+def test_http_provider_contract_rejects_non_origin_base_urls_and_unsafe_paths() -> None:
+    template = make_http_provider_api()
+
+    with pytest.raises(ValidationError, match="without credentials or query data"):
+        HttpProviderApi(
+            **{**template.model_dump(), "base_url": "https://api.sendgrid.com/v3?tenant=attacker"},
+        )
+
+    with pytest.raises(ValidationError, match="origin-relative paths"):
+        HttpOperation(
+            method="GET",
+            path="//attacker.example/keys",
+            success_statuses=(200,),
+        )
+
+    with pytest.raises(ValidationError, match="invalid placeholder"):
+        HttpOperation(
+            method="GET",
+            path="/keys/{provider-id}",
+            success_statuses=(200,),
+        )
 
 
 def test_github_webhook_rejects_modified_payload() -> None:

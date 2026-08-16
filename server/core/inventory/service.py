@@ -1,8 +1,11 @@
+from datetime import datetime
 from typing import Protocol
 
 from contracts import (
     Application,
     Connection,
+    ConnectionKind,
+    ConnectionStatus,
     ConsumerBinding,
     ConsumerService,
     CredentialGeneration,
@@ -11,6 +14,8 @@ from contracts import (
 )
 
 from core.errors import ResourceConflictError
+
+_BROWSER_CAPABILITIES = frozenset({"browser.execute", "browser.authenticate"})
 
 
 class InventoryRepository(Protocol):
@@ -27,6 +32,16 @@ class InventoryRepository(Protocol):
     async def get_environment(self, organisation_id: str, resource_id: str) -> Environment: ...
 
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection: ...
+
+    async def update_authentication(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        expected_revision: int,
+        auth_reference: str,
+        status: ConnectionStatus,
+        updated_at: datetime,
+    ) -> Connection: ...
 
     async def import_credential(
         self,
@@ -53,6 +68,15 @@ class InventoryService:
         self._repository = repository
 
     async def add_connection(self, connection: Connection) -> Connection:
+        if connection.kind is ConnectionKind.BROWSER:
+            if not connection.allowed_resources or any(
+                not _domain_pattern(value) for value in connection.allowed_resources
+            ):
+                raise ResourceConflictError("browser connection must declare allowed domains")
+            if not connection.capabilities.intersection(_BROWSER_CAPABILITIES):
+                raise ResourceConflictError("browser connection must declare a browser capability")
+        if connection.kind is ConnectionKind.PROVIDER and connection.http is None:
+            raise ResourceConflictError("provider connection requires an HTTP API declaration")
         return await self._repository.add_connection(connection)
 
     async def add_application(self, application: Application) -> Application:
@@ -100,6 +124,9 @@ class InventoryService:
             raise ResourceConflictError("credential binding lineage is inconsistent")
         return await self._repository.import_credential(credential, generation, bindings)
 
+    async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
+        return await self._repository.get_connection(organisation_id, resource_id)
+
     async def list_connections(self, organisation_id: str) -> tuple[Connection, ...]:
         return await self._repository.connections(organisation_id)
 
@@ -127,3 +154,7 @@ class InventoryService:
 def _tenant(actual: str, expected: str) -> None:
     if actual != expected:
         raise ResourceConflictError("inventory relationship crosses organisation boundaries")
+
+
+def _domain_pattern(value: str) -> bool:
+    return bool(value) and "." in value and all(ch.isalnum() or ch in ".-*" for ch in value)

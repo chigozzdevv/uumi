@@ -3,6 +3,7 @@ from enum import StrEnum
 from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
+from contracts.http import HttpProviderApi
 
 
 class ConnectionKind(StrEnum):
@@ -30,6 +31,7 @@ class Connection(Contract):
     auth_reference: str | None = Field(default=None, max_length=1024)
     capabilities: frozenset[str] = Field(min_length=1)
     allowed_resources: tuple[str, ...] = Field(min_length=1)
+    http: HttpProviderApi | None = None
     status: ConnectionStatus
     region: str = Field(min_length=3, max_length=32)
     created_at: AwareDatetime
@@ -40,6 +42,11 @@ class Connection(Contract):
     def validate_authentication(self) -> "Connection":
         if self.status is ConnectionStatus.READY and not self.auth_reference:
             raise ValueError("a ready connection requires an authentication reference")
+        if self.kind is ConnectionKind.PROVIDER:
+            if self.http is None:
+                raise ValueError("a provider connection requires an HTTP API declaration")
+        elif self.http is not None:
+            raise ValueError("only provider connections may declare an HTTP API")
         return self
 
 
