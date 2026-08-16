@@ -87,6 +87,11 @@ class Repository:
     async def assign(self, assignment: PlaybookAssignment) -> PlaybookAssignment:
         raise AssertionError("not used")
 
+    async def get_assignment(
+        self, organisation_id: str, credential_id: str
+    ) -> PlaybookAssignment | None:
+        return None
+
     async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]:
         raise AssertionError("not used")
 

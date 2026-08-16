@@ -115,6 +115,7 @@ class PlaybookDraft(Contract):
     required_connections: tuple[Identifier, ...] = Field(min_length=1)
     steps: tuple[PlaybookStep, ...] = Field(min_length=1)
     recovery: dict[str, RecoveryBranch] = Field(default_factory=dict)
+    login_url_pattern: str | None = Field(default=None, max_length=1024)
 
     @model_validator(mode="after")
     def validate_execution(self) -> "PlaybookDraft":
@@ -124,6 +125,8 @@ class PlaybookDraft(Contract):
                 raise ValueError("computer-use playbooks require domains and browser steps")
             if not any(step.secure_field for step in browser_steps):
                 raise ValueError("computer-use playbooks require an explicit secure capture step")
+            if not self.login_url_pattern:
+                raise ValueError("computer-use playbooks require a login URL pattern")
         elif browser_steps:
             raise ValueError("browser steps require computer-use execution")
         if tuple(dict.fromkeys(step.id for step in self.steps)) != tuple(

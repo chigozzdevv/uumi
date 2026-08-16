@@ -2,6 +2,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from contracts import (
+    Connection,
+    ConnectionKind,
+    ConnectionStatus,
     ConsumerBinding,
     CredentialGeneration,
     DryRun,
@@ -22,7 +25,7 @@ from contracts import (
 from core.audit import GENESIS, event_hash
 from core.errors import PlaybookError, ResourceConflictError
 from core.inventory import InventoryService
-from core.playbook import PlaybookService
+from core.playbook import PlaybookService, validate_assignment_connections
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
@@ -110,6 +113,11 @@ class Playbooks:
     async def assign(self, assignment: PlaybookAssignment) -> PlaybookAssignment:
         return assignment
 
+    async def get_assignment(
+        self, organisation_id: str, credential_id: str
+    ) -> PlaybookAssignment | None:
+        return None
+
     async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]:
         return ()
 
@@ -135,6 +143,26 @@ class Inventory:
 
     async def get_connection(self, organisation_id: str, resource_id: str) -> object:
         raise NotImplementedError
+
+    async def update_authentication(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        expected_revision: int,
+        auth_reference: str,
+        status: object,
+        updated_at: datetime,
+    ) -> object:
+        raise NotImplementedError
+
+    async def connections(self, organisation_id: str) -> tuple[object, ...]:
+        return ()
+
+    async def applications(self, organisation_id: str) -> tuple[object, ...]:
+        return ()
+
+    async def environments(self, organisation_id: str) -> tuple[object, ...]:
+        return ()
 
     async def import_credential(
         self,
@@ -300,3 +328,81 @@ def _draft() -> PlaybookDraft:
             for stage in stages
         },
     )
+
+
+@pytest.mark.anyio
+async def test_browser_connection_requires_domains_and_capability() -> None:
+    service = InventoryService(Inventory())  # type: ignore[arg-type]
+    invalid_resources = Connection(
+        id="connection_browser",
+        organisation_id="org_one",
+        kind=ConnectionKind.BROWSER,
+        provider="vendor",
+        display_name="Vendor console",
+        capabilities=frozenset({"browser.execute"}),
+        allowed_resources=("sendgrid:*",),
+        status=ConnectionStatus.DISABLED,
+        region="us-east1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    invalid_capability = invalid_resources.model_copy(
+        update={
+            "allowed_resources": ("*.vendor.example.com",),
+            "capabilities": frozenset({"create"}),
+        }
+    )
+    valid = invalid_capability.model_copy(update={"capabilities": frozenset({"browser.execute"})})
+
+    with pytest.raises(ResourceConflictError, match="allowed domains"):
+        await service.add_connection(invalid_resources)
+    with pytest.raises(ResourceConflictError, match="browser capability"):
+        await service.add_connection(invalid_capability)
+    stored = await service.add_connection(valid)
+    assert stored.kind is ConnectionKind.BROWSER
+
+
+def test_computer_use_assignment_requires_a_ready_browser_connection() -> None:
+    browser = Connection(
+        id="connection_browser",
+        organisation_id="org_one",
+        kind=ConnectionKind.BROWSER,
+        provider="vendor",
+        display_name="Vendor console",
+        capabilities=frozenset({"browser.execute"}),
+        allowed_resources=("*.vendor.example.com",),
+        status=ConnectionStatus.DISABLED,
+        region="us-east1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    secret = browser.model_copy(
+        update={
+            "id": "secret_one",
+            "kind": ConnectionKind.SECRET,
+            "status": ConnectionStatus.READY,
+            "auth_reference": "projects/p/secrets/s/versions/1",
+            "allowed_resources": ("projects/p/secrets/s",),
+            "capabilities": frozenset({"store"}),
+        }
+    )
+
+    with pytest.raises(PlaybookError, match="exactly one browser connection"):
+        validate_assignment_connections(ExecutionMethod.COMPUTER, (secret,))
+    with pytest.raises(PlaybookError, match="ready browser session"):
+        validate_assignment_connections(ExecutionMethod.COMPUTER, (browser, secret))
+    ready = browser.model_copy(
+        update={
+            "status": ConnectionStatus.READY,
+            "auth_reference": "projects/p/secrets/session/versions/1",
+        }
+    )
+    validate_assignment_connections(
+        ExecutionMethod.COMPUTER, (ready, secret), ("*.vendor.example.com",)
+    )
+    with pytest.raises(PlaybookError, match="not covered"):
+        validate_assignment_connections(
+            ExecutionMethod.COMPUTER, (ready, secret), ("other.example.com",)
+        )
+    with pytest.raises(PlaybookError, match="cannot include a browser connection"):
+        validate_assignment_connections(ExecutionMethod.API, (ready, secret))

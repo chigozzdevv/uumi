@@ -137,6 +137,41 @@ def test_outbox_publication_requires_provider_receipt() -> None:
         OutboxEvent(event=event, available_at=NOW, published_at=NOW)
 
 
+def test_computer_playbook_requires_a_login_url_pattern() -> None:
+    from contracts import SecureField
+
+    with pytest.raises(ValidationError, match="login URL"):
+        PlaybookDraft(
+            name="Vendor rotation",
+            provider="vendor",
+            execution=ExecutionMethod.COMPUTER,
+            allowed_domains=("vendor.example.com",),
+            allowed_tools=frozenset({"browser.secure-capture"}),
+            required_connections=("connection_one",),
+            steps=(
+                PlaybookStep(
+                    id="step_one",
+                    stage=Stage.CREATE,
+                    tool="browser.secure-capture",
+                    operation="capture",
+                    objective="Capture the created key",
+                    selectors=(Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),),
+                    checkpoint=PageCheckpoint(url_pattern="https://vendor.example.com/keys"),
+                    secure_field=SecureField(
+                        name="api_key",
+                        selector=Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),
+                        sink_connection_id="sink_one",
+                        secret_resource="projects/project-one/secrets/key",
+                        provider_id_selector=Selector(
+                            kind=SelectorKind.TEST_ID, value="new-key-id"
+                        ),
+                    ),
+                    evidence_checks=frozenset({"captured"}),
+                ),
+            ),
+        )
+
+
 def test_computer_playbook_requires_secure_capture() -> None:
     with pytest.raises(ValidationError, match="secure capture"):
         PlaybookDraft(

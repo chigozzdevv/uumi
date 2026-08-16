@@ -4,6 +4,9 @@ from datetime import datetime
 from typing import Protocol
 
 from contracts import (
+    Connection,
+    ConnectionKind,
+    ConnectionStatus,
     CreateRunCommand,
     DryRun,
     DryRunStatus,
@@ -19,7 +22,7 @@ from contracts import (
 )
 from policy import digest
 
-from core.errors import PlaybookError
+from core.errors import PlaybookError, ResourceConflictError
 from core.storage.repository import MutationResult
 
 _LIST_SCAN_LIMIT = 500
@@ -29,6 +32,10 @@ class DryRunWorkflow(Protocol):
     async def create(self, command: CreateRunCommand) -> MutationResult: ...
 
     async def get(self, organisation_id: str, run_id: str) -> RotationRun: ...
+
+
+class ConnectionLookup(Protocol):
+    async def get_connection(self, organisation_id: str, resource_id: str) -> Connection: ...
 
 
 class PlaybookRepository(Protocol):
@@ -78,6 +85,10 @@ class PlaybookRepository(Protocol):
 
     async def assign(self, assignment: PlaybookAssignment) -> PlaybookAssignment: ...
 
+    async def get_assignment(
+        self, organisation_id: str, credential_id: str
+    ) -> PlaybookAssignment | None: ...
+
 
 class PlaybookService:
     def __init__(
@@ -85,10 +96,12 @@ class PlaybookService:
         repository: PlaybookRepository,
         clock: Callable[[], datetime],
         workflow: DryRunWorkflow | None = None,
+        inventory: ConnectionLookup | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
         self._workflow = workflow
+        self._inventory = inventory
 
     async def list_playbooks(self, organisation_id: str, limit: int = 100) -> tuple[Playbook, ...]:
         playbooks = await self._repository.list_playbooks(organisation_id, _LIST_SCAN_LIMIT)
@@ -251,6 +264,19 @@ class PlaybookService:
         dry_run_only: bool = False,
         environment_id: str | None = None,
     ) -> PlaybookAssignment:
+        version = await self._repository.get_version(organisation_id, playbook_id, version_id)
+        if self._inventory is not None:
+            connections = tuple(
+                [
+                    await self._inventory.get_connection(organisation_id, item)
+                    for item in connection_ids
+                ]
+            )
+            validate_assignment_connections(
+                version.definition.execution,
+                connections,
+                version.definition.allowed_domains,
+            )
         assignment = PlaybookAssignment(
             id=f"assignment_{credential_id}",
             organisation_id=organisation_id,
@@ -264,6 +290,74 @@ class PlaybookService:
             assigned_at=self._clock(),
         )
         return await self._repository.assign(assignment)
+
+    async def get_assignment(
+        self, organisation_id: str, credential_id: str
+    ) -> PlaybookAssignment | None:
+        return await self._repository.get_assignment(organisation_id, credential_id)
+
+
+def require_ready_browser_connections(connections: tuple[Connection, ...]) -> None:
+    for item in connections:
+        if item.kind is ConnectionKind.BROWSER and (
+            item.status is not ConnectionStatus.READY or item.auth_reference is None
+        ):
+            raise ResourceConflictError("connection still needs login")
+
+
+def validate_assignment_connections(
+    execution: ExecutionMethod,
+    connections: tuple[Connection, ...],
+    allowed_domains: tuple[str, ...] = (),
+) -> None:
+    browsers = tuple(item for item in connections if item.kind is ConnectionKind.BROWSER)
+    if execution is ExecutionMethod.COMPUTER:
+        if len(browsers) != 1:
+            raise PlaybookError("computer-use assignment requires exactly one browser connection")
+        if browsers[0].status is not ConnectionStatus.READY or browsers[0].auth_reference is None:
+            raise PlaybookError("computer-use assignment requires a ready browser session")
+        if allowed_domains and any(
+            not _domain_covered(domain, browsers[0].allowed_resources) for domain in allowed_domains
+        ):
+            raise PlaybookError(
+                "computer-use playbook domains are not covered by the browser connection"
+            )
+        return
+    if browsers:
+        raise PlaybookError("provider-api assignment cannot include a browser connection")
+
+
+def _domain_covered(need: str, allowed: tuple[str, ...]) -> bool:
+    needed = need.lower().rstrip(".")
+    allowed_norm = tuple(item.lower().rstrip(".") for item in allowed)
+    if needed in allowed_norm:
+        return True
+    host = needed[2:] if needed.startswith("*.") else needed
+    if _host_allowed(host, allowed):
+        return True
+    if not needed.startswith("*."):
+        return False
+    suffix = needed[2:]
+    for pattern in allowed_norm:
+        if pattern.startswith("*."):
+            parent = pattern[2:]
+            if suffix == parent or suffix.endswith("." + parent):
+                return True
+        elif suffix == pattern or suffix.endswith("." + pattern):
+            return True
+    return False
+
+
+def _host_allowed(hostname: str, allowed: tuple[str, ...]) -> bool:
+    for pattern in allowed:
+        expected = pattern.lower().rstrip(".")
+        if expected.startswith("*."):
+            suffix = expected[2:]
+            if hostname.endswith("." + suffix) and hostname != suffix:
+                return True
+        elif hostname == expected:
+            return True
+    return False
 
 
 def validate_definition(definition: PlaybookDraft) -> None:

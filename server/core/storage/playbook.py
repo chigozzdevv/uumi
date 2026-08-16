@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from contracts import (
+    Connection,
     ConsumerBinding,
     DryRun,
     DryRunStatus,
@@ -19,6 +20,7 @@ from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from pydantic import TypeAdapter
 
 from core.errors import PlaybookError, ResourceConflictError, ResourceNotFoundError
+from core.playbook.service import validate_assignment_connections
 from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 
@@ -237,6 +239,16 @@ class FirestorePlaybookRepository:
 
         return await apply(self._client.transaction(max_attempts=5))
 
+    async def get_assignment(
+        self, organisation_id: str, credential_id: str
+    ) -> PlaybookAssignment | None:
+        snapshot = await self._client.document(
+            FirestorePaths.assignment(organisation_id, credential_id)
+        ).get()
+        if not snapshot.exists:
+            return None
+        return PlaybookAssignment.model_validate(_data(snapshot))
+
     async def assign(self, assignment: PlaybookAssignment) -> PlaybookAssignment:
         version_ref = self._client.document(
             FirestorePaths.playbook_version(
@@ -280,6 +292,11 @@ class FirestorePlaybookRepository:
             ):
                 raise PlaybookError("dry-run consumers must share one non-production environment")
 
+        connection_refs = [
+            self._client.document(FirestorePaths.connection(assignment.organisation_id, item))
+            for item in assignment.connection_ids
+        ]
+
         @async_transactional
         async def apply(transaction: AsyncTransaction) -> PlaybookAssignment:
             version_snapshot = await version_ref.get(transaction=transaction)
@@ -298,6 +315,17 @@ class FirestorePlaybookRepository:
             required = set(version.definition.required_connections)
             if not required.issubset(assignment.connection_ids):
                 raise PlaybookError("assignment is missing required connections")
+            loaded: list[Connection] = []
+            for reference in connection_refs:
+                snapshot = await reference.get(transaction=transaction)
+                if not snapshot.exists:
+                    raise PlaybookError(f"connection {reference.id} was not found")
+                loaded.append(Connection.model_validate(_data(snapshot)))
+            validate_assignment_connections(
+                version.definition.execution,
+                tuple(loaded),
+                version.definition.allowed_domains,
+            )
             if current.exists:
                 stored = PlaybookAssignment.model_validate(_data(current))
                 if stored == assignment:
