@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --canvas: #fbfbf9;
+    --workspace: #f4f5f3;
+    --sidebar: #e9e9f0;
+    --surface: #ffffff;
+    --surface-soft: #f8f8f6;
+    --surface-active: rgba(255, 255, 255, 0.82);
+    --border: #dedfdc;
+    --border-soft: #e8e9e6;
+    --ink: #17152f;
+    --ink-soft: #5f5d72;
+    --ink-muted: #9998a5;
+    --accent: #3d326f;
+    --accent-soft: #e6e2f5;
+    --green: #1f7a56;
+    --green-soft: #e5f2eb;
+    --amber: #9a651c;
+    --amber-soft: #f7ecd9;
+    --red: #a5424c;
+    --red-soft: #f7e7e9;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    min-width: 320px;
+    background: var(--canvas);
+  }
+
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    letter-spacing: -0.015em;
+    min-height: 100vh;
+    margin: 0;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #cfced5;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  .app-shell {
+    background: var(--workspace);
+    border: 1px solid var(--border-soft);
+    border-radius: 28px;
+    box-shadow: 0 24px 70px rgba(40, 37, 68, 0.07);
+    display: flex;
+    height: calc(100vh - 32px);
+    margin: 16px;
+    min-height: 680px;
+    overflow: hidden;
+  }
+
+  .page {
+    margin: 0 auto;
+    max-width: 1440px;
+    padding: 44px 48px 72px;
+    width: 100%;
+  }
+
+  .page-title {
+    color: var(--ink);
+    font-size: clamp(2rem, 3vw, 3rem);
+    font-weight: 600;
+    letter-spacing: -0.055em;
+    line-height: 1.05;
+    margin: 0;
+  }
+
+  .page-copy {
+    color: var(--ink-soft);
+    font-size: 13px;
+    line-height: 1.6;
+    margin-top: 8px;
+    max-width: 780px;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    box-shadow: 0 10px 30px rgba(23, 21, 47, 0.04);
+  }
+
+  .panel-subtle {
+    background: var(--surface-soft);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+  }
+
+  .panel-grid {
+    display: grid;
+    gap: 16px;
+  }
+
+  .subheading {
+    color: var(--ink);
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    margin: 0;
+  }
+
+  .eyebrow {
+    color: var(--ink-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .mono-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+  }
+
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
