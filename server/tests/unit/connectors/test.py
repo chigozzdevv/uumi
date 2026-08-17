@@ -479,6 +479,79 @@ def test_scc_retry_is_stable_but_new_occurrence_is_distinct() -> None:
     assert first.id != updated.id
 
 
+@pytest.mark.anyio
+async def test_cloudrun_deploy_supports_multi_container_with_target() -> None:
+    from connectors.cloudrun import CloudRunConnector
+
+    requests_log: list[httpx.Request] = []
+
+    def run_handler(request: httpx.Request) -> httpx.Response:
+        requests_log.append(request)
+        if request.method == "GET":
+            if "operations" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "name": "operations/op-1",
+                        "done": True,
+                        "response": {
+                            "name": "projects/p/locations/us-central1/services/s",
+                            "latestReadyRevision": "rev-2",
+                        },
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "name": "projects/p/locations/us-central1/services/s",
+                    "latestReadyRevision": "rev-1",
+                    "etag": "etag-1",
+                    "template": {
+                        "containers": [
+                            {"name": "app", "image": "app:v1", "env": []},
+                            {"name": "sidecar", "image": "sidecar:v1", "env": []},
+                        ],
+                    },
+                    "traffic": [{"revision": "rev-1", "percent": 100}],
+                },
+            )
+        if request.method == "PATCH":
+            return httpx.Response(
+                200,
+                json={
+                    "name": "operations/op-1",
+                    "done": True,
+                    "response": {
+                        "name": "projects/p/locations/us-central1/services/s",
+                        "latestReadyRevision": "rev-2",
+                    },
+                },
+            )
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    google = _google(run_handler)
+    connector = CloudRunConnector(google)
+
+    response = await connector.execute(
+        "runtime.deployCandidate",
+        {
+            "service": "projects/p/locations/us-central1/services/s",
+            "container_name": "sidecar",
+            "secret_env": "API_KEY",
+            "secret_name": "projects/p/secrets/k",
+            "secret_version": "1",
+            "generation_id": "gen_2",
+            "tag": "candidate",
+        },
+        _context(),
+    )
+
+    assert response.result["candidate_revision"] == "rev-2"
+    assert response.result["rollback_revision"] == "rev-1"
+    assert response.result["generation_id"] == "gen_2"
+    await google.close()
+
+
 def _google(handler: Any) -> GoogleRestClient:
     return GoogleRestClient(
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]

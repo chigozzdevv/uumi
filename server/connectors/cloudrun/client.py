@@ -54,17 +54,27 @@ class CloudRunConnector:
         if not isinstance(template, dict):
             raise ConnectorError("runtime-invalid", "Cloud Run service has no revision template")
         containers = template.get("containers")
-        valid_containers = (
-            isinstance(containers, list)
-            and len(containers) == 1
-            and isinstance(containers[0], dict)
-        )
-        if not valid_containers:
+        if (
+            not isinstance(containers, list)
+            or not containers
+            or not all(isinstance(c, dict) for c in containers)
+        ):
             raise ConnectorError(
-                "runtime-unsupported", "FireKey requires a single-container Cloud Run service"
+                "runtime-unsupported", "Cloud Run template must contain valid containers"
             )
-        assert isinstance(containers, list)
-        container = containers[0]
+        container_name = payload.get("container_name")
+        if container_name is not None and not isinstance(container_name, str):
+            raise ConnectorError("invalid-parameter", "container_name must be a string")
+        if container_name:
+            matching = [c for c in containers if c.get("name") == container_name]
+            if not matching:
+                raise ConnectorError(
+                    "container-not-found",
+                    f"container {container_name} not found in Cloud Run template",
+                )
+            container = matching[0]
+        else:
+            container = containers[0]
         assert isinstance(container, dict)
         secret_env = _string(payload, "secret_env")
         secret_name = _string(payload, "secret_name")
