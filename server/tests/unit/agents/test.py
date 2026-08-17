@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 import pytest
@@ -417,3 +418,106 @@ class ExistingGoogle:
             "scope": self.body["scope"],
             "revisionLabels": self.body["revisionLabels"],
         }
+
+
+class MemoryDocumentSnapshot:
+    def __init__(self, data: dict[str, object] | None, exists: bool = True) -> None:
+        self._data = data
+        self.exists = exists
+
+    def to_dict(self) -> dict[str, object] | None:
+        return self._data
+
+
+class MemoryDocumentReference:
+    def __init__(self, store: dict[str, dict[str, object]], path: str) -> None:
+        self._store = store
+        self._path = path
+
+    async def set(self, data: dict[str, object]) -> None:
+        self._store[self._path] = data
+
+    async def get(self) -> MemoryDocumentSnapshot:
+        if self._path in self._store:
+            return MemoryDocumentSnapshot(self._store[self._path], exists=True)
+        return MemoryDocumentSnapshot(None, exists=False)
+
+    async def delete(self) -> None:
+        self._store.pop(self._path, None)
+
+
+class MemoryQuery:
+    def __init__(self, items: list[dict[str, object]]) -> None:
+        self._items = items
+
+    def where(self, field: str, op: str, value: object) -> "MemoryQuery":
+        filtered = [item for item in self._items if item.get(field) == value]
+        return MemoryQuery(filtered)
+
+    def limit(self, count: int) -> "MemoryQuery":
+        return MemoryQuery(self._items[:count])
+
+    async def stream(self) -> AsyncGenerator[MemoryDocumentSnapshot, None]:
+        for item in self._items:
+            yield MemoryDocumentSnapshot(item, exists=True)
+
+
+class MemoryCollectionReference:
+    def __init__(self, store: dict[str, dict[str, object]], prefix: str) -> None:
+        self._store = store
+        self._prefix = prefix
+
+    def where(self, field: str, op: str, value: object) -> MemoryQuery:
+        items = [v for k, v in self._store.items() if k.startswith(self._prefix)]
+        return MemoryQuery(items).where(field, op, value)
+
+    def limit(self, count: int) -> MemoryQuery:
+        items = [v for k, v in self._store.items() if k.startswith(self._prefix)]
+        return MemoryQuery(items).limit(count)
+
+    async def stream(self) -> AsyncGenerator[MemoryDocumentSnapshot, None]:
+        items = [v for k, v in self._store.items() if k.startswith(self._prefix)]
+        for item in items:
+            yield MemoryDocumentSnapshot(item, exists=True)
+
+
+class MemoryFirestoreClient:
+    def __init__(self) -> None:
+        self._store: dict[str, dict[str, object]] = {}
+
+    def document(self, path: str) -> MemoryDocumentReference:
+        return MemoryDocumentReference(self._store, path)
+
+    def collection(self, path: str) -> MemoryCollectionReference:
+        return MemoryCollectionReference(self._store, path)
+
+
+@pytest.mark.anyio
+async def test_firestore_task_store_lifecycle() -> None:
+    from a2a.server.context import ServerCallContext
+    from a2a.types import ListTasksRequest, Task, TaskState
+    from agents.shared.tasks import FirestoreTaskStore
+
+    client = MemoryFirestoreClient()
+    store = FirestoreTaskStore(client=client)  # type: ignore[arg-type]
+
+    context = ServerCallContext()
+    context.tenant = "org_test"
+
+    task = Task(id="task_1", context_id="ctx_1")
+    task.status.state = TaskState.TASK_STATE_WORKING
+
+    await store.save(task, context)
+
+    fetched = await store.get("task_1", context)
+    assert fetched is not None
+    assert fetched.id == "task_1"
+    assert fetched.context_id == "ctx_1"
+    assert fetched.status.state == TaskState.TASK_STATE_WORKING
+
+    listing = await store.list(ListTasksRequest(context_id="ctx_1"), context)
+    assert listing.total_size == 1
+    assert listing.tasks[0].id == "task_1"
+
+    await store.delete("task_1", context)
+    assert await store.get("task_1", context) is None

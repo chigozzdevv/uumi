@@ -9,11 +9,14 @@ from google.protobuf.json_format import MessageToDict, ParseDict  # type: ignore
 
 
 class FirestoreTaskStore(TaskStore):
-    def __init__(self) -> None:
-        self._client = AsyncClient(
-            project=_environment("GOOGLE_CLOUD_PROJECT"),
-            database=_environment("FIRESTORE_DATABASE", "(default)"),
-        )
+    def __init__(self, client: AsyncClient | None = None) -> None:
+        if client is not None:
+            self._client = client
+        else:
+            self._client = AsyncClient(
+                project=_environment("GOOGLE_CLOUD_PROJECT", "firekey-local"),
+                database=_environment("FIRESTORE_DATABASE", "(default)"),
+            )
 
     async def save(self, task: Task, context: ServerCallContext) -> None:
         owner = _owner(context)
