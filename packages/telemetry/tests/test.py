@@ -39,6 +39,16 @@ def test_redact_handles_camel_case_and_secret_bearing_values() -> None:
     }
 
 
+def test_redactor_protects_oauth_state_code_and_pkce_verifier() -> None:
+    assert redact(
+        {
+            "state": "short-lived-state",
+            "code": "one-time-code",
+            "pkceVerifier": "one-time-verifier",
+        }
+    ) == {"state": REDACTED, "code": REDACTED, "pkceVerifier": REDACTED}
+
+
 def test_telemetry_is_disabled_outside_managed_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("K_SERVICE", raising=False)
     monkeypatch.delenv("FIREKEY_TELEMETRY_ENABLED", raising=False)

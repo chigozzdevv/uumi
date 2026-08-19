@@ -23,6 +23,9 @@ class PolicyDefinition(Contract):
     preserve_old_generation: bool = True
     require_functional_probe: bool = True
     require_generation_telemetry: bool = True
+    rotate_before_expiry_seconds: int = Field(default=604800, ge=300, le=7776000)
+    maximum_metadata_age_seconds: int = Field(default=86400, ge=300, le=2592000)
+    require_runtime_alignment: bool = True
     automatic_triggers: frozenset[str] = frozenset()
     emergency_triggers: frozenset[str] = frozenset()
     minimum_automatic_confidence: Confidence = Confidence.VERIFIED

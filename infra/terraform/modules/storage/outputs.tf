@@ -33,9 +33,14 @@ output "capability_secret" {
   value       = google_secret_manager_secret.capability.id
 }
 
-output "github_secrets" {
-  description = "GitHub webhook secret resources keyed by FireKey organisation."
-  value       = { for organisation, secret in google_secret_manager_secret.github : organisation => secret.id }
+output "github_webhook_secret" {
+  description = "GitHub App webhook secret resource; add a version outside Terraform."
+  value       = google_secret_manager_secret.github_webhook.id
+}
+
+output "github_oauth_secret" {
+  description = "GitHub App OAuth client secret resource; add a version outside Terraform."
+  value       = google_secret_manager_secret.github_oauth.id
 }
 
 output "provider_secrets" {

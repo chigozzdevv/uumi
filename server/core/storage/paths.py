@@ -158,6 +158,29 @@ class FirestorePaths:
         return f"{root}/connection-waiters/{_segment(connection_id)}"
 
     @staticmethod
+    def github_onboarding(organisation_id: str, onboarding_id: str) -> str:
+        root = FirestorePaths.organisation(organisation_id)
+        return f"{root}/github-onboarding/{_segment(onboarding_id)}"
+
+    @staticmethod
+    def github_installation(organisation_id: str, installation_id: int) -> str:
+        root = FirestorePaths.organisation(organisation_id)
+        return f"{root}/github-installations/{installation_id}"
+
+    @staticmethod
+    def github_repository(organisation_id: str, repository_id: int) -> str:
+        root = FirestorePaths.organisation(organisation_id)
+        return f"{root}/github-repositories/{repository_id}"
+
+    @staticmethod
+    def github_installation_index(installation_id: int) -> str:
+        return f"github-installation-index/{installation_id}"
+
+    @staticmethod
+    def github_webhook_receipt(installation_id: int) -> str:
+        return f"github-webhook-receipts/{installation_id}"
+
+    @staticmethod
     def replay(organisation_id: str, session_id: str, checkpoint_id: str) -> str:
         root = FirestorePaths.browser(organisation_id, session_id)
         return f"{root}/replay/{_segment(checkpoint_id)}"

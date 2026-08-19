@@ -13,6 +13,7 @@ from browser.compute import BrowserVmManager
 from browser.service import BrowserService
 from browser.setup import BrowserSetupApi, BrowserSetupService, WorkflowRunResumer
 from browser.storage import FirestoreBrowserRepository
+from connectors.github import GitHubOnboardingConnector
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
 from connectors.storage import GcsUploadConnector
@@ -30,6 +31,7 @@ from core.auth import (
 )
 from core.config import Settings
 from core.errors import AuthenticationError
+from core.github import FirestoreGitHubRepository, GitHubOnboardingService
 from core.incident import IncidentService
 from core.inventory import InventoryService
 from core.notification import NotificationService
@@ -75,6 +77,7 @@ class ApiServices:
     audit: AuditWriter | None = None
     overview: OverviewService | None = None
     browser_setup: BrowserSetupApi | None = None
+    github: GitHubOnboardingService | None = None
 
 
 def build_services(settings: Settings | None = None) -> ApiServices:
@@ -109,6 +112,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
     notifications = NotificationService(FirestoreNotificationRepository(client), _now)
     audit = AuditWriter(FirestoreAuditRepository(client), configured.region, _now)
     browser_setup = None
+    github = None
     if all(
         (
             configured.browser_zone,
@@ -135,6 +139,28 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             configured.browser_gateway_url,
             _now,
             runs=WorkflowRunResumer(workflow, _now),
+        )
+    if all(
+        (
+            configured.github_app_slug,
+            configured.github_client_id,
+            configured.github_client_secret,
+            configured.github_callback_url,
+        )
+    ):
+        github = GitHubOnboardingService(
+            FirestoreGitHubRepository(client),
+            inventory_repository,
+            GitHubOnboardingConnector(
+                configured.github_client_id,
+                configured.github_client_secret,
+                configured.github_callback_url,
+                secret_manager,
+            ),
+            configured.github_app_slug,
+            configured.github_client_id,
+            configured.github_callback_url,
+            _now,
         )
     return ApiServices(
         workflow=workflow,
@@ -195,6 +221,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             approval_repository,
         ),
         browser_setup=browser_setup,
+        github=github,
     )
 
 

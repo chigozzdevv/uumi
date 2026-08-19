@@ -87,14 +87,15 @@ variable "secret_accessors" {
   default     = {}
 }
 
-variable "github_organisations" {
-  description = "FireKey organisations receiving signed GitHub webhooks."
-  type        = set(string)
-  default     = []
+variable "github_webhook_accessor" {
+  description = "IAM member allowed to verify the GitHub App webhook signature."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
-variable "github_secret_accessor" {
-  description = "IAM member allowed to verify organisation GitHub webhook signatures."
+variable "github_oauth_accessor" {
+  description = "IAM member allowed to exchange GitHub App user OAuth codes."
   type        = string
   default     = null
   nullable    = true

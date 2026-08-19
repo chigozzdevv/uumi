@@ -90,6 +90,70 @@ variable "oidc_audience" {
   }
 }
 
+variable "github_app_slug" {
+  description = "Public slug of the customer-facing GitHub App."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.github_app_slug == "" || can(regex("^[A-Za-z0-9-]+$", var.github_app_slug))
+    error_message = "github_app_slug must be empty or a GitHub App slug."
+  }
+}
+
+variable "github_client_id" {
+  description = "Public GitHub App OAuth client ID."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.github_client_id == "" || can(regex("^[A-Za-z0-9._-]+$", var.github_client_id))
+    error_message = "github_client_id must be empty or a GitHub OAuth client ID."
+  }
+}
+
+variable "github_client_secret_version" {
+  description = "Secret Manager version holding the GitHub App OAuth client secret."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.github_client_secret_version == "" ||
+      can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.github_client_secret_version))
+    )
+    error_message = "github_client_secret_version must be empty or an immutable Secret Manager version."
+  }
+}
+
+variable "github_callback_url" {
+  description = "HTTPS callback URL registered on the GitHub App."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.github_callback_url == "" ||
+      can(regex("^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[^?#]*)?(?:\\?[^#]*)?$", var.github_callback_url))
+    )
+    error_message = "github_callback_url must be empty or an HTTPS URL without credentials or a fragment."
+  }
+}
+
+variable "github_webhook_secret_version" {
+  description = "Secret Manager version holding the global GitHub App webhook secret."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.github_webhook_secret_version == "" ||
+      can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.github_webhook_secret_version))
+    )
+    error_message = "github_webhook_secret_version must be empty or an immutable Secret Manager version."
+  }
+}
+
 variable "api_image" {
   description = "Immutable API image reference; null provisions only the image repository."
   type        = string
@@ -245,6 +309,11 @@ variable "walkthrough_bucket" {
 variable "capability_secret_version" {
   description = "Full Secret Manager version holding the capability signing key."
   type        = string
+
+  validation {
+    condition     = can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.capability_secret_version))
+    error_message = "capability_secret_version must be an immutable Secret Manager version."
+  }
 }
 
 variable "capability_public_key" {

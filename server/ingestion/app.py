@@ -7,14 +7,23 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
+from connectors.cloudrun import CloudRunConnector
 from connectors.github import GitHubWebhook
 from connectors.google import GoogleRestClient
+from connectors.http import HttpProviderConnector
 from connectors.scc import SecurityCommandCenterFinding
 from connectors.secrets import SecretManagerConnector
-from contracts import Contract, Identifier, Incident, IngestionEvent
+from contracts import (
+    Contract,
+    GitHubWebhookReceipt,
+    Identifier,
+    Incident,
+    IngestionEvent,
+)
 from core.audit import AuditWriter
 from core.auth import AuthenticatedIdentity, GoogleTokenVerifier
 from core.errors import AuthenticationError
+from core.github import FirestoreGitHubRepository
 from core.incident import IncidentService
 from core.notification import NotificationService
 from core.storage import (
@@ -32,12 +41,24 @@ from telemetry import instrument
 
 from ingestion.automation import IncidentAutomation
 from ingestion.config import IngestionSettings
+from ingestion.detection import DetectionService
 from ingestion.sources import ProviderSource, ScheduleSource, SecretManagerSource
 
 
 class IngestionResponse(Contract):
     incident: Incident
     applied: bool
+
+
+class DetectionResponse(Contract):
+    results: tuple[IngestionResponse, ...]
+
+
+class GitHubDeliveryResponse(Contract):
+    delivery_id: str
+    accepted: bool
+    incident: Incident | None = None
+    applied: bool = False
 
 
 class Runtime:
@@ -51,8 +72,10 @@ class Runtime:
         self.firestore = firestore
         self.google = google
         self.secrets = SecretManagerConnector(google)
+        self.github = FirestoreGitHubRepository(firestore)
         self.tokens = GoogleTokenVerifier(settings.oidc_audience)
         inventory = FirestoreInventoryRepository(firestore)
+        policies = FirestorePolicyRepository(firestore)
         notifications = NotificationService(FirestoreNotificationRepository(firestore), _now)
         audit = AuditWriter(FirestoreAuditRepository(firestore), settings.region, _now)
         self.incidents = IncidentService(
@@ -66,7 +89,15 @@ class Runtime:
         self.automation = IncidentAutomation(
             self.incidents,
             inventory,
-            FirestorePolicyRepository(firestore),
+            policies,
+        )
+        cloudrun = CloudRunConnector(google)
+        self.detection = DetectionService(
+            inventory,
+            policies,
+            HttpProviderConnector(self.secrets),
+            {"cloud-run": cloudrun, "google-cloud-run": cloudrun},
+            _now,
         )
 
     async def close(self) -> None:
@@ -95,23 +126,18 @@ async def live() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/v1/github/{organisation_id}", response_model=IngestionResponse)
+@app.post("/v1/github", response_model=GitHubDeliveryResponse)
 async def github(
-    organisation_id: Identifier,
     request: Request,
     signature: Annotated[str, Header(alias="X-Hub-Signature-256", min_length=71)],
     delivery_id: Annotated[str, Header(alias="X-GitHub-Delivery", min_length=1, max_length=256)],
     event_type: Annotated[str, Header(alias="X-GitHub-Event", min_length=1, max_length=64)],
-) -> IngestionResponse:
+) -> GitHubDeliveryResponse:
     runtime: Runtime = request.app.state.runtime
     body = await request.body()
     if len(body) > runtime.settings.max_body_bytes:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "webhook body is too large")
-    secret_name = (
-        f"projects/{runtime.settings.github_secret_project}/secrets/"
-        f"firekey-{organisation_id}-github-webhook/versions/latest"
-    )
-    secret = await runtime.secrets.access(secret_name)
+    secret = await runtime.secrets.access(runtime.settings.github_webhook_secret)
     try:
         GitHubWebhook().verify(body, signature, secret.bytes())
     except ValueError as error:
@@ -119,10 +145,77 @@ async def github(
     finally:
         secret.clear()
     try:
-        event = GitHubWebhook().normalise(organisation_id, event_type, body, _now())
+        payload = json.loads(body)
+        if not isinstance(payload, dict):
+            raise ValueError("GitHub webhook payload must be an object")
+        if event_type == "ping":
+            return GitHubDeliveryResponse(delivery_id=delivery_id, accepted=True)
+        installation = payload.get("installation")
+        installation_id = installation.get("id") if isinstance(installation, dict) else None
+        action = payload.get("action")
+        if not isinstance(installation_id, int) or not isinstance(action, str):
+            raise ValueError("GitHub webhook installation metadata is incomplete")
+        if event_type == "installation":
+            if action in {"created", "new_permissions_accepted", "unsuspend"}:
+                await runtime.github.record_receipt(
+                    GitHubWebhookReceipt(
+                        installation_id=installation_id,
+                        delivery_id=delivery_id,
+                        event=event_type,
+                        action=action,
+                        received_at=_now(),
+                    )
+                )
+            elif action in {"deleted", "suspend"}:
+                await runtime.github.deactivate(
+                    installation_id, _now(), deleted=action == "deleted"
+                )
+            return GitHubDeliveryResponse(delivery_id=delivery_id, accepted=True)
+        if event_type == "installation_repositories":
+            if action not in {"added", "removed"}:
+                raise ValueError("GitHub installation repository action is unsupported")
+            await runtime.github.invalidate_repositories(installation_id, _now())
+            return GitHubDeliveryResponse(delivery_id=delivery_id, accepted=True)
+        if event_type != "secret_scanning_alert":
+            raise ValueError("GitHub webhook event is unsupported")
+        if action in {"assigned", "unassigned"}:
+            return GitHubDeliveryResponse(delivery_id=delivery_id, accepted=True)
+        raw_alert = payload.get("alert")
+        if (
+            action == "validated"
+            and isinstance(raw_alert, dict)
+            and raw_alert.get("validity") != "active"
+        ):
+            return GitHubDeliveryResponse(delivery_id=delivery_id, accepted=True)
+        raw_repository = payload.get("repository")
+        repository_id = raw_repository.get("id") if isinstance(raw_repository, dict) else None
+        repository_name = (
+            raw_repository.get("full_name") if isinstance(raw_repository, dict) else None
+        )
+        if not isinstance(repository_id, int) or not isinstance(repository_name, str):
+            raise ValueError("GitHub webhook repository metadata is incomplete")
+        route = await runtime.github.route(installation_id, repository_id)
+        if route is None:
+            return GitHubDeliveryResponse(delivery_id=delivery_id, accepted=True)
+        organisation_id, repository = route
+        if repository.full_name != repository_name:
+            raise ValueError("GitHub webhook repository mapping changed")
+        event = GitHubWebhook().normalise(
+            organisation_id,
+            event_type,
+            body,
+            _now(),
+            repository.credential_id,
+        )
     except (ValueError, json.JSONDecodeError) as error:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
-    return await _ingest(runtime, event)
+    result = await _ingest(runtime, event)
+    return GitHubDeliveryResponse(
+        delivery_id=delivery_id,
+        accepted=True,
+        incident=result.incident,
+        applied=result.applied,
+    )
 
 
 @app.post("/v1/scc/{organisation_id}", response_model=IngestionResponse)
@@ -164,6 +257,21 @@ async def schedule(
     except ValueError as error:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
     return await _ingest(runtime, event)
+
+
+@app.post("/v1/detect/{organisation_id}", response_model=DetectionResponse)
+async def detect(
+    organisation_id: Identifier,
+    request: Request,
+    authorization: Annotated[str, Header(min_length=8)],
+) -> DetectionResponse:
+    runtime: Runtime = request.app.state.runtime
+    await _trusted_identity(runtime, authorization)
+    events = await runtime.detection.detect(organisation_id)
+    results: list[IngestionResponse] = []
+    for event in events:
+        results.append(await _ingest(runtime, event))
+    return DetectionResponse(results=tuple(results))
 
 
 @app.post("/v1/secrets/{organisation_id}", response_model=IngestionResponse)

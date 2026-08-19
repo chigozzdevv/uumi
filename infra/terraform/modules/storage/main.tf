@@ -375,11 +375,9 @@ resource "google_secret_manager_secret_iam_member" "capability" {
   member    = each.value
 }
 
-resource "google_secret_manager_secret" "github" {
-  for_each = var.github_organisations
-
+resource "google_secret_manager_secret" "github_webhook" {
   project   = var.project_id
-  secret_id = "firekey-${each.value}-github-webhook"
+  secret_id = "firekey-github-webhook"
 
   replication {
     user_managed {
@@ -395,13 +393,40 @@ resource "google_secret_manager_secret" "github" {
   deletion_protection = true
 }
 
-resource "google_secret_manager_secret_iam_member" "github" {
-  for_each = var.github_secret_accessor == null ? {} : google_secret_manager_secret.github
+resource "google_secret_manager_secret_iam_member" "github_webhook" {
+  count = var.github_webhook_accessor == null ? 0 : 1
 
-  project   = each.value.project
-  secret_id = each.value.secret_id
+  project   = google_secret_manager_secret.github_webhook.project
+  secret_id = google_secret_manager_secret.github_webhook.secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = var.github_secret_accessor
+  member    = var.github_webhook_accessor
+}
+
+resource "google_secret_manager_secret" "github_oauth" {
+  project   = var.project_id
+  secret_id = "firekey-github-oauth-client"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.location
+        customer_managed_encryption {
+          kms_key_name = google_kms_crypto_key.evidence.id
+        }
+      }
+    }
+  }
+
+  deletion_protection = true
+}
+
+resource "google_secret_manager_secret_iam_member" "github_oauth" {
+  count = var.github_oauth_accessor == null ? 0 : 1
+
+  project   = google_secret_manager_secret.github_oauth.project
+  secret_id = google_secret_manager_secret.github_oauth.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = var.github_oauth_accessor
 }
 
 resource "google_secret_manager_secret" "provider" {

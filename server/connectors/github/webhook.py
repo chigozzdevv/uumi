@@ -21,6 +21,7 @@ class GitHubWebhook:
         event_type: str,
         body: bytes,
         received_at: datetime,
+        credential_id: str | None = None,
     ) -> IngestionEvent:
         if event_type != "secret_scanning_alert":
             raise ValueError("GitHub webhook is not a secret scanning alert")
@@ -30,7 +31,13 @@ class GitHubWebhook:
         action = payload.get("action")
         alert = payload.get("alert")
         repository = payload.get("repository")
-        if action not in {"created", "reopened", "resolved"}:
+        if action not in {
+            "created",
+            "publicly_leaked",
+            "reopened",
+            "resolved",
+            "validated",
+        }:
             raise ValueError("GitHub secret scanning action is unsupported")
         if not isinstance(alert, dict) or not isinstance(repository, dict):
             raise ValueError("GitHub webhook is missing alert or repository metadata")
@@ -60,7 +67,11 @@ class GitHubWebhook:
             observed_at=observed,
             severity=Severity.CRITICAL if action != "resolved" else Severity.MEDIUM,
             confidence=Confidence.HIGH,
-            resource=SourceResource(repository=repository_name, provider=provider),
+            resource=SourceResource(
+                credential_id=credential_id,
+                repository=repository_name,
+                provider=provider,
+            ),
             source_reference=alert_url,
             received_at=received_at,
         )

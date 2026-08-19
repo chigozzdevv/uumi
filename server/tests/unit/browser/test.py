@@ -9,14 +9,13 @@ import pytest
 from broker import CapabilitySigner
 from browser.access import BrowserAccessService
 from browser.auth import BrowserAuthBroker
-from browser.compute import BrowserVm
+from browser.compute import BrowserVm, BrowserVmManager
 from browser.driver import AuthenticationRequiredError, BrowserDriver, metadata_url
 from browser.gateway import BrowserSessionGateway
 from browser.model import ComputerUseClient
 from browser.service import BrowserService
 from browser.setup import BrowserSetupService
 from browser.worker import ComputerUseWorker
-from connectors.base import SecretValue
 from connectors.base.errors import ConnectorError
 from contracts import (
     BrowserAccessMode,
@@ -57,6 +56,7 @@ from coordinator.browser import BrowserPauseError, BrowserStepExecutor
 from coordinator.service import _flag_reauthentication
 from core.auth import AccessControl, AuthenticatedIdentity, PrincipalGrant, Role
 from core.errors import CapabilityError, ResourceConflictError, ResourceNotFoundError
+from core.storage.paths import FirestorePaths
 from testkit import make_http_provider_api, make_run
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -95,6 +95,17 @@ class Repository:
     async def save_capture(self, result: SecureCaptureResult) -> SecureCaptureResult:
         self.captures.append(result)
         return result
+
+    async def complete_capture(
+        self,
+        current: BrowserSession,
+        changed: BrowserSession,
+        result: SecureCaptureResult,
+    ) -> BrowserSession:
+        assert self.session == current
+        self.captures.append(result)
+        self.session = changed
+        return changed
 
     async def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> ReplayCheckpoint:
         return checkpoint
@@ -641,8 +652,9 @@ class SetupCatalog:
 
 
 class SetupConnections:
-    def __init__(self, connection: Connection) -> None:
+    def __init__(self, connection: Connection, catalog: SetupCatalog) -> None:
         self.connection = connection
+        self.catalog = catalog
 
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
         return self.connection
@@ -652,7 +664,7 @@ class SetupConnections:
         organisation_id: str,
         connection_id: str,
         expected_revision: int,
-        auth_reference: str,
+        auth_reference: str | None,
         status: ConnectionStatus,
         updated_at: datetime,
     ) -> Connection:
@@ -667,6 +679,20 @@ class SetupConnections:
         )
         return self.connection
 
+    async def complete_setup(
+        self,
+        current_session: SetupSession,
+        changed_session: SetupSession,
+        current_connection: Connection,
+        changed_connection: Connection,
+    ) -> tuple[SetupSession, Connection]:
+        path = FirestorePaths.setup(current_session.organisation_id, current_session.id)
+        assert self.catalog.values[path] == current_session
+        assert self.connection == current_connection
+        self.catalog.values[path] = changed_session
+        self.connection = changed_connection
+        return changed_session, changed_connection
+
 
 class SetupVms:
     def __init__(self) -> None:
@@ -678,11 +704,19 @@ class SetupVms:
         organisation_id: str,
         session_id: str,
         expires_at: datetime,
-        setup_token: str | None = None,
+        setup_token_hash: str | None = None,
         allowed_domains: tuple[str, ...] = (),
+        storage_domains: tuple[str, ...] = (),
+        secret_container: str | None = None,
     ) -> BrowserVm:
         self.created.append(
-            {"session_id": session_id, "setup_token": setup_token, "domains": allowed_domains}
+            {
+                "session_id": session_id,
+                "setup_token_hash": setup_token_hash,
+                "domains": allowed_domains,
+                "storage_domains": storage_domains,
+                "secret_container": secret_container,
+            }
         )
         return BrowserVm(
             instance=f"projects/p/zones/z/instances/fk-{session_id}",
@@ -695,17 +729,18 @@ class SetupVms:
 
 class SetupSecrets:
     def __init__(self, versions_error: Exception | None = None) -> None:
-        self.written: list[bytes] = []
         self.versions_error = versions_error
-
-    async def add_version(self, secret: str, value: SecretValue) -> dict[str, Any]:
-        self.written.append(value.bytes())
-        return {"secret_reference": f"{secret}/versions/2"}
+        self.disabled: list[str] = []
+        self.store_calls = 0
 
     async def versions(self, secret: str) -> tuple[dict[str, Any], ...]:
         if self.versions_error is not None:
             raise self.versions_error
-        return ({"name": f"{secret}/versions/1"},)
+        return ({"name": f"{secret}/versions/1", "state": "ENABLED"},)
+
+    async def disable(self, version: str) -> dict[str, Any]:
+        self.disabled.append(version)
+        return {"name": version, "state": "DISABLED"}
 
 
 def _browser_connection() -> Connection:
@@ -751,16 +786,32 @@ def _setup_service(
     versions_error: Exception | None = None,
     runs: Any = None,
 ) -> tuple[BrowserSetupService, SetupVms, SetupSecrets, SetupConnections]:
+    secrets = SetupSecrets(versions_error)
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health/live":
             return httpx.Response(200, json={"status": "ok"})
-        if request.url.path == "/v1/setup/export":
-            return httpx.Response(200, json={"storage_state": state or {}})
+        if request.url.path == "/v1/setup/store":
+            secrets.store_calls += 1
+            captured = state or {}
+            cookies = captured.get("cookies", []) if isinstance(captured, dict) else []
+            if not any(
+                isinstance(cookie, dict)
+                and str(cookie.get("domain", "")).endswith("vendor.example.com")
+                for cookie in cookies
+            ):
+                return httpx.Response(409, json={"code": "no-provider-session"})
+            return httpx.Response(
+                200,
+                json={
+                    "secret_reference": ("projects/project-one/secrets/vendor-session/versions/2"),
+                    "fingerprint": "a" * 64,
+                },
+            )
         raise AssertionError(f"unexpected {request.url.path}")
 
     vms = SetupVms()
-    secrets = SetupSecrets(versions_error)
-    connections = SetupConnections(connection)
+    connections = SetupConnections(connection, catalog)
     service = BrowserSetupService(
         catalog,
         connections,
@@ -793,8 +844,10 @@ async def test_setup_begin_boots_isolated_worker_with_setup_token() -> None:
     assert session.token_hash == hashlib.sha256(token.encode()).hexdigest()
     assert token not in json.dumps(session.model_dump(mode="json"))
     created = vms.created[0]
-    assert created["setup_token"] == token
+    assert created["setup_token_hash"] == hashlib.sha256(token.encode()).hexdigest()
+    assert token not in json.dumps(created)
     assert created["domains"] == ("*.vendor.example.com", "accounts.google.com")
+    assert created["storage_domains"] == ("*.vendor.example.com",)
 
 
 @pytest.mark.anyio
@@ -832,9 +885,7 @@ async def test_setup_complete_captures_only_the_provider_session() -> None:
     assert connection.status is ConnectionStatus.READY
     assert connection.auth_reference == completed.auth_reference
     assert vms.deleted == [completed.worker_instance]
-    written = json.loads(secrets.written[0].decode())
-    domains = {cookie["domain"] for cookie in written["cookies"]}
-    assert domains == {"app.vendor.example.com"}
+    assert secrets.store_calls == 1
 
 
 @pytest.mark.anyio
@@ -868,13 +919,196 @@ async def test_setup_complete_requires_a_captured_provider_session() -> None:
         "origins": [],
     }
     catalog = SetupCatalog()
-    service, _, _, _ = _setup_service(catalog, _browser_connection(), state=foreign_only)
+    service, vms, _, _ = _setup_service(catalog, _browser_connection(), state=foreign_only)
     session, token = await service.begin(
         "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
     )
 
     with pytest.raises(ResourceConflictError, match="no provider session"):
         await service.complete("org_one", session.id, session.revision, token, "user_one")
+    stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
+    assert stored.status is SetupStatus.TERMINATED
+    assert vms.deleted == [session.worker_instance]
+
+
+@pytest.mark.anyio
+async def test_setup_reconciles_an_ambiguous_worker_secret_write() -> None:
+    class AmbiguousSecrets(SetupSecrets):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def versions(self, secret: str) -> tuple[dict[str, Any], ...]:
+            self.calls += 1
+            values = [{"name": f"{secret}/versions/1", "state": "ENABLED"}]
+            if self.calls >= 3:
+                values.append({"name": f"{secret}/versions/2", "state": "ENABLED"})
+            return tuple(values)
+
+    catalog = SetupCatalog()
+    service, vms, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
+    secrets = AmbiguousSecrets()
+    service._secrets = cast(Any, secrets)
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    def timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("worker response was lost", request=request)
+
+    service._http = httpx.AsyncClient(transport=httpx.MockTransport(timeout))
+    with pytest.raises(ResourceConflictError, match="worker was unavailable"):
+        await service.complete("org_one", session.id, session.revision, token, "user_one")
+
+    assert secrets.disabled == ["projects/project-one/secrets/vendor-session/versions/2"]
+    stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
+    assert stored.status is SetupStatus.TERMINATED
+    assert vms.deleted == [session.worker_instance]
+
+
+@pytest.mark.anyio
+async def test_setup_terminates_when_reconciliation_baseline_cannot_be_read() -> None:
+    class FailingBaseline(SetupSecrets):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def versions(self, secret: str) -> tuple[dict[str, Any], ...]:
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("Secret Manager unavailable")
+            return await super().versions(secret)
+
+    catalog = SetupCatalog()
+    service, vms, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
+    service._secrets = cast(Any, FailingBaseline())
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    with pytest.raises(RuntimeError, match="Secret Manager unavailable"):
+        await service.complete("org_one", session.id, session.revision, token, "user_one")
+
+    stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
+    assert stored.status is SetupStatus.TERMINATED
+    assert vms.deleted == [session.worker_instance]
+
+
+@pytest.mark.anyio
+async def test_setup_disables_stored_version_when_connection_update_fails() -> None:
+    class BrokenConnections(SetupConnections):
+        async def complete_setup(
+            self, *args: Any, **kwargs: Any
+        ) -> tuple[SetupSession, Connection]:
+            raise RuntimeError("database write failed")
+
+    catalog = SetupCatalog()
+    service, vms, secrets, _ = _setup_service(
+        catalog, _browser_connection(), state=_exported_state()
+    )
+    service._connections = cast(Any, BrokenConnections(_browser_connection(), catalog))
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    with pytest.raises(RuntimeError, match="database write failed"):
+        await service.complete("org_one", session.id, session.revision, token, "user_one")
+
+    assert secrets.disabled == ["projects/project-one/secrets/vendor-session/versions/2"]
+    stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
+    assert stored.status is SetupStatus.TERMINATED
+    assert vms.deleted == [session.worker_instance]
+
+
+@pytest.mark.anyio
+async def test_setup_recovers_an_ambiguous_atomic_completion() -> None:
+    class AmbiguousConnections(SetupConnections):
+        async def complete_setup(
+            self,
+            current_session: SetupSession,
+            changed_session: SetupSession,
+            current_connection: Connection,
+            changed_connection: Connection,
+        ) -> tuple[SetupSession, Connection]:
+            await super().complete_setup(
+                current_session,
+                changed_session,
+                current_connection,
+                changed_connection,
+            )
+            raise RuntimeError("setup completion response was lost")
+
+    catalog = SetupCatalog()
+    service, vms, secrets, connections = _setup_service(
+        catalog, _browser_connection(), state=_exported_state()
+    )
+    ambiguous = AmbiguousConnections(_browser_connection(), catalog)
+    service._connections = cast(Any, ambiguous)
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+
+    completed, connection, _ = await service.complete(
+        "org_one", session.id, session.revision, token, "user_one"
+    )
+
+    assert connections.connection.status is ConnectionStatus.DISABLED
+    assert ambiguous.connection == connection
+    assert ambiguous.connection.status is ConnectionStatus.READY
+    assert secrets.disabled == []
+    stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
+    assert stored == completed
+    assert stored.status is SetupStatus.COMPLETE
+    assert vms.deleted == [session.worker_instance]
+
+
+@pytest.mark.anyio
+async def test_setup_vm_metadata_contains_only_the_token_hash() -> None:
+    class Compute:
+        def __init__(self) -> None:
+            self.body: dict[str, Any] = {}
+
+        async def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
+            if method == "POST":
+                self.body = kwargs["json"]
+                return {"name": "operation-one"}
+            return {
+                "networkInterfaces": [{"networkIP": "10.0.0.2"}],
+                "disks": [{"autoDelete": True}],
+                "shieldedInstanceConfig": {"enableSecureBoot": True},
+            }
+
+        async def wait_operation(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return {}
+
+    compute = Compute()
+    manager = BrowserVmManager(
+        cast(Any, compute),
+        "project-one",
+        "us-east1-b",
+        "projects/project-one/instanceTemplates/browser",
+        "p" * 43,
+        "evidence-bucket",
+        "us-east1",
+        "us-east1-docker.pkg.dev/project-one/firekey/browser@sha256:" + "a" * 64,
+    )
+    raw = "setup-token-that-must-not-enter-metadata"
+    token_hash = hashlib.sha256(raw.encode()).hexdigest()
+
+    await manager.create(
+        "org_one",
+        "setup_one",
+        NOW + timedelta(minutes=30),
+        setup_token_hash=token_hash,
+        allowed_domains=("*.vendor.example.com",),
+        storage_domains=("*.vendor.example.com",),
+        secret_container="projects/project-one/secrets/vendor-session",
+    )
+
+    encoded = json.dumps(compute.body)
+    assert raw not in encoded
+    assert token_hash in encoded
+    assert 'firekey-setup-token"' not in encoded
 
 
 @pytest.mark.anyio
@@ -893,27 +1127,57 @@ async def test_setup_abort_terminates_the_worker() -> None:
 
 
 @pytest.mark.anyio
-async def test_setup_export_requires_the_setup_token() -> None:
+async def test_setup_store_requires_the_setup_token_and_returns_metadata_only() -> None:
     from browser.workerapp import SetupRuntime, app
 
     class ExportContext:
-        async def storage_state(self) -> dict[str, Any]:
-            return {"cookies": [], "origins": []}
+        def __init__(self) -> None:
+            self.pages: list[Any] = []
 
-    app.state.setup = SetupRuntime(cast(Any, ExportContext()), cast(Any, None), "t" * 43)
+        async def storage_state(self) -> dict[str, Any]:
+            return {
+                "cookies": [
+                    {
+                        "name": "session",
+                        "value": "cookie-value",
+                        "domain": "app.vendor.example.com",
+                        "path": "/",
+                    }
+                ],
+                "origins": [],
+            }
+
+        async def clear_cookies(self) -> None:
+            pass
+
+    class Google:
+        async def request(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return {"name": "projects/project-one/secrets/vendor-session/versions/2"}
+
+    token = "t" * 43
+    app.state.setup = SetupRuntime(
+        cast(Any, ExportContext()),
+        cast(Any, None),
+        hashlib.sha256(token.encode()).hexdigest(),
+        ("*.vendor.example.com",),
+        "projects/project-one/secrets/vendor-session",
+        cast(Any, Google()),
+    )
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     try:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            missing = await client.post("/v1/setup/export")
-            wrong = await client.post("/v1/setup/export", headers={"X-FireKey-Setup": "x" * 43})
-            exported = await client.post("/v1/setup/export", headers={"X-FireKey-Setup": "t" * 43})
+            missing = await client.post("/v1/setup/store")
+            wrong = await client.post("/v1/setup/store", headers={"X-FireKey-Setup": "x" * 43})
+            stored = await client.post("/v1/setup/store", headers={"X-FireKey-Setup": token})
     finally:
         del app.state.setup
 
     assert missing.status_code == 422
     assert wrong.status_code == 403
-    assert exported.status_code == 200
-    assert exported.json()["storage_state"] == {"cookies": [], "origins": []}
+    assert stored.status_code == 200
+    assert stored.json()["secret_reference"].endswith("/versions/2")
+    assert "storage_state" not in stored.json()
+    assert "cookie-value" not in stored.text
 
 
 class _LoginPage:
@@ -1329,20 +1593,59 @@ async def test_setup_completion_keeps_waiting_runs_that_did_not_resume() -> None
 
 
 @pytest.mark.anyio
-async def test_setup_completion_claims_the_session_before_writing_a_secret() -> None:
-    from core.storage.paths import FirestorePaths
+async def test_setup_completion_retry_resumes_runs_after_transient_resume_failure() -> None:
+    class FlakyResumer:
+        def __init__(self) -> None:
+            self.calls = 0
 
-    class CapturingSecrets(SetupSecrets):
-        async def add_version(self, secret: str, value: SecretValue) -> dict[str, Any]:
-            current = await catalog.get(
-                FirestorePaths.setup("org_one", "setup_browser"), SetupSession
-            )
-            assert current.status is SetupStatus.CAPTURING
-            return await super().add_version(secret, value)
+        async def resume(
+            self, organisation_id: str, run_ids: tuple[str, ...], actor_id: str
+        ) -> tuple[str, ...]:
+            del organisation_id, actor_id
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("workflow unavailable")
+            return run_ids
+
+    catalog = SetupCatalog()
+    resumer = FlakyResumer()
+    service, _, secrets, _ = _setup_service(
+        catalog, _browser_connection(), state=_exported_state(), runs=resumer
+    )
+    session, token = await service.begin(
+        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
+    )
+    waiter_path = FirestorePaths.connection_waiter("org_one", "connection_browser")
+    await catalog.create(
+        waiter_path,
+        ConnectionWaiter(
+            organisation_id="org_one",
+            connection_id="connection_browser",
+            run_ids=("run_one",),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="workflow unavailable"):
+        await service.complete("org_one", session.id, session.revision, token, "user_one")
+    stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
+    assert stored.status is SetupStatus.COMPLETE
+
+    _, _, resumed = await service.complete(
+        "org_one", session.id, session.revision, token, "user_one"
+    )
+
+    assert resumed == ("run_one",)
+    assert resumer.calls == 2
+    assert secrets.store_calls == 1
+    waiter = await catalog.get(waiter_path, ConnectionWaiter)
+    assert waiter.run_ids == ()
+
+
+@pytest.mark.anyio
+async def test_setup_completion_claims_the_session_before_writing_a_secret() -> None:
 
     catalog = SetupCatalog()
     service, _, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
-    service._secrets = cast(Any, CapturingSecrets())
     session, token = await service.begin(
         "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
     )
@@ -1372,7 +1675,7 @@ async def test_setup_completion_replays_without_creating_another_secret_version(
     assert replayed == completed
     assert replayed_connection == connection
     assert resumed == ()
-    assert len(secrets.written) == 1
+    assert secrets.store_calls == 1
 
 
 def test_blocked_redirect_is_authentication_required() -> None:

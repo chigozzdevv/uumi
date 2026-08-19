@@ -16,5 +16,8 @@ class CredentialGeneration(Contract):
     secret_reference: str | None = Field(default=None, max_length=1024)
     predecessor_id: Identifier | None = None
     successor_id: Identifier | None = None
+    expires_at: AwareDatetime | None = None
+    last_observed_at: AwareDatetime | None = None
+    metadata_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     created_at: AwareDatetime
     revoked_at: AwareDatetime | None = None

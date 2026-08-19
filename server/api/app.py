@@ -25,6 +25,7 @@ from api.routes import (
     approvals_router,
     audit_router,
     browsers_router,
+    github_router,
     health_router,
     incidents_router,
     inventory_router,
@@ -44,6 +45,7 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app = FastAPI(title="FireKey", version="0.1.0", docs_url=None, redoc_url=None)
     app.state.services = services or build_services()
     app.include_router(health_router)
+    app.include_router(github_router)
     app.include_router(runs_router)
     app.include_router(inventory_router)
     app.include_router(notifications_router)

@@ -244,7 +244,7 @@ resource "google_cloud_run_v2_service" "ingestion" {
 
   template {
     service_account                  = var.ingestion_service_account
-    timeout                          = "60s"
+    timeout                          = "300s"
     max_instance_request_concurrency = 40
     execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
 
@@ -292,8 +292,8 @@ resource "google_cloud_run_v2_service" "ingestion" {
         value = var.scc_push_service_account
       }
       env {
-        name  = "FIREKEY_GITHUB_SECRET_PROJECT"
-        value = var.project_id
+        name  = "FIREKEY_GITHUB_WEBHOOK_SECRET"
+        value = var.github_webhook_secret_version
       }
       env {
         name  = "FIREKEY_TRUSTED_PUSH_SERVICE_ACCOUNTS"
@@ -378,7 +378,7 @@ resource "google_cloud_run_v2_service" "api" {
 
   template {
     service_account                  = var.api_service_account
-    timeout                          = "60s"
+    timeout                          = "300s"
     max_instance_request_concurrency = 40
     execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
 
@@ -463,6 +463,26 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "FIREKEY_WALKTHROUGH_BUCKET"
         value = var.walkthrough_bucket
+      }
+
+      env {
+        name  = "FIREKEY_GITHUB_APP_SLUG"
+        value = var.github_app_slug
+      }
+
+      env {
+        name  = "FIREKEY_GITHUB_CLIENT_ID"
+        value = var.github_client_id
+      }
+
+      env {
+        name  = "FIREKEY_GITHUB_CLIENT_SECRET"
+        value = var.github_client_secret_version
+      }
+
+      env {
+        name  = "FIREKEY_GITHUB_CALLBACK_URL"
+        value = var.github_callback_url
       }
 
       resources {

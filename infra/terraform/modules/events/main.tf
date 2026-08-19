@@ -8,6 +8,7 @@ locals {
   scc       = var.ingestion_uri == null ? {} : var.scc_sources
   secrets   = var.ingestion_uri == null ? toset([]) : var.secret_sources
   schedules = var.ingestion_uri == null ? {} : var.rotation_schedules
+  detection = var.ingestion_uri == null ? toset([]) : var.detection_organisations
   notification = (
     var.notification_name == null || var.notification_uri == null
     ? {}
@@ -513,6 +514,40 @@ resource "google_cloud_scheduler_job" "rotation" {
     http_method = "POST"
     uri         = "${var.ingestion_uri}/v1/schedules/${each.value.organisation_id}/${each.key}"
     body        = base64encode(jsonencode({ credential_id = each.value.credential_id }))
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    oidc_token {
+      service_account_email = var.event_service_account
+      audience              = var.oidc_audience
+    }
+  }
+}
+
+resource "google_cloud_scheduler_job" "detection" {
+  for_each = local.detection
+
+  project          = var.project_id
+  region           = var.region
+  name             = "firekey-detect-${replace(each.value, "_", "-")}"
+  description      = "Detects credential expiry, provider drift, and runtime misalignment."
+  schedule         = "*/15 * * * *"
+  time_zone        = "Etc/UTC"
+  attempt_deadline = "300s"
+  deletion_policy  = "PREVENT"
+
+  retry_config {
+    retry_count          = 5
+    min_backoff_duration = "10s"
+    max_backoff_duration = "600s"
+    max_doublings        = 5
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "${var.ingestion_uri}/v1/detect/${each.value}"
+    body        = base64encode("{}")
     headers = {
       "Content-Type" = "application/json"
     }

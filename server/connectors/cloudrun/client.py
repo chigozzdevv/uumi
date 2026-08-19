@@ -19,6 +19,12 @@ class CloudRunConnector:
     def __init__(self, client: GoogleRestClient) -> None:
         self._client = client
 
+    async def inspect(self, service_name: str) -> dict[str, Any]:
+        service = await self._client.request(
+            "GET", f"https://run.googleapis.com/v2/{_service_name(service_name)}"
+        )
+        return _inspect(service)
+
     async def execute(
         self,
         tool: str,
@@ -196,12 +202,17 @@ def _inspect(service: dict[str, Any]) -> dict[str, Any]:
     template = service.get("template")
     containers = template.get("containers", []) if isinstance(template, dict) else []
     bindings: list[dict[str, Any]] = []
+    generation_id = None
     for container in containers if isinstance(containers, list) else []:
         if not isinstance(container, dict):
             continue
         for item in container.get("env", []):
-            if isinstance(item, dict) and "valueSource" in item:
+            if not isinstance(item, dict):
+                continue
+            if "valueSource" in item:
                 bindings.append({"name": item.get("name"), "valueSource": item["valueSource"]})
+            if item.get("name") == "FIREKEY_GENERATION_ID" and isinstance(item.get("value"), str):
+                generation_id = item["value"]
     return {
         "name": service.get("name"),
         "latest_ready_revision": service.get("latestReadyRevision"),
@@ -209,6 +220,7 @@ def _inspect(service: dict[str, Any]) -> dict[str, Any]:
         "reconciling": service.get("reconciling", False),
         "traffic": service.get("trafficStatuses", []),
         "secret_bindings": bindings,
+        "generation_id": generation_id,
     }
 
 
@@ -236,6 +248,10 @@ def _operation(value: dict[str, Any]) -> str:
 
 def _service(payload: dict[str, Any]) -> str:
     value = _string(payload, "service")
+    return _service_name(value)
+
+
+def _service_name(value: str) -> str:
     if not value.startswith("projects/") or "/locations/" not in value or "/services/" not in value:
         raise ConnectorError("invalid-service", "a full Cloud Run service resource is required")
     return value

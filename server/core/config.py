@@ -1,3 +1,6 @@
+import re
+from urllib.parse import urlsplit
+
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +24,10 @@ class Settings(BaseSettings):
     browser_worker_image: str = ""
     capability_public_key: str = ""
     evidence_bucket: str = ""
+    github_app_slug: str = Field(default="", max_length=100)
+    github_client_id: str = Field(default="", max_length=256)
+    github_client_secret: str = Field(default="", max_length=1024)
+    github_callback_url: str = Field(default="", max_length=2048)
 
     @model_validator(mode="after")
     def require_runtime_configuration(self) -> "Settings":
@@ -35,6 +42,46 @@ class Settings(BaseSettings):
             )
         ):
             raise ValueError("API runtime configuration is incomplete")
-        if not self.capability_secret.startswith("projects/"):
-            raise ValueError("capability secret must be a full Secret Manager version")
+        if not _secret_version(self.capability_secret, self.project_id):
+            raise ValueError(
+                "capability secret must be an immutable project Secret Manager version"
+            )
+        github = (
+            self.github_app_slug,
+            self.github_client_id,
+            self.github_client_secret,
+            self.github_callback_url,
+        )
+        if any(github) and not all(github):
+            raise ValueError("GitHub App onboarding configuration is incomplete")
+        if self.github_app_slug and not re.fullmatch(r"[A-Za-z0-9-]+", self.github_app_slug):
+            raise ValueError("GitHub App slug is invalid")
+        if self.github_client_id and not re.fullmatch(r"[A-Za-z0-9._-]+", self.github_client_id):
+            raise ValueError("GitHub client ID is invalid")
+        if self.github_client_secret and not _secret_version(
+            self.github_client_secret, self.project_id
+        ):
+            raise ValueError(
+                "GitHub client secret must be an immutable project Secret Manager version"
+            )
+        if self.github_callback_url:
+            callback = urlsplit(self.github_callback_url)
+            if (
+                callback.scheme != "https"
+                or callback.hostname is None
+                or callback.username is not None
+                or callback.password is not None
+                or callback.fragment
+            ):
+                raise ValueError("GitHub callback URL must be an HTTPS URL without credentials")
         return self
+
+
+def _secret_version(value: str, project_id: str) -> bool:
+    return (
+        re.fullmatch(
+            rf"projects/{re.escape(project_id)}/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*",
+            value,
+        )
+        is not None
+    )

@@ -7,13 +7,16 @@ SAFE_KEYS = frozenset({"credential-id", "generation-id", "secret-reference"})
 SENSITIVE_KEYS = frozenset(
     {
         "authorization",
+        "code",
         "cookie",
         "credential",
         "password",
         "private",
         "secret",
         "session",
+        "state",
         "token",
+        "verifier",
     }
 )
 

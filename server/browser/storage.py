@@ -79,6 +79,41 @@ class FirestoreBrowserRepository:
         path = FirestorePaths.capture(result.organisation_id, result.session_id, result.id)
         return await self._create_immutable(path, result, SecureCaptureResult)
 
+    async def complete_capture(
+        self,
+        current: BrowserSession,
+        changed: BrowserSession,
+        result: SecureCaptureResult,
+    ) -> BrowserSession:
+        session_ref = self._client.document(
+            FirestorePaths.browser(current.organisation_id, current.id)
+        )
+        capture_ref = self._client.document(
+            FirestorePaths.capture(result.organisation_id, result.session_id, result.id)
+        )
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> BrowserSession:
+            session_snapshot = await session_ref.get(transaction=transaction)
+            capture_snapshot = await capture_ref.get(transaction=transaction)
+            if not session_snapshot.exists:
+                raise ResourceNotFoundError(f"browser session {current.id} was not found")
+            stored = BrowserSession.model_validate(_data(session_snapshot))
+            if stored != current:
+                raise ResourceConflictError("browser changed before capture completion")
+            if changed.revision != current.revision + 1:
+                raise StorageIntegrityError("capture completion did not advance revision once")
+            if capture_snapshot.exists:
+                previous = SecureCaptureResult.model_validate(_data(capture_snapshot))
+                if previous != result:
+                    raise ResourceConflictError("secure capture result changed")
+                raise ResourceConflictError("secure capture session transition was not recorded")
+            transaction.create(capture_ref, encode(result))
+            transaction.set(session_ref, encode(changed))
+            return changed
+
+        return await apply(self._client.transaction(max_attempts=5))
+
     async def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> ReplayCheckpoint:
         path = FirestorePaths.replay(
             checkpoint.organisation_id, checkpoint.session_id, checkpoint.id

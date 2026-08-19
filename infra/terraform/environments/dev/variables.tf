@@ -77,6 +77,12 @@ variable "browser_allowed_domains" {
   default     = []
 }
 
+variable "runtime_connector_domains" {
+  description = "Provider API domains admitted through the runtime Secure Web Proxy."
+  type        = set(string)
+  default     = []
+}
+
 variable "workflow_organisations" {
   description = "Organisations the workflow identity is authorised to operate."
   type        = set(string)
@@ -178,6 +184,75 @@ variable "notification_app_url" {
       can(regex("^https://[a-zA-Z0-9.-]+$", var.notification_app_url))
     )
     error_message = "notification_app_url must be null or an HTTPS origin without a path."
+  }
+}
+
+variable "github_app_slug" {
+  description = "Public slug of the customer-facing GitHub App."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.github_app_slug == null || can(regex("^[A-Za-z0-9-]+$", var.github_app_slug))
+    error_message = "github_app_slug must be null or a GitHub App slug."
+  }
+}
+
+variable "github_client_id" {
+  description = "Public OAuth client ID of the GitHub App."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.github_client_id == null || can(regex("^[A-Za-z0-9._-]+$", var.github_client_id))
+    error_message = "github_client_id must be null or a GitHub OAuth client ID."
+  }
+}
+
+variable "github_client_secret_version" {
+  description = "Secret Manager version holding the GitHub App OAuth client secret."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.github_client_secret_version == null ||
+      can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.github_client_secret_version))
+    )
+    error_message = "github_client_secret_version must be null or an immutable Secret Manager version."
+  }
+}
+
+variable "github_callback_url" {
+  description = "HTTPS callback URL registered on the GitHub App."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.github_callback_url == null ||
+      can(regex("^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[^?#]*)?(?:\\?[^#]*)?$", var.github_callback_url))
+    )
+    error_message = "github_callback_url must be null or an HTTPS URL without credentials or a fragment."
+  }
+}
+
+variable "github_webhook_secret_version" {
+  description = "Secret Manager version holding the global GitHub App webhook secret."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.github_webhook_secret_version == null ||
+      can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.github_webhook_secret_version))
+    )
+    error_message = "github_webhook_secret_version must be null or an immutable Secret Manager version."
   }
 }
 
@@ -300,6 +375,14 @@ variable "capability_secret_version" {
   type        = string
   default     = null
   nullable    = true
+
+  validation {
+    condition = (
+      var.capability_secret_version == null ||
+      can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.capability_secret_version))
+    )
+    error_message = "capability_secret_version must be null or an immutable Secret Manager version."
+  }
 }
 
 variable "capability_public_key" {

@@ -759,11 +759,33 @@ FireKey accepts:
 | Repository leak alert | GitHub secret scanning creates or reopens an alert | Emergency triage and rotation |
 | Cloud security finding | Security Command Center publishes an active finding | Correlate and contain |
 | Provider signal | Provider reports expiry, disablement, abuse, or compromise | Emergency or recovery flow |
+| FireKey observation | Scheduled metadata scan finds expiry, scope drift, disablement, or a stale runtime binding | Exact credential incident and policy response |
 | SIEM/SOAR webhook | Splunk, Chronicle, or another platform sends a finding | Policy-based triage |
 | FireKey telemetry | Authentication errors spike or old-key use continues | Pause, recover, or escalate |
 | FireKey API | An authorised internal system submits a request | Policy-based rotation |
 
 Google Secret Manager can publish a `SECRET_ROTATE` message to Pub/Sub at a configured rotation time. Security Command Center can publish new and updated findings to Pub/Sub in near real time. GitHub exposes secret-scanning alerts through webhooks and APIs.
+
+### GitHub customer onboarding
+
+FireKey integrates through a customer-installed GitHub App; it does not depend on secret scanning
+being enabled on FireKey's own source repository. An authorised tenant administrator begins an
+installation with a short-lived state value and PKCE challenge. After GitHub returns the App
+installation, FireKey exchanges a one-time user authorization code and uses that temporary user
+token only inside the deterministic connector to prove that the administrator can access the
+claimed installation. The token is cleared after the metadata check and is never persisted or
+sent to an agent. Secret-scanning API probes request hidden-secret responses, and alert
+normalisation discards any unapproved payload fields before creating FireKey metadata.
+
+Onboarding verifies that the installation grants read access to secret-scanning alerts, subscribes
+to `secret_scanning_alert`, and exposes no more than 400 selected repositories. Every selected
+repository must report secret scanning enabled and must be explicitly mapped to exactly one
+managed credential. A globally signed installation delivery proves the configured webhook path;
+the installation is ready only after both that delivery and the repository checks succeed. The
+global installation index then routes signed alert deliveries to exactly one FireKey organisation.
+Suspending or deleting the GitHub App installation immediately disables that routing. GitHub App
+repository-selection changes also fail closed and invalidate readiness until an administrator
+repeats the ownership, scanning, and exact credential-mapping checks.
 
 ### Ingestion pipeline
 

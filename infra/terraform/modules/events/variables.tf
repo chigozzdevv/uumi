@@ -144,3 +144,17 @@ variable "rotation_schedules" {
     error_message = "Rotation schedules require stable IDs, a tenant, credential, cron expression, and time zone."
   }
 }
+
+variable "detection_organisations" {
+  description = "FireKey organisations scanned for provider expiry and runtime drift."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for organisation in var.detection_organisations :
+      can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation))
+    ])
+    error_message = "Detection organisations require valid FireKey identifiers."
+  }
+}

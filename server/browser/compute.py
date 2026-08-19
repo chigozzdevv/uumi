@@ -39,8 +39,10 @@ class BrowserVmManager:
         organisation_id: str,
         session_id: str,
         expires_at: datetime,
-        setup_token: str | None = None,
+        setup_token_hash: str | None = None,
         allowed_domains: tuple[str, ...] = (),
+        storage_domains: tuple[str, ...] = (),
+        secret_container: str | None = None,
     ) -> BrowserVm:
         name = _name(session_id)
         base = (
@@ -59,12 +61,21 @@ class BrowserVmManager:
             {"key": "firekey-region", "value": self._region},
             {"key": "firekey-worker-image", "value": self._image},
         ]
-        if setup_token is not None:
+        if setup_token_hash is not None:
+            if not re.fullmatch(r"[a-f0-9]{64}", setup_token_hash):
+                raise ConnectorError("invalid-setup-token", "setup token hash is invalid")
+            if secret_container is None:
+                raise ConnectorError("invalid-setup-secret", "setup secret container is required")
             metadata.extend(
                 [
                     {"key": "firekey-setup", "value": "true"},
-                    {"key": "firekey-setup-token", "value": setup_token},
+                    {"key": "firekey-setup-token-hash", "value": setup_token_hash},
                     {"key": "firekey-setup-domains", "value": ",".join(allowed_domains)},
+                    {
+                        "key": "firekey-setup-storage-domains",
+                        "value": ",".join(storage_domains),
+                    },
+                    {"key": "firekey-setup-secret", "value": secret_container},
                 ]
             )
         operation = await self._client.request(

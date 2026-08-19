@@ -1,4 +1,4 @@
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
 
@@ -16,6 +16,22 @@ class ManagedCredential(Contract):
     active_generation_id: Identifier | None = None
     policy_version: Identifier
     playbook_version: Identifier
+    expires_at: AwareDatetime | None = None
+    rotation_due_at: AwareDatetime | None = None
+    last_observed_at: AwareDatetime | None = None
+    metadata_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     created_at: AwareDatetime
     updated_at: AwareDatetime
     revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_rotation_due(self) -> "ManagedCredential":
+        if self.rotation_due_at is not None and self.expires_at is None:
+            raise ValueError("a credential rotation due time requires an expiry")
+        if (
+            self.rotation_due_at is not None
+            and self.expires_at is not None
+            and self.rotation_due_at > self.expires_at
+        ):
+            raise ValueError("credential rotation must be due no later than expiry")
+        return self

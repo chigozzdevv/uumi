@@ -1,9 +1,11 @@
 import asyncio
 import base64
 import binascii
+import hashlib
 import hmac
+import json
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Annotated, Any, cast
 
@@ -11,6 +13,7 @@ from broker import CapabilityClaims, CapabilityVerifier
 from broker.capability import request_digest
 from broker.evidence import GcsEvidenceSink
 from capture import SecureCapture
+from connectors.base import SecretValue
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
 from contracts import (
@@ -45,7 +48,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from telemetry import instrument
 
-from browser.auth import BrowserAuthBroker
+from browser.auth import BrowserAuthBroker, filter_storage_state, validate_storage_state
 from browser.driver import AuthenticationRequiredError, BrowserDriver
 from browser.model import ComputerProposal, ComputerUseClient
 from browser.replay import ReplayRecorder
@@ -66,17 +69,31 @@ class WorkerSettings(BaseSettings):
     region: str = Field(min_length=3, max_length=32)
     model: str = "gemini-3.7-flash"
     setup: bool = False
-    setup_token: str = ""
+    setup_token_hash: str = ""
     setup_domains: str = ""
+    setup_storage_domains: str = ""
+    setup_secret: str = ""
 
 
 class SetupRuntime:
     # Setup VMs run no model and record no replay; the human drives a fresh
     # profile and only the exported session leaves the machine.
-    def __init__(self, context: BrowserContext, driver: BrowserDriver, token: str) -> None:
+    def __init__(
+        self,
+        context: BrowserContext,
+        driver: BrowserDriver,
+        token_hash: str,
+        storage_domains: tuple[str, ...],
+        secret: str,
+        google: GoogleRestClient,
+    ) -> None:
         self.context = context
         self.driver = driver
-        self.token = token
+        self.token_hash = token_hash
+        self.storage_domains = storage_domains
+        self.secret = secret
+        self.secrets = SecretManagerConnector(google)
+        self.google = google
 
 
 class ProposeRequest(Contract):
@@ -248,13 +265,37 @@ async def _capability_error(request: Request, error: CapabilityError) -> JSONRes
     return JSONResponse(status_code=403, content={"code": "forbidden", "message": str(error)})
 
 
+@app.exception_handler(ResourceConflictError)
+async def _resource_conflict(request: Request, error: ResourceConflictError) -> JSONResponse:
+    del request
+    return JSONResponse(
+        status_code=409,
+        content={"code": "conflict", "message": str(error)},
+    )
+
+
 @asynccontextmanager
 async def _setup_lifespan(app: FastAPI, settings: WorkerSettings) -> AsyncGenerator[None, None]:
-    if not settings.setup_token or not settings.setup_domains:
-        raise RuntimeError("setup mode requires a token and allowed domains")
+    if (
+        not settings.setup_token_hash
+        or not settings.setup_domains
+        or not settings.setup_storage_domains
+        or not settings.setup_secret
+    ):
+        raise RuntimeError("setup mode requires token, domain, and secret metadata")
+    if len(settings.setup_token_hash) != 64 or any(
+        character not in "0123456789abcdef" for character in settings.setup_token_hash
+    ):
+        raise RuntimeError("setup mode requires a valid token hash")
     domains = tuple(value.strip() for value in settings.setup_domains.split(",") if value.strip())
+    storage_domains = tuple(
+        value.strip() for value in settings.setup_storage_domains.split(",") if value.strip()
+    )
     if not domains:
         raise RuntimeError("setup mode requires at least one allowed domain")
+    if not storage_domains or not set(storage_domains).issubset(domains):
+        raise RuntimeError("setup storage domains must be included in allowed domains")
+    google = GoogleRestClient()
     engine = await async_playwright().start()
     browser = await engine.chromium.launch(
         headless=True,
@@ -274,12 +315,20 @@ async def _setup_lifespan(app: FastAPI, settings: WorkerSettings) -> AsyncGenera
         ),
     )
     await driver.enforce_egress()
-    app.state.setup = SetupRuntime(context, driver, settings.setup_token)
+    app.state.setup = SetupRuntime(
+        context,
+        driver,
+        settings.setup_token_hash,
+        storage_domains,
+        settings.setup_secret,
+        google,
+    )
     try:
         yield
     finally:
         await browser.close()
         await engine.stop()
+        await google.close()
 
 
 def _runtime(request: Request) -> WorkerRuntime:
@@ -297,7 +346,8 @@ def _setup(request: Request) -> SetupRuntime:
 
 
 def _authorise_setup(setup: SetupRuntime, token: str | None) -> None:
-    if not token or not hmac.compare_digest(token, setup.token):
+    presented = hashlib.sha256((token or "").encode()).hexdigest()
+    if not token or not hmac.compare_digest(presented, setup.token_hash):
         raise CapabilityError("setup token is invalid")
 
 
@@ -768,12 +818,31 @@ async def _secure_input(
             plaintext[index] = 0
 
 
-@app.post("/v1/setup/export")
-async def setup_export(request: Request, token: SetupToken) -> dict[str, Any]:
+@app.post("/v1/setup/store")
+async def setup_store(request: Request, token: SetupToken) -> dict[str, Any]:
     setup = _setup(request)
     _authorise_setup(setup, token)
     state = await setup.context.storage_state()
-    return {"storage_state": state}
+    filtered = filter_storage_state(state, setup.storage_domains)
+    if not filtered["cookies"] and not filtered["origins"]:
+        raise ResourceConflictError("no provider session was captured on the connection domains")
+    validate_storage_state(filtered, setup.storage_domains)
+    encoded = bytearray(json.dumps(filtered, separators=(",", ":")).encode())
+    secret = SecretValue(encoded)
+    try:
+        return await setup.secrets.add_version(setup.secret, secret)
+    finally:
+        secret.clear()
+        for index in range(len(encoded)):
+            encoded[index] = 0
+        await _clear_setup_state(setup.context)
+
+
+async def _clear_setup_state(context: BrowserContext) -> None:
+    await context.clear_cookies()
+    for page in context.pages:
+        with suppress(Exception):
+            await page.evaluate("localStorage.clear(); sessionStorage.clear()")
 
 
 @app.websocket("/v1/setup/live")
@@ -783,7 +852,8 @@ async def setup_live(websocket: WebSocket) -> None:
         await websocket.close(code=4404, reason="browser worker is not in setup mode")
         return
     token = websocket.headers.get("x-firekey-setup")
-    if not token or not hmac.compare_digest(token, setup.token):
+    presented = hashlib.sha256((token or "").encode()).hexdigest()
+    if not token or not hmac.compare_digest(presented, setup.token_hash):
         await websocket.close(code=4403, reason="setup token is invalid")
         return
     await websocket.accept()

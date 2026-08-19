@@ -117,8 +117,8 @@ module "storage" {
     api         = module.identity.members["firekey-api"]
     coordinator = module.identity.members["firekey-coordinator"]
   }
-  github_organisations     = var.workflow_organisations
-  github_secret_accessor   = module.identity.members["firekey-ingestion"]
+  github_webhook_accessor  = module.identity.members["firekey-ingestion"]
+  github_oauth_accessor    = module.identity.members["firekey-api"]
   provider_sources         = var.provider_sources
   provider_secret_accessor = module.identity.members["firekey-ingestion"]
   principals = {
@@ -151,6 +151,7 @@ module "browser" {
   worker_service_account = module.identity.emails["firekey-browser"]
   coordinator_member     = module.identity.members["firekey-coordinator"]
   allowed_domains        = var.browser_allowed_domains
+  connector_domains      = var.runtime_connector_domains
 
   depends_on = [module.project, module.identity, module.storage]
 }
@@ -179,13 +180,19 @@ check "complete_runtime" {
       length(local.runtime_images) == 9 &&
       var.capability_secret_version != null &&
       var.notification_app_url != null &&
+      var.github_app_slug != null &&
+      var.github_client_id != null &&
+      var.github_client_secret_version != null &&
+      var.github_callback_url != null &&
+      var.github_webhook_secret_version != null &&
       var.access_policy_id != null &&
       var.operator_access_level != null &&
       length(var.browser_allowed_domains) > 0 &&
+      length(var.runtime_connector_domains) > 0 &&
       length(var.workflow_organisations) > 0 &&
       length(var.gateway_users) > 0
     )
-    error_message = "Deploy all nine runtime images together with an explicit capability secret, notification app URL, service perimeter, browser egress domains, organisation grant, and IAP gateway user."
+    error_message = "Deploy all nine runtime images together with explicit capability and GitHub App secrets, callback metadata, notification app URL, service perimeter, browser egress domains, organisation grant, and IAP gateway user."
   }
 }
 
@@ -241,24 +248,32 @@ module "runtime" {
   event_member                 = module.identity.members["firekey-events"]
   scc_push_service_account     = module.identity.emails["firekey-events"]
   oidc_audience                = var.oidc_audience
-  api_image                    = var.api_image
-  ingestion_image              = var.ingestion_image
-  publisher_image              = var.publisher_image
-  broker_image                 = var.broker_image
-  coordinator_image            = var.coordinator_image
-  notification_image           = var.notification_image
-  auditlog_image               = var.auditlog_image
-  notification_app_url         = var.notification_app_url
-  browser_image                = var.browser_image
-  browser_gateway_url          = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
-  evidence_bucket              = module.storage.evidence_bucket
-  walkthrough_bucket           = module.storage.walkthrough_bucket
-  capability_secret_version    = local.capability_secret_version
-  capability_public_key        = var.capability_public_key
-  browser_template             = module.browser.template
-  browser_zone                 = var.zone
-  network                      = module.browser.network
-  subnetwork                   = module.browser.runtime_subnetwork
+  github_app_slug              = coalesce(var.github_app_slug, "")
+  github_client_id             = coalesce(var.github_client_id, "")
+  github_client_secret_version = coalesce(var.github_client_secret_version, "")
+  github_callback_url          = coalesce(var.github_callback_url, "")
+  github_webhook_secret_version = coalesce(
+    var.github_webhook_secret_version,
+    "",
+  )
+  api_image                 = var.api_image
+  ingestion_image           = var.ingestion_image
+  publisher_image           = var.publisher_image
+  broker_image              = var.broker_image
+  coordinator_image         = var.coordinator_image
+  notification_image        = var.notification_image
+  auditlog_image            = var.auditlog_image
+  notification_app_url      = var.notification_app_url
+  browser_image             = var.browser_image
+  browser_gateway_url       = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
+  evidence_bucket           = module.storage.evidence_bucket
+  walkthrough_bucket        = module.storage.walkthrough_bucket
+  capability_secret_version = local.capability_secret_version
+  capability_public_key     = var.capability_public_key
+  browser_template          = module.browser.template
+  browser_zone              = var.zone
+  network                   = module.browser.network
+  subnetwork                = module.browser.runtime_subnetwork
 
   depends_on = [module.project, module.storage, module.browser, module.gateway]
 }
@@ -320,23 +335,24 @@ module "gateway" {
 module "events" {
   source = "../../modules/events"
 
-  project_id            = var.project_id
-  region                = var.region
-  publisher_member      = module.identity.members["firekey-publisher"]
-  event_member          = module.identity.members["firekey-events"]
-  event_service_account = module.identity.emails["firekey-events"]
-  secretmanager_member  = module.storage.secretmanager_member
-  publisher_name        = module.runtime.publisher_name
-  publisher_uri         = module.runtime.publisher_uri
-  ingestion_uri         = module.runtime.ingestion_uri
-  notification_name     = module.runtime.notification_name
-  notification_uri      = module.runtime.notification_uri
-  auditlog_name         = module.runtime.auditlog_name
-  auditlog_uri          = module.runtime.auditlog_uri
-  oidc_audience         = var.oidc_audience
-  scc_sources           = var.scc_sources
-  secret_sources        = var.secret_sources
-  rotation_schedules    = var.rotation_schedules
+  project_id              = var.project_id
+  region                  = var.region
+  publisher_member        = module.identity.members["firekey-publisher"]
+  event_member            = module.identity.members["firekey-events"]
+  event_service_account   = module.identity.emails["firekey-events"]
+  secretmanager_member    = module.storage.secretmanager_member
+  publisher_name          = module.runtime.publisher_name
+  publisher_uri           = module.runtime.publisher_uri
+  ingestion_uri           = module.runtime.ingestion_uri
+  notification_name       = module.runtime.notification_name
+  notification_uri        = module.runtime.notification_uri
+  auditlog_name           = module.runtime.auditlog_name
+  auditlog_uri            = module.runtime.auditlog_uri
+  oidc_audience           = var.oidc_audience
+  scc_sources             = var.scc_sources
+  secret_sources          = var.secret_sources
+  rotation_schedules      = var.rotation_schedules
+  detection_organisations = var.workflow_organisations
 
   depends_on = [module.project, module.runtime]
 }

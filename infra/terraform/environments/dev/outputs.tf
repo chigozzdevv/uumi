@@ -83,9 +83,14 @@ output "audit_log_bucket" {
   value       = module.storage.audit_log_bucket
 }
 
-output "github_webhook_secrets" {
-  description = "GitHub HMAC secret resources requiring externally supplied versions."
-  value       = module.storage.github_secrets
+output "github_webhook_secret" {
+  description = "Global GitHub App HMAC secret resource requiring an external version."
+  value       = module.storage.github_webhook_secret
+}
+
+output "github_oauth_secret" {
+  description = "GitHub App OAuth client secret resource requiring an external version."
+  value       = module.storage.github_oauth_secret
 }
 
 output "image_repository" {

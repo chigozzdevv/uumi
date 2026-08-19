@@ -3,8 +3,11 @@ import hashlib
 import hmac
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from connectors.base import SecretValue
 from contracts import (
     Confidence,
     ConsumerBinding,
@@ -21,10 +24,12 @@ from contracts import (
 )
 from core.incident import IncidentService
 from core.workflow import RunWorkflow
-from ingestion.app import _pubsub, _verify_hmac
+from fastapi import FastAPI
+from ingestion.app import _pubsub, _verify_hmac, github
 from ingestion.automation import IncidentAutomation
 from ingestion.sources import ProviderSource, ScheduleSource, SecretManagerSource
 from policy import REQUIRED_CHECKS, digest
+from starlette.requests import Request
 from testkit import MemoryRunRepository
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -102,6 +107,76 @@ def test_provider_event_preserves_exact_provider_identifier() -> None:
     assert event.severity is Severity.CRITICAL
     assert event.confidence is Confidence.VERIFIED
     assert event.resource.provider_id == "provider-key-one"
+
+
+@pytest.mark.anyio
+async def test_repository_selection_change_invalidates_github_routing() -> None:
+    body = json.dumps(
+        {
+            "action": "added",
+            "installation": {"id": 123},
+            "repositories_added": [{"id": 456, "full_name": "customer/api"}],
+            "repositories_removed": [],
+        }
+    ).encode()
+    secret = b"webhook-secret"
+    signature = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+    class Secrets:
+        async def access(self, reference: str) -> SecretValue:
+            assert reference == "projects/project-one/secrets/github/versions/1"
+            return SecretValue(secret)
+
+    class GitHub:
+        def __init__(self) -> None:
+            self.invalidated: tuple[int, datetime] | None = None
+
+        async def invalidate_repositories(
+            self, installation_id: int, occurred_at: datetime
+        ) -> None:
+            self.invalidated = installation_id, occurred_at
+
+    github_store = GitHub()
+    runtime = SimpleNamespace(
+        settings=SimpleNamespace(
+            max_body_bytes=1024,
+            github_webhook_secret="projects/project-one/secrets/github/versions/1",
+        ),
+        secrets=Secrets(),
+        github=github_store,
+    )
+    request_app = FastAPI()
+    request_app.state.runtime = runtime
+    delivered = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/github",
+            "headers": [],
+            "app": request_app,
+        },
+        receive,
+    )
+
+    response = await github(
+        request,
+        signature,
+        "delivery-one",
+        "installation_repositories",
+    )
+
+    assert response.accepted
+    assert github_store.invalidated is not None
+    assert github_store.invalidated[0] == 123
 
 
 @pytest.mark.anyio

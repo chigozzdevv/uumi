@@ -37,8 +37,10 @@ args=(
 if [[ "$setup" == "true" ]]; then
   args+=(
     --env FIREKEY_SETUP=true
-    --env "FIREKEY_SETUP_TOKEN=$(get firekey-setup-token)"
+    --env "FIREKEY_SETUP_TOKEN_HASH=$(get firekey-setup-token-hash)"
     --env "FIREKEY_SETUP_DOMAINS=$(get firekey-setup-domains)"
+    --env "FIREKEY_SETUP_STORAGE_DOMAINS=$(get firekey-setup-storage-domains)"
+    --env "FIREKEY_SETUP_SECRET=$(get firekey-setup-secret)"
   )
 fi
 

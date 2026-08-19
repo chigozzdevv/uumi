@@ -29,6 +29,13 @@ class HttpProviderConnector:
         self._secrets = secrets
         self._client = client
 
+    async def metadata(self, connection: Connection) -> tuple[dict[str, Any], ...]:
+        api = _api(connection)
+        headers = await self._headers(connection.auth_reference, api.auth)
+        return tuple(
+            self._metadata(api.list_credentials, item) for item in await self._list(api, headers)
+        )
+
     async def execute(
         self,
         tool: str,
@@ -36,13 +43,10 @@ class HttpProviderConnector:
         context: ConnectorContext,
     ) -> ConnectorResponse:
         api = _api(context.connection)
-        headers = await self._headers(context.connection.auth_reference, api.auth)
         if tool == "provider.listCredentialMetadata":
-            keys = [
-                self._metadata(api.list_credentials, item)
-                for item in await self._list(api, headers)
-            ]
-            return ConnectorResponse(result={"credentials": keys})
+            metadata = await self.metadata(context.connection)
+            return ConnectorResponse(result={"credentials": list(metadata)})
+        headers = await self._headers(context.connection.auth_reference, api.auth)
         if tool == "provider.getCredentialStatus":
             key_id = _string(payload, "provider_id")
             keys = await self._list(api, headers)
@@ -371,8 +375,10 @@ def _object(value: Any, label: str) -> dict[str, Any]:
 def _metadata_value(name: str, value: Any) -> str | bool | list[str]:
     if name == "disabled" and isinstance(value, bool):
         return value
-    if name == "scopes" and isinstance(value, list) and all(
-        isinstance(item, str) for item in value
+    if (
+        name == "scopes"
+        and isinstance(value, list)
+        and all(isinstance(item, str) for item in value)
     ):
         return value
     if name != "disabled" and name != "scopes" and isinstance(value, str) and len(value) <= 512:

@@ -36,8 +36,9 @@ terraform -chdir=infra/terraform/environments/dev apply \
 ```
 
 This creates the protected Firestore database, service accounts, immutable Artifact Registry,
-CMEK keys, locked evidence and audit storage, Agent Runtime staging bucket, GitHub and provider
-webhook secret containers, capability secret container, service perimeter, regional policy,
+CMEK keys, locked evidence and audit storage, Agent Runtime staging bucket, GitHub App OAuth and
+webhook secret containers, provider webhook secret containers, capability secret container,
+service perimeter, regional policy,
 private browser network, Secure Web Proxy, one-run VM template, and Identity Platform sign-in
 configuration (email and password enabled; `identity_platform_domains` admits the client origin).
 
@@ -45,10 +46,21 @@ Create secret versions outside Terraform. The capability secret version must con
 raw 32-byte private key of an Ed25519 keypair; `capability_public_key` contains only the paired raw
 public key in unpadded base64url form. Only the API and coordinator can read the private key.
 Broker, gateway, and one-run browser workers receive the public key and therefore cannot mint
-capabilities. Each GitHub organisation and provider webhook requires a distinct random HMAC
-secret version. Provider signatures cover `X-FireKey-Timestamp + "." + raw-body` and FireKey
+capabilities. The GitHub App uses one random webhook HMAC secret and one OAuth client secret;
+customer installations are mapped to FireKey organisations in Firestore only after a signed
+installation delivery and a PKCE-bound user authorization prove ownership. Provider webhooks use
+a distinct random HMAC secret per configured source. Provider signatures cover
+`X-FireKey-Timestamp + "." + raw-body` and FireKey
 rejects timestamps outside the configured replay window. Do not
 place private or HMAC values in Terraform variables, plans, state, commands, or shell history.
+
+Register the customer-facing GitHub App with the FireKey ingestion URL ending in `/v1/github`,
+the configured HTTPS callback URL, read access to secret scanning alerts, and the
+`secret_scanning_alert` event. Add the App OAuth client secret and webhook HMAC as Secret Manager
+versions outside Terraform, then set their full immutable version references in the second-phase
+variables. GitHub sends installation and installation-repository lifecycle events to Apps by
+default; FireKey uses them to disable stale routing. FireKey never changes security settings on its
+own source repository.
 
 Enable the Google and GitHub sign-in providers in the Identity Platform console, never in
 Terraform. The GitHub provider needs an OAuth application's client secret; record the OAuth
@@ -158,6 +170,10 @@ Before enabling schedules or webhooks, verify:
 - Model Armor blocks a seeded prompt-injection probe and IAP rejects an unregistered endpoint;
 - capability, GitHub, and provider webhook secret versions exist and IAM grants are limited to
   their workloads;
+- a customer GitHub App installation completes PKCE user verification, receives a signed
+installation delivery, reports secret scanning enabled for every selected repository, and maps
+each repository to exactly one managed credential;
+- adding or removing an installation repository invalidates readiness until onboarding is repeated;
 - Workflows can complete a controlled dry-run assignment in an isolated non-production
   environment;
 - the browser VM has no external IP, starts the exact digest, and is deleted at run completion;
@@ -173,3 +189,8 @@ Before enabling schedules or webhooks, verify:
 
 No credential value is an infrastructure input. Provider and runtime connection secrets are
 created and governed in Secret Manager after the platform foundation exists.
+
+For browser connection setup, grant the FireKey API service account version-list access and the
+isolated browser worker service account `roles/secretmanager.secretVersionAdder` only on the
+chosen session secret container. The setup worker writes the filtered browser state directly to
+that container; the API receives only the resulting version reference and fingerprint.

@@ -33,6 +33,13 @@ class BrowserRepository(Protocol):
 
     async def save_capture(self, result: SecureCaptureResult) -> SecureCaptureResult: ...
 
+    async def complete_capture(
+        self,
+        current: BrowserSession,
+        changed: BrowserSession,
+        result: SecureCaptureResult,
+    ) -> BrowserSession: ...
+
     async def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> ReplayCheckpoint: ...
 
     async def begin_action(
@@ -152,7 +159,6 @@ class BrowserService:
         current = await self._current(result.organisation_id, result.session_id, revision)
         if current.status is not BrowserStatus.CAPTURING:
             raise ResourceConflictError("secure capture barrier is not armed")
-        await self._repository.save_capture(result)
         takeover = current.takeover_subject is not None
         changed = self._change(
             current,
@@ -160,9 +166,7 @@ class BrowserService:
             model_paused=takeover,
             recording_paused=takeover,
         )
-        return await self._repository.update(
-            result.organisation_id, result.session_id, revision, changed
-        )
+        return await self._repository.complete_capture(current, changed, result)
 
     async def freeze(self, organisation_id: str, session_id: str, revision: int) -> BrowserSession:
         current = await self._current(organisation_id, session_id, revision)

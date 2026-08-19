@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import hmac
-import json
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime, timedelta
@@ -9,7 +8,6 @@ from secrets import token_urlsafe
 from typing import Any, Protocol, TypeVar
 
 import httpx
-from connectors.base import SecretValue
 from contracts import (
     Connection,
     ConnectionKind,
@@ -25,7 +23,7 @@ from contracts import (
 from core.errors import ResourceConflictError, ResourceNotFoundError
 from core.storage.paths import FirestorePaths
 
-from browser.auth import filter_storage_state, is_domain_pattern, validate_storage_state
+from browser.auth import is_domain_pattern
 from browser.compute import BrowserVm
 
 T = TypeVar("T", bound=Contract)
@@ -50,12 +48,20 @@ class SetupCatalog(Protocol):
 class SetupConnections(Protocol):
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection: ...
 
+    async def complete_setup(
+        self,
+        current_session: SetupSession,
+        changed_session: SetupSession,
+        current_connection: Connection,
+        changed_connection: Connection,
+    ) -> tuple[SetupSession, Connection]: ...
+
     async def update_authentication(
         self,
         organisation_id: str,
         connection_id: str,
         expected_revision: int,
-        auth_reference: str,
+        auth_reference: str | None,
         status: ConnectionStatus,
         updated_at: datetime,
     ) -> Connection: ...
@@ -67,17 +73,19 @@ class SetupVms(Protocol):
         organisation_id: str,
         session_id: str,
         expires_at: datetime,
-        setup_token: str | None = None,
+        setup_token_hash: str | None = None,
         allowed_domains: tuple[str, ...] = (),
+        storage_domains: tuple[str, ...] = (),
+        secret_container: str | None = None,
     ) -> BrowserVm: ...
 
     async def delete(self, instance: str) -> None: ...
 
 
 class SetupSecrets(Protocol):
-    async def add_version(self, secret: str, value: SecretValue) -> dict[str, Any]: ...
-
     async def versions(self, secret: str) -> tuple[dict[str, Any], ...]: ...
+
+    async def disable(self, version: str) -> dict[str, Any]: ...
 
 
 class WaitingRunResumer(Protocol):
@@ -189,8 +197,10 @@ class BrowserSetupService:
                 organisation_id,
                 session.id,
                 session.expires_at,
-                setup_token=token,
+                setup_token_hash=session.token_hash,
                 allowed_domains=vm_domains,
+                storage_domains=domains,
+                secret_container=secret_container,
             )
             instance = created.instance
             address = created.internal_address
@@ -247,8 +257,13 @@ class BrowserSetupService:
             connection = await self._connections.get_connection(
                 organisation_id, session.connection_id
             )
-            await self._delete_vm(session)
-            return session, connection, ()
+            try:
+                resumed = await self._resume_waiting(
+                    organisation_id, session.connection_id, actor_id or subject
+                )
+            finally:
+                await self._delete_vm(session)
+            return session, connection, resumed
         if session.status is not SetupStatus.READY:
             raise ResourceConflictError("setup session is already being captured")
         if session.expires_at <= self._clock():
@@ -265,49 +280,73 @@ class BrowserSetupService:
                 }
             ),
         )
-        state = await self._export(session, token)
-        connection = await self._connections.get_connection(organisation_id, session.connection_id)
-        filtered = filter_storage_state(state, connection.allowed_resources)
-        if not filtered["cookies"] and not filtered["origins"]:
-            raise ResourceConflictError(
-                "no provider session was captured on the connection domains"
+        before: frozenset[str] = frozenset()
+        baseline_loaded = False
+        auth_reference: str | None = None
+        previous_connection: Connection | None = None
+        updated_connection: Connection | None = None
+        expected_session: SetupSession | None = None
+        expected_connection: Connection | None = None
+        try:
+            before = _version_names(await self._secrets.versions(session.secret_container))
+            baseline_loaded = True
+            result = await self._store(session, token)
+            auth_reference = result.get("secret_reference")
+            if not isinstance(auth_reference, str):
+                raise ResourceConflictError("setup worker returned no secret version reference")
+            previous_connection = await self._connections.get_connection(
+                organisation_id, session.connection_id
             )
-        validate_storage_state(filtered, connection.allowed_resources)
-        result = await self._secrets.add_version(
-            session.secret_container,
-            SecretValue(json.dumps(filtered, separators=(",", ":")).encode()),
-        )
-        auth_reference = result.get("secret_reference")
-        if not isinstance(auth_reference, str):
-            raise ResourceConflictError("secret store returned no version reference")
-        connection = await self._connections.update_authentication(
-            organisation_id,
-            session.connection_id,
-            connection.revision,
-            auth_reference,
-            ConnectionStatus.READY,
-            self._clock(),
-        )
-        session = await self._catalog.replace(
-            path,
-            SetupSession,
-            session.revision,
-            lambda current: current.model_copy(
+            completed_at = self._clock()
+            expected_connection = previous_connection.model_copy(
+                update={
+                    "auth_reference": auth_reference,
+                    "status": ConnectionStatus.READY,
+                    "updated_at": completed_at,
+                    "revision": previous_connection.revision + 1,
+                }
+            )
+            expected_session = session.model_copy(
                 update={
                     "status": SetupStatus.COMPLETE,
                     "auth_reference": auth_reference,
-                    "updated_at": self._clock(),
-                    "revision": current.revision + 1,
+                    "updated_at": completed_at,
+                    "revision": session.revision + 1,
                 }
-            ),
-        )
+            )
+            session, updated_connection = await self._connections.complete_setup(
+                session,
+                expected_session,
+                previous_connection,
+                expected_connection,
+            )
+        except Exception as error:
+            committed = await self._committed_setup(
+                path,
+                expected_session,
+                expected_connection,
+            )
+            if committed is not None:
+                session, updated_connection = committed
+            else:
+                cleanup_error = (
+                    await self._reconcile_store(session.secret_container, before, auth_reference)
+                    if baseline_loaded
+                    else None
+                )
+                await self._terminate_failed(path, session)
+                await self._delete_vm(session)
+                if cleanup_error is not None:
+                    raise cleanup_error from error
+                raise
         try:
             resumed = await self._resume_waiting(
                 organisation_id, session.connection_id, actor_id or subject
             )
         finally:
             await self._delete_vm(session)
-        return session, connection, resumed
+        assert updated_connection is not None
+        return session, updated_connection, resumed
 
     async def abort(
         self,
@@ -396,26 +435,103 @@ class BrowserSetupService:
             )
         return resumed
 
-    async def _export(self, session: SetupSession, token: str) -> dict[str, Any]:
+    async def _store(self, session: SetupSession, token: str) -> dict[str, Any]:
         if session.internal_address is None:
             raise ResourceConflictError("setup worker has no internal address")
         try:
             response = await self._http.post(
-                f"http://{session.internal_address}:8080/v1/setup/export",
+                f"http://{session.internal_address}:8080/v1/setup/store",
                 headers={"X-FireKey-Setup": token},
                 json={},
             )
-        except (httpx.TimeoutException, httpx.NetworkError) as error:
-            raise ResourceConflictError("setup worker was unavailable") from error
+        except (httpx.TimeoutException, httpx.NetworkError):
+            raise ResourceConflictError("setup worker was unavailable") from None
         if response.status_code == 403:
             raise ResourceConflictError("setup worker rejected the token")
+        if response.status_code == 409:
+            raise ResourceConflictError(
+                "no provider session was captured on the connection domains"
+            )
         if response.status_code != 200:
             raise ResourceConflictError(f"setup worker returned HTTP {response.status_code}")
         body = response.json()
-        state = body.get("storage_state") if isinstance(body, dict) else None
-        if not isinstance(state, dict):
-            raise ResourceConflictError("setup worker returned no storage state")
-        return state
+        if not isinstance(body, dict):
+            raise ResourceConflictError("setup worker returned invalid metadata")
+        return body
+
+    async def _reconcile_store(
+        self,
+        secret: str,
+        before: frozenset[str],
+        known_version: str | None,
+    ) -> ResourceConflictError | None:
+        if known_version is not None:
+            try:
+                await self._secrets.disable(known_version)
+            except Exception:
+                return ResourceConflictError(
+                    "setup failed and its secret version requires manual disablement"
+                )
+            return None
+        try:
+            candidates = [
+                item["name"]
+                for item in await self._secrets.versions(secret)
+                if isinstance(item.get("name"), str)
+                and item["name"] not in before
+                and item.get("state") == "ENABLED"
+            ]
+        except Exception:
+            return ResourceConflictError(
+                "setup outcome is ambiguous and secret versions could not be reconciled"
+            )
+        if len(candidates) > 1:
+            return ResourceConflictError(
+                "setup outcome is ambiguous and multiple secret versions require review"
+            )
+        if candidates:
+            try:
+                await self._secrets.disable(candidates[0])
+            except Exception:
+                return ResourceConflictError(
+                    "setup failed and its secret version requires manual disablement"
+                )
+        return None
+
+    async def _terminate_failed(self, path: str, session: SetupSession) -> None:
+        with suppress(Exception):
+            await self._catalog.replace(
+                path,
+                SetupSession,
+                session.revision,
+                lambda current: current.model_copy(
+                    update={
+                        "status": SetupStatus.TERMINATED,
+                        "terminated_at": self._clock(),
+                        "updated_at": self._clock(),
+                        "revision": current.revision + 1,
+                    }
+                ),
+            )
+
+    async def _committed_setup(
+        self,
+        path: str,
+        expected_session: SetupSession | None,
+        expected_connection: Connection | None,
+    ) -> tuple[SetupSession, Connection] | None:
+        if expected_session is None or expected_connection is None:
+            return None
+        try:
+            stored_session = await self._catalog.get(path, SetupSession)
+            stored_connection = await self._connections.get_connection(
+                expected_connection.organisation_id, expected_connection.id
+            )
+        except Exception:
+            return None
+        if stored_session == expected_session and stored_connection == expected_connection:
+            return stored_session, stored_connection
+        return None
 
     async def _wait_ready(self, session: SetupSession) -> None:
         if session.internal_address is None:
@@ -455,6 +571,10 @@ def _setup_id(connection_id: str) -> str:
         return candidate
     digest = hashlib.sha256(connection_id.encode()).hexdigest()[:40]
     return f"setup_{digest}"
+
+
+def _version_names(values: tuple[dict[str, Any], ...]) -> frozenset[str]:
+    return frozenset(item["name"] for item in values if isinstance(item.get("name"), str))
 
 
 class WorkflowRunResumer:

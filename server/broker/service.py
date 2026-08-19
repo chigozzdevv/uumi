@@ -1,11 +1,12 @@
 import hashlib
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from connectors import Connector, ConnectorContext, ConnectorResponse
 from connectors.base.connector import ReconcilesMutations
-from connectors.base.errors import ConnectorError
+from connectors.base.errors import AmbiguousMutationError, ConnectorError
 from connectors.secrets import SecretManagerConnector
 from contracts import (
     Approval,
@@ -213,6 +214,10 @@ class BrokerService:
                 evidence_ids=evidence_ids,
             )
             await self._repository.checkpoint(request, request_hash, result)
+        except AmbiguousMutationError:
+            # The attempt remains leased and reconcilable. A later reclaim must
+            # prove or clean the remote outcome before another mutation runs.
+            raise
         except ConnectorError as error:
             result = ToolResult(
                 request_id=request.id,
@@ -342,10 +347,19 @@ class BrokerService:
                 raise ConnectorError(
                     "unsupported-secret-sink", "secret sink cannot accept direct secret transfer"
                 )
-            stored = await connector.add_version(secret_resource, response.secret)
+            try:
+                stored = await connector.add_version(secret_resource, response.secret)
+            except Exception as store_error:
+                with suppress(Exception):
+                    await self._compensate_created_credential(response, context)
+                raise AmbiguousMutationError(
+                    "secret version write outcome requires reconciliation"
+                ) from store_error
             return ConnectorResponse(
                 result={**response.result, **stored}, evidence=response.evidence
             )
+        except AmbiguousMutationError:
+            raise
         except Exception as store_error:
             await self._compensate_created_credential(response, context)
             if isinstance(store_error, ConnectorError):

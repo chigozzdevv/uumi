@@ -56,12 +56,12 @@ locals {
     "gcr.io",
     "pkg.dev",
   ])
-  connector_domains = toset([
-    "api.sendgrid.com",
+  connector_domains = setunion(toset([
     "events.pagerduty.com",
+    "github.com",
     "hooks.slack.com",
     "run.app",
-  ])
+  ]), var.connector_domains)
   egress_domains  = sort(tolist(setunion(local.google_domains, var.allowed_domains)))
   runtime_domains = sort(tolist(setunion(local.google_domains, local.connector_domains)))
   domain_matcher = join(" || ", flatten([

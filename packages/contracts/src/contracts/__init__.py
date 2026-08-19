@@ -51,6 +51,15 @@ from contracts.credential import ManagedCredential
 from contracts.event import EventKind, OutboxEvent, RunEvent
 from contracts.evidence import StageProof
 from contracts.generation import CredentialGeneration
+from contracts.github import (
+    GitHubInstallation,
+    GitHubInstallationIndex,
+    GitHubOnboardingSession,
+    GitHubOnboardingStatus,
+    GitHubRepository,
+    GitHubSecretScanningStatus,
+    GitHubWebhookReceipt,
+)
 from contracts.http import HttpAuth, HttpAuthScheme, HttpOperation, HttpProviderApi
 from contracts.incident import (
     Confidence,
@@ -174,6 +183,13 @@ __all__ = [
     "Failure",
     "GenerationBinding",
     "GenerationState",
+    "GitHubInstallation",
+    "GitHubInstallationIndex",
+    "GitHubOnboardingSession",
+    "GitHubOnboardingStatus",
+    "GitHubRepository",
+    "GitHubSecretScanningStatus",
+    "GitHubWebhookReceipt",
     "HttpAuth",
     "HttpAuthScheme",
     "HttpOperation",

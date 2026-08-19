@@ -14,6 +14,7 @@ from broker import (
 from broker.capability import request_digest
 from broker.server import server as mcp_server
 from connectors import ConnectorContext, ConnectorResponse, SecretValue
+from connectors.base.errors import AmbiguousMutationError
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
 from contracts import (
@@ -461,6 +462,104 @@ async def test_broker_recovers_expired_create_before_retrying() -> None:
     assert result.succeeded is True
     assert provider.creations == 1
     assert base64.b64decode(stored["payload"]["data"]) == b"one-time-secret"
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_broker_leaves_ambiguous_secret_write_reconcilable() -> None:
+    writes = 0
+
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            raise httpx.ReadTimeout("addVersion response was lost", request=request)
+        return httpx.Response(
+            200,
+            json={
+                "name": "projects/project-one/secrets/credential/versions/6",
+                "state": "ENABLED",
+            },
+        )
+
+    google = GoogleRestClient(
+        credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
+    )
+    provider = Provider()
+    registry = ConnectorRegistry()
+    registry.register(ConnectionKind.PROVIDER, "provider", provider)
+    registry.register(
+        ConnectionKind.SECRET,
+        "google-secret-manager",
+        SecretManagerConnector(google),
+    )
+    repository = Repository()
+    signer = CapabilitySigner(b"s" * 32)
+    request = ToolRequest(
+        id="request_ambiguous",
+        organisation_id="org_one",
+        run_id=repository.run_value.id,
+        agent_id="operator_one",
+        tool="provider.createCredential",
+        connection_id="provider_one",
+        payload={
+            "name": "firekey-run-one",
+            "sink_connection_id": "sink_one",
+            "secret_resource": "projects/project-one/secrets/credential",
+        },
+        fencing_token=1,
+    )
+    request_hash = request_digest(request.tool, request.payload)
+    token = signer.mint(
+        CapabilityClaims(
+            organisation_id="org_one",
+            run_id=repository.run_value.id,
+            agent_id="operator_one",
+            tool=request.tool,
+            connection_id="provider_one",
+            stage=Stage.CREATE,
+            fencing_token=1,
+            request_digest=request_hash,
+            action_digest=request_hash,
+            expires_at=int((NOW + timedelta(minutes=10)).timestamp()),
+            nonce="nonce_ambiguous",
+        )
+    )
+    broker = BrokerService(
+        repository,
+        registry,
+        CapabilityVerifier(signer.public_key),
+        EvidenceSink(),
+        AuditWriter(Audits(), "us-east1", lambda: NOW),
+        lambda: NOW,
+    )
+
+    with pytest.raises(AmbiguousMutationError):
+        await broker.execute(request, token)
+
+    attempt = repository.results[request.id][1]
+    assert attempt.status is ToolAttemptStatus.RUNNING
+    assert attempt.result is None
+    repository.results[request.id] = (
+        request_hash,
+        attempt.model_copy(update={"lease_expires_at": NOW + timedelta(minutes=1)}),
+    )
+    later = NOW + timedelta(minutes=2)
+    retry = BrokerService(
+        repository,
+        registry,
+        CapabilityVerifier(signer.public_key),
+        EvidenceSink(),
+        AuditWriter(Audits(), "us-east1", lambda: later),
+        lambda: later,
+    )
+
+    result = await retry.execute(request, token)
+
+    assert result.succeeded
+    assert provider.creations == 2
+    assert writes == 2
     await google.close()
 
 
