@@ -1,23 +1,39 @@
+import type { ElementType } from "react"
+import { Icon } from "@iconify/react"
+import githubIcon from "@iconify-icons/logos/github-icon.js"
+import googleCloud from "@iconify-icons/logos/google-cloud.js"
+import oracle from "@iconify-icons/logos/oracle.js"
+import segmentIcon from "@iconify-icons/logos/segment-icon.js"
+import sendgridIcon from "@iconify-icons/logos/sendgrid-icon.js"
+import snowflakeIcon from "@iconify-icons/logos/snowflake-icon.js"
+import stripe from "@iconify-icons/logos/stripe.js"
+import { Globe2, KeyRound } from "lucide-react"
 import { providerName } from "../lib/format"
 
-const colors: Record<string, string> = {
-  sendgrid: "bg-[#dfeaf8] text-[#2776bd]",
-  stripe: "bg-[#e9e7fb] text-[#635bce]",
-  github: "bg-[#e8e8e7] text-[#25252a]",
-  "internal-vendor": "bg-[#f5eadc] text-[#9a651c]",
-  netsuite: "bg-[#dfeaf3] text-[#2b668a]",
-  segment: "bg-[#e3f2e9] text-[#238458]",
-  snowflake: "bg-[#e0f2f4] text-[#168197]",
-  "cloud-run": "bg-[#e0e9fb] text-[#3f6eaf]",
-  "google-secret-manager": "bg-[#f5eadc] text-[#8c631f]",
-  "cloud-monitoring": "bg-[#e6e2f5] text-[#57468d]",
+type ProviderVisual = { logo?: typeof sendgridIcon; icon?: ElementType; wide?: boolean }
+
+const visuals: Record<string, ProviderVisual> = {
+  sendgrid: { logo: sendgridIcon },
+  stripe: { logo: stripe, wide: true },
+  github: { logo: githubIcon },
+  "internal-vendor": { icon: Globe2 },
+  netsuite: { logo: oracle, wide: true },
+  segment: { logo: segmentIcon },
+  snowflake: { logo: snowflakeIcon },
+  "cloud-run": { logo: googleCloud },
+  "google-secret-manager": { logo: googleCloud },
+  "cloud-monitoring": { logo: googleCloud },
+  firekey: { icon: KeyRound },
 }
 
 export function Provider({ value, label = true }: { value: string; label?: boolean }) {
+  const visual = visuals[value] ?? { icon: KeyRound }
+  const Fallback = visual.icon
+
   return (
     <span className="inline-flex items-center gap-2.5">
-      <span className={`grid size-7 shrink-0 place-items-center rounded-full text-[10px] font-bold uppercase ${colors[value] ?? "bg-[#e8e8e7] text-[var(--ink-soft)]"}`}>
-        {providerName(value).slice(0, 2)}
+      <span className="grid size-7 shrink-0 place-items-center" aria-hidden="true">
+        {visual.logo ? <Icon icon={visual.logo} className={visual.wide ? "w-6" : "size-5"} /> : Fallback ? <Fallback className="size-4 text-[var(--ink-soft)]" /> : null}
       </span>
       {label && <span>{providerName(value)}</span>}
     </span>

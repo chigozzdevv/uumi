@@ -1,14 +1,14 @@
 import type { ReactNode } from "react"
 
 export function DetailList({ children }: { children: ReactNode }) {
-  return <dl className="divide-y divide-[var(--border-soft)] border-y border-[var(--border-soft)]">{children}</dl>
+  return <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2">{children}</dl>
 }
 
 export function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[135px_1fr] gap-4 py-3.5 text-[11px]">
-      <dt className="text-[var(--ink-muted)]">{label}</dt>
-      <dd className="min-w-0 break-words font-medium text-[var(--ink)]">{children}</dd>
+    <div className="min-w-0 text-[11px]">
+      <dt className="text-[9px] font-medium text-[var(--ink-muted)]">{label}</dt>
+      <dd className="mt-1.5 min-w-0 break-words font-medium text-[var(--ink)]">{children}</dd>
     </div>
   )
 }

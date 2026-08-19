@@ -7,6 +7,7 @@ const credentialIds = ids(store.credentials)
 const serviceIds = ids(store.services)
 const environmentIds = ids(store.environments)
 const connectionIds = ids(store.connections)
+const generationIds = ids(store.generations)
 const runIds = ids(store.runs)
 
 assert.equal(store.overview.credentials, store.credentials.length)
@@ -17,6 +18,7 @@ assert.equal(store.overview.open_incidents, store.incidents.filter((item) => !["
 
 for (const credential of store.credentials) {
   assert(connectionIds.has(credential.connection_id), `${credential.id} references an unknown connection`)
+  assert(generationIds.has(credential.active_generation_id), `${credential.id} references an unknown active generation`)
   for (const serviceId of credential.consumer_ids) {
     assert(serviceIds.has(serviceId), `${credential.id} references an unknown consumer`)
     assert(
@@ -24,6 +26,11 @@ for (const credential of store.credentials) {
       `${credential.id} is missing a binding for ${serviceId}`,
     )
   }
+}
+
+for (const generation of store.generations) {
+  assert(credentialIds.has(generation.credential_id), `${generation.id} references an unknown credential`)
+  assert.equal(store.credentials.find((credential) => credential.id === generation.credential_id)?.active_generation_id, generation.id, `${generation.id} is not active for its credential`)
 }
 
 for (const binding of store.bindings) {

@@ -57,6 +57,46 @@ createServer(async (request, response) => {
   }
   if (request.method === "GET" && listRoutes.has(path)) return json(response, 200, listRoutes.get(path))
 
+  if (request.method === "POST" && path === "/inventory/credentials") {
+    let input
+    try {
+      input = await body(request)
+    } catch {
+      return json(response, 422, { code: "validation-error", message: "Request body must be valid JSON" })
+    }
+    const credential = input.credential
+    const generation = input.generation
+    const bindings = input.bindings
+    if (!credential || !generation || !Array.isArray(bindings)) {
+      return json(response, 422, { code: "validation-error", message: "Credential, generation, and bindings are required" })
+    }
+    if ([credential, generation, ...bindings].some((entry) => entry.organisation_id !== "org_acme")) {
+      return json(response, 409, { code: "conflict", message: "Inventory relationship crosses organisation boundaries" })
+    }
+    if (generation.credential_id !== credential.id || credential.active_generation_id !== generation.id) {
+      return json(response, 409, { code: "conflict", message: "Imported generation lineage is inconsistent" })
+    }
+    const consumerIds = new Set(credential.consumer_ids)
+    const bindingServices = new Set(bindings.map((entry) => entry.service_id))
+    const consumersMatch = consumerIds.size === bindingServices.size && [...consumerIds].every((id) => bindingServices.has(id))
+    const lineageMatches = bindings.every((entry) => entry.credential_id === credential.id && entry.current_generation_id === generation.id)
+    if (!consumersMatch || !lineageMatches) {
+      return json(response, 409, { code: "conflict", message: "Credential consumers and binding lineage must match exactly" })
+    }
+    if (item(store.credentials, credential.id) || item(store.generations, generation.id) || bindings.some((entry) => item(store.bindings, entry.id))) {
+      return json(response, 409, { code: "conflict", message: `Credential ${credential.id} is already imported` })
+    }
+    if (!item(store.connections, credential.connection_id) || bindings.some((entry) => !item(store.services, entry.service_id))) {
+      return json(response, 404, { code: "not-found", message: "Credential connection or consumer service is missing" })
+    }
+
+    store.credentials.push(credential)
+    store.generations.push(generation)
+    store.bindings.push(...bindings)
+    store.overview.credentials = store.credentials.length
+    return json(response, 201, credential)
+  }
+
   const runMatch = path.match(/^\/runs\/([a-z0-9_-]+)$/)
   if (request.method === "GET" && runMatch) {
     const run = item(store.runs, runMatch[1])

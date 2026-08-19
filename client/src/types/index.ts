@@ -99,6 +99,24 @@ export interface ManagedCredential {
   revision: number
 }
 
+export type GenerationState = "creating" | "active" | "superseded" | "revoked" | "orphaned" | "unknown"
+
+export interface CredentialGeneration {
+  id: Identifier
+  organisation_id: Identifier
+  credential_id: Identifier
+  provider_id: string | null
+  fingerprint: string | null
+  scopes: string[]
+  state: GenerationState
+  attempt_id: Identifier
+  secret_reference: string | null
+  predecessor_id: Identifier | null
+  successor_id: Identifier | null
+  created_at: string
+  revoked_at: string | null
+}
+
 export interface ConsumerBinding {
   id: Identifier
   organisation_id: Identifier

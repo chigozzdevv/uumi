@@ -4,7 +4,9 @@ import type {
   Approval,
   AuditEvent,
   Connection,
+  ConsumerBinding,
   ConsumerService,
+  CredentialGeneration,
   Environment,
   Incident,
   InventoryGraph,
@@ -17,6 +19,12 @@ import type {
 
 const ORG_ID = "org_acme"
 const ROOT = `/v1/organisations/${ORG_ID}`
+
+export interface ImportCredentialInput {
+  credential: ManagedCredential
+  generation: CredentialGeneration
+  bindings: ConsumerBinding[]
+}
 
 class ApiClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -41,6 +49,13 @@ class ApiClient {
 
   async getGraph(): Promise<InventoryGraph> {
     return this.request(`${ROOT}/inventory/graph`)
+  }
+
+  async importCredential(input: ImportCredentialInput): Promise<ManagedCredential> {
+    return this.request(`${ROOT}/inventory/credentials`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
   }
 
   async getApplications(): Promise<Application[]> {

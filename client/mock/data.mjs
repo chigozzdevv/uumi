@@ -172,6 +172,22 @@ export const bindings = credentials.flatMap((credential, credentialIndex) =>
   }),
 )
 
+export const generations = credentials.map((credential, index) => ({
+  id: credential.active_generation_id,
+  organisation_id: credential.organisation_id,
+  credential_id: credential.id,
+  provider_id: credential.provider_id,
+  fingerprint: null,
+  scopes: credential.scopes,
+  state: "active",
+  attempt_id: `attempt_seed_${index + 1}`,
+  secret_reference: `projects/acme-prod/secrets/${credential.id.replace("cred_", "")}`,
+  predecessor_id: null,
+  successor_id: null,
+  created_at: credential.updated_at,
+  revoked_at: null,
+}))
+
 export const runs = [
   {
     id: "run_emergency_sendgrid", organisation_id: "org_acme", credential_id: "cred_sendgrid",
@@ -287,5 +303,5 @@ export const notifications = [
 ]
 
 export function createStore() {
-  return structuredClone({ overview, connections, applications, environments, services, credentials, bindings, runs, incidents, approvals, policies, playbooks, agents, audits, notifications })
+  return structuredClone({ overview, connections, applications, environments, services, credentials, generations, bindings, runs, incidents, approvals, policies, playbooks, agents, audits, notifications })
 }

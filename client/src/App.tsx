@@ -38,7 +38,7 @@ export function App() {
       case "overview":
         return <OverviewPage onNavigate={setCurrentNav} />
       case "credentials":
-        return <CredentialsPage />
+        return <CredentialsPage onNavigate={setCurrentNav} onNavigateRotation={handleNavigateRotation} />
       case "applications":
         return <ApplicationsPage />
       case "playbooks":
