@@ -36,6 +36,7 @@ class HttpOperation(Contract):
     provider_id_field: str | None = Field(default=None, max_length=128)
     secret_field: str | None = Field(default=None, max_length=128)
     name_field: str | None = Field(default=None, max_length=128)
+    metadata_fields: dict[str, str] = Field(default_factory=dict, max_length=16)
 
     @model_validator(mode="after")
     def validate_statuses(self) -> "HttpOperation":
@@ -55,6 +56,12 @@ class HttpOperation(Contract):
             raise ValueError("provider operation paths contain an invalid placeholder")
         if len(placeholders) != len(set(placeholders)):
             raise ValueError("provider operation paths must not repeat placeholders")
+        unsupported = set(self.metadata_fields).difference(_METADATA_FIELDS)
+        if unsupported:
+            names = ", ".join(sorted(unsupported))
+            raise ValueError(f"provider metadata contains unsupported fields: {names}")
+        if any(not value or len(value) > 128 for value in self.metadata_fields.values()):
+            raise ValueError("provider metadata paths must be between 1 and 128 characters")
         return self
 
 
@@ -94,3 +101,15 @@ class HttpProviderApi(Contract):
         if "{provider_id}" not in self.revoke_credential.path:
             raise ValueError("revoke path must include {provider_id}")
         return self
+
+
+_METADATA_FIELDS = frozenset(
+    {
+        "created_at",
+        "disabled",
+        "expires_at",
+        "last_used_at",
+        "scopes",
+        "status",
+    }
+)

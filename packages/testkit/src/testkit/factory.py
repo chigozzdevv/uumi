@@ -32,6 +32,7 @@ def make_http_provider_api(
             list_items="result",
             provider_id_field="api_key_id",
             name_field="name",
+            metadata_fields={"scopes": "scopes"},
         ),
         create_credential=HttpOperation(
             method="POST",

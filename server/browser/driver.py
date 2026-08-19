@@ -1,6 +1,6 @@
 import fnmatch
 from collections.abc import Iterable
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from contracts import (
     BrowserAction,
@@ -30,6 +30,11 @@ class BrowserDriver:
     @property
     def url(self) -> str:
         return self._page.url
+
+    @property
+    def metadata_url(self) -> str:
+        self.validate_url(self._page.url)
+        return metadata_url(self._page.url)
 
     @property
     def domains(self) -> tuple[str, ...]:
@@ -164,6 +169,29 @@ class BrowserDriver:
             raise ResourceConflictError("approved selector is not visible")
         return locator
 
+    async def same_element(self, left: Selector, right: Selector) -> bool:
+        left_locator = await self.locator(left)
+        right_locator = await self.locator(right, require_unique=False)
+        count = await right_locator.count()
+        if count == 0:
+            return False
+        if count != 1 or not await right_locator.is_visible():
+            raise ResourceConflictError("protected selector does not resolve uniquely")
+        left_handle = await left_locator.element_handle()
+        right_handle = await right_locator.element_handle()
+        if left_handle is None or right_handle is None:
+            raise ResourceConflictError("browser control could not be resolved")
+        try:
+            return bool(
+                await left_handle.evaluate(
+                    "(element, protectedElement) => element === protectedElement",
+                    right_handle,
+                )
+            )
+        finally:
+            await left_handle.dispose()
+            await right_handle.dispose()
+
     def validate_url(self, url: str) -> None:
         parsed = urlparse(url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
@@ -236,6 +264,11 @@ def _bounded_integer(value: str | None, minimum: int, maximum: int) -> int:
     if not minimum <= result <= maximum:
         raise ResourceConflictError("browser action integer is outside its safe range")
     return result
+
+
+def metadata_url(url: str) -> str:
+    parsed = urlparse(url)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", "", "", ""))
 
 
 _KEYS = frozenset(

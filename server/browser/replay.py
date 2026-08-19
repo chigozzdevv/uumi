@@ -45,7 +45,7 @@ class ReplayRecorder:
             organisation_id=session.organisation_id,
             session_id=session.id,
             sequence=session.step_count,
-            url=self._driver.url,
+            url=self._driver.metadata_url,
             action=action,
             image_reference=evidence.resource,
             image_digest=hashlib.sha256(frame).hexdigest(),

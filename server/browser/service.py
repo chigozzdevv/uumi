@@ -15,6 +15,8 @@ from contracts import (
 )
 from core.errors import ResourceConflictError
 
+from browser.driver import metadata_url
+
 
 class BrowserRepository(Protocol):
     async def create(self, session: BrowserSession) -> BrowserSession: ...
@@ -234,10 +236,11 @@ class BrowserService:
         if current.status is BrowserStatus.TAKEOVER and action.protected:
             raise ResourceConflictError("takeover cannot self-authorise a protected action")
         changed = self._change(current, step_count=current.step_count + 1)
-        recorded = (
-            action.model_copy(update={"value": "<redacted>"})
-            if action.kind is BrowserActionKind.TYPE
-            else action
+        recorded = action.model_copy(
+            update={
+                **({"value": "<redacted>"} if action.kind is BrowserActionKind.TYPE else {}),
+                **({"url": metadata_url(action.url)} if action.url is not None else {}),
+            }
         )
         return await self._repository.begin_action(current, changed, recorded, self._clock())
 

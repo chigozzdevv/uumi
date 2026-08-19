@@ -21,6 +21,24 @@ def test_redact_removes_nested_secret_values() -> None:
     }
 
 
+def test_redact_handles_camel_case_and_secret_bearing_values() -> None:
+    value = {
+        "apiKey": "marker-one",
+        "accessToken": "marker-two",
+        "safe": "Bearer abcdefghijklmnop",
+        "redirect": "https://vendor.example/callback?code=sensitive",
+        "secretReference": "projects/example/secrets/mail/versions/2",
+    }
+
+    assert redact(value) == {
+        "apiKey": REDACTED,
+        "accessToken": REDACTED,
+        "safe": REDACTED,
+        "redirect": REDACTED,
+        "secretReference": "projects/example/secrets/mail/versions/2",
+    }
+
+
 def test_telemetry_is_disabled_outside_managed_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("K_SERVICE", raising=False)
     monkeypatch.delenv("FIREKEY_TELEMETRY_ENABLED", raising=False)

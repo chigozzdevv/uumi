@@ -371,7 +371,7 @@ async def execute(
     runtime.session = changed
     outcome: dict[str, str | int | bool] = {
         "status": "succeeded" if changed.status is BrowserStatus.RUNNING else "paused",
-        "url": runtime.driver.url,
+        "url": runtime.driver.metadata_url,
     }
     if proposal.model.requires_confirmation and body.confirmed:
         outcome["safety_acknowledgement"] = "true"
@@ -633,6 +633,8 @@ async def _validate_takeover_action(
         raise CapabilityError("human action requires an active takeover")
     if action.protected or action.expected_url or action.expected_text or action.forbidden_text:
         raise CapabilityError("takeover cannot declare its own protected checkpoint")
+    if action.kind is BrowserActionKind.KEY and action.value == "Enter":
+        raise CapabilityError("takeover cannot submit a protected form with Enter")
     version = await FirestoreCatalog(runtime.firestore).get(
         FirestorePaths.playbook_version(
             session.organisation_id,
@@ -654,8 +656,12 @@ async def _validate_takeover_action(
             ),
         )
     }
-    if action.selector is not None and action.selector in protected:
-        raise CapabilityError("takeover cannot operate a protected playbook control")
+    if action.selector is not None:
+        for selector in protected:
+            if action.selector == selector or await runtime.driver.same_element(
+                action.selector, selector
+            ):
+                raise CapabilityError("takeover cannot operate a protected playbook control")
 
 
 async def _wait_session(

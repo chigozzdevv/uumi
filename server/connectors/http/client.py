@@ -38,14 +38,24 @@ class HttpProviderConnector:
         api = _api(context.connection)
         headers = await self._headers(context.connection.auth_reference, api.auth)
         if tool == "provider.listCredentialMetadata":
-            keys = await self._list(api, headers)
+            keys = [
+                self._metadata(api.list_credentials, item)
+                for item in await self._list(api, headers)
+            ]
             return ConnectorResponse(result={"credentials": keys})
         if tool == "provider.getCredentialStatus":
             key_id = _string(payload, "provider_id")
             keys = await self._list(api, headers)
             field = api.list_credentials.provider_id_field
             match = next((key for key in keys if field and key.get(field) == key_id), None)
-            return ConnectorResponse(result={"exists": match is not None, "credential": match})
+            return ConnectorResponse(
+                result={
+                    "exists": match is not None,
+                    "credential": (
+                        self._metadata(api.list_credentials, match) if match is not None else None
+                    ),
+                }
+            )
         if tool == "provider.createCredential":
             return await self._create(api, payload, headers)
         if tool == "provider.revokeCredential":
@@ -232,6 +242,28 @@ class HttpProviderConnector:
             )
         return items
 
+    @staticmethod
+    def _metadata(operation: HttpOperation, item: dict[str, Any]) -> dict[str, Any]:
+        provider_id = _dig(item, operation.provider_id_field or "")
+        if not isinstance(provider_id, str) or not provider_id:
+            raise ConnectorError(
+                "invalid-provider-response", "provider metadata has no credential identifier"
+            )
+        result: dict[str, Any] = {"provider_id": provider_id}
+        if operation.name_field is not None:
+            name = _dig(item, operation.name_field)
+            if name is not None and not isinstance(name, str):
+                raise ConnectorError(
+                    "invalid-provider-response", "provider credential name is not a string"
+                )
+            if name:
+                result["name"] = name
+        for canonical, provider_path in operation.metadata_fields.items():
+            value = _dig(item, provider_path)
+            if value is not None:
+                result[canonical] = _metadata_value(canonical, value)
+        return result
+
     async def _call(
         self,
         api: HttpProviderApi,
@@ -334,6 +366,20 @@ def _object(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ConnectorError("invalid-provider-response", f"{label} returned a non-object")
     return value
+
+
+def _metadata_value(name: str, value: Any) -> str | bool | list[str]:
+    if name == "disabled" and isinstance(value, bool):
+        return value
+    if name == "scopes" and isinstance(value, list) and all(
+        isinstance(item, str) for item in value
+    ):
+        return value
+    if name != "disabled" and name != "scopes" and isinstance(value, str) and len(value) <= 512:
+        return value
+    raise ConnectorError(
+        "invalid-provider-response", f"provider metadata field {name} has an invalid type"
+    )
 
 
 def _expected(response: httpx.Response, statuses: set[int]) -> None:

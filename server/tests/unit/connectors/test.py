@@ -350,6 +350,53 @@ async def test_declared_header_auth_sends_the_configured_api_key() -> None:
 
 
 @pytest.mark.anyio
+async def test_http_metadata_projection_drops_undeclared_provider_fields() -> None:
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"admin-key").decode()}},
+        )
+
+    def provider_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "result": [
+                    {
+                        "api_key_id": "provider-key-one",
+                        "name": "mailer",
+                        "scopes": ["mail.send"],
+                        "apiKey": "must-not-cross-boundary",
+                        "owner_email": "operator@example.com",
+                    }
+                ]
+            },
+        )
+
+    google = _google(google_handler)
+    connector = HttpProviderConnector(
+        SecretManagerConnector(google),
+        httpx.AsyncClient(transport=httpx.MockTransport(provider_handler)),
+    )
+
+    listed = await connector.execute("provider.listCredentialMetadata", {}, _context())
+    status = await connector.execute(
+        "provider.getCredentialStatus", {"provider_id": "provider-key-one"}, _context()
+    )
+
+    expected = {
+        "provider_id": "provider-key-one",
+        "name": "mailer",
+        "scopes": ["mail.send"],
+    }
+    assert listed.result == {"credentials": [expected]}
+    assert status.result == {"exists": True, "credential": expected}
+    assert "must-not-cross-boundary" not in repr((listed, status))
+    assert "operator@example.com" not in repr((listed, status))
+    await google.close()
+
+
+@pytest.mark.anyio
 async def test_http_connector_encodes_provider_ids_before_building_paths() -> None:
     seen: list[bytes] = []
 
@@ -403,6 +450,14 @@ def test_http_provider_contract_rejects_non_origin_base_urls_and_unsafe_paths() 
             method="GET",
             path="/keys/{provider-id}",
             success_statuses=(200,),
+        )
+
+    with pytest.raises(ValidationError, match="unsupported fields"):
+        HttpOperation(
+            method="GET",
+            path="/keys",
+            success_statuses=(200,),
+            metadata_fields={"api_key": "apiKey"},
         )
 
 

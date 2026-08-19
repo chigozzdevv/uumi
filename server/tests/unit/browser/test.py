@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
@@ -9,7 +10,7 @@ from broker import CapabilitySigner
 from browser.access import BrowserAccessService
 from browser.auth import BrowserAuthBroker
 from browser.compute import BrowserVm
-from browser.driver import AuthenticationRequiredError, BrowserDriver
+from browser.driver import AuthenticationRequiredError, BrowserDriver, metadata_url
 from browser.gateway import BrowserSessionGateway
 from browser.model import ComputerUseClient
 from browser.service import BrowserService
@@ -214,6 +215,36 @@ async def test_browser_input_value_is_not_persisted_in_action_history() -> None:
 
 
 @pytest.mark.anyio
+async def test_browser_navigation_query_and_fragment_are_not_persisted() -> None:
+    repository = Repository()
+    service = BrowserService(repository, lambda: NOW)
+    session = await service.create(_session())
+    session = await service.attach(
+        "org_one", session.id, session.revision, "instances/worker", "10.2.0.4"
+    )
+    session = await service.start("org_one", session.id, session.revision)
+    action = BrowserAction(
+        id="action_one",
+        session_id=session.id,
+        kind=BrowserActionKind.NAVIGATE,
+        url="https://console.vendor.example.com/callback?code=secret#token",
+        fencing_token=session.fencing_token,
+    )
+
+    await service.authorize_action("org_one", session.id, session.revision, action)
+
+    assert repository.actions[action.id].action.url == (
+        "https://console.vendor.example.com/callback"
+    )
+
+
+def test_browser_metadata_url_keeps_only_origin_and_path() -> None:
+    assert metadata_url("https://vendor.example/callback?code=secret#fragment") == (
+        "https://vendor.example/callback"
+    )
+
+
+@pytest.mark.anyio
 async def test_takeover_capability_is_identity_bound_and_releases_to_a_safe_pause() -> None:
     repository = Repository()
     sessions = BrowserService(repository, lambda: NOW)
@@ -270,6 +301,59 @@ async def test_takeover_capability_is_identity_bound_and_releases_to_a_safe_paus
     assert released.status is BrowserStatus.PAUSED
     assert released.recording_paused is True
     assert rebound.fencing_token == 4
+
+
+@pytest.mark.anyio
+async def test_takeover_blocks_an_alternate_selector_for_a_protected_element(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from browser import workerapp
+
+    protected = Selector(kind=SelectorKind.TEST_ID, value="revoke")
+    version = _computer_version()
+    revoke = next(step for step in version.definition.steps if step.stage is Stage.REVOKE)
+    version = version.model_copy(
+        update={
+            "definition": version.definition.model_copy(
+                update={
+                    "steps": tuple(
+                        step.model_copy(update={"selectors": (protected,)})
+                        if step.id == revoke.id
+                        else step
+                        for step in version.definition.steps
+                    )
+                }
+            )
+        }
+    )
+
+    class VersionCatalog:
+        async def get(self, path: str, model: type[Any]) -> Any:
+            del path, model
+            return version
+
+    class ElementDriver:
+        async def same_element(self, left: Selector, right: Selector) -> bool:
+            return left.kind is SelectorKind.CSS and right == protected
+
+    monkeypatch.setattr(workerapp, "FirestoreCatalog", lambda firestore: VersionCatalog())
+    session = _session().model_copy(
+        update={"status": BrowserStatus.TAKEOVER, "takeover_subject": "user_one"}
+    )
+    action = BrowserAction(
+        id="action_one",
+        session_id=session.id,
+        kind=BrowserActionKind.CLICK,
+        selector=Selector(kind=SelectorKind.CSS, value="#revoke"),
+        fencing_token=session.fencing_token,
+    )
+
+    with pytest.raises(CapabilityError, match="protected playbook control"):
+        await workerapp._validate_takeover_action(
+            cast(Any, SimpleNamespace(firestore=None, driver=ElementDriver())),
+            session,
+            action,
+        )
 
 
 @pytest.mark.anyio
