@@ -7,7 +7,7 @@ export function Toolbar({ value, onChange, placeholder, filters, resultCount, re
   const active = Boolean(value.trim()) || Boolean(filters?.some((filter) => String(filter.value ?? "") !== String(filter.defaultValue ?? "all")))
 
   return (
-    <div className="resource-toolbar rounded-2xl border border-[var(--border)] bg-white p-3">
+    <div className="resource-toolbar">
       <div className="flex flex-wrap items-center gap-2.5">
       <label className="relative min-w-[240px] flex-1">
         <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[var(--ink-muted)]" strokeWidth={2} />
@@ -24,7 +24,7 @@ export function Toolbar({ value, onChange, placeholder, filters, resultCount, re
                   <span className="sr-only">{label}</span>
                     <select
                       aria-label={label}
-                      className="focus-ring h-10 min-w-36 appearance-none rounded-xl border border-[var(--border)] bg-white px-3 pr-8 text-[11px] font-medium text-[var(--ink)]"
+                      className="focus-ring h-10 min-w-36 appearance-none rounded-xl border border-[var(--border)] bg-[var(--surface-soft)] px-3 pr-8 text-[11px] font-medium text-[var(--ink)]"
                       {...props}
                     >
                       {children}
