@@ -1,22 +1,20 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useMemo, useState } from "react"
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query"
-import { ArrowLeft, ArrowRight, BookOpenText, Plus } from "lucide-react"
+import { BookOpenText, ChevronRight, Plus } from "lucide-react"
 import { Detail, DetailList, Section } from "../components/detail"
 import { PageHeader } from "../components/header"
-import { Journey } from "../components/journey"
 import { Marker } from "../components/marker"
 import { Provider } from "../components/provider"
 import { Failure, Loading } from "../components/state"
 import { Toolbar } from "../components/toolbar"
 import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
-import { Modal } from "../components/ui/modal"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
+import { Field, FormGrid, SetupPage, formControl } from "../components/workspace"
 import type { Playbook } from "../types"
 import { api, type CreatePlaybookInput, type PlaybookDefinition } from "../lib/api"
 import { formatDate, providerName } from "../lib/format"
 
-const field = "focus-ring h-11 w-full rounded-xl border border-[var(--border)] bg-white px-3.5 text-[11px] text-[var(--ink)] outline-none"
 const steps = ["Source", "Procedure", "Review"]
 
 function identifier(prefix: string) {
@@ -25,10 +23,6 @@ function identifier(prefix: string) {
 
 function slug(value: string) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 64)
-}
-
-function Label({ title, children }: { title: string; children: ReactNode }) {
-  return <label className="block"><span className="mb-1.5 block text-[10px] font-medium text-[var(--ink-soft)]">{title}</span>{children}</label>
 }
 
 export function PlaybooksPage() {
@@ -55,20 +49,21 @@ export function PlaybooksPage() {
 
   const attached = (playbook: Playbook) => connections.data!.filter((connection) => connection.playbook_id === playbook.id && connection.playbook_version_id === playbook.active_version_id)
 
-  return (
-    <div className="page">
-      <PageHeader section="Governance · Playbooks" actions={<Button onClick={() => setCreating(true)}><Plus className="size-3.5" /> Add Playbook</Button>} />
-      <Toolbar value={search} onChange={setSearch} placeholder="Search Playbooks or platforms" filters={[{ label: "Platform", value: platform, onChange: (event) => setPlatform(event.target.value), children: <><option value="all">All platforms</option>{[...new Set(playbooks.data!.map((item) => item.platform))].map((item) => <option key={item} value={item}>{providerName(item)}</option>)}</> }, { label: "Status", value: status, onChange: (event) => setStatus(event.target.value), children: <><option value="all">All statuses</option><option value="published">Published</option><option value="draft">Draft</option></> }]} />
-      <div><Table><TableHeader><TableRow><TableHead>Playbook</TableHead><TableHead>Platform</TableHead><TableHead>Connections</TableHead><TableHead>Version</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Updated</TableHead></TableRow></TableHeader><TableBody>{rows.map((playbook) => <TableRow key={playbook.id} className="cursor-pointer" onClick={() => setSelected(playbook)}><TableCell><div className="flex items-center gap-3"><Marker icon={BookOpenText} tone="neutral" /><span className="font-medium">{playbook.name}</span></div></TableCell><TableCell><Provider value={playbook.platform} /></TableCell><TableCell>{attached(playbook).length}</TableCell><TableCell>{playbook.latest_version}</TableCell><TableCell><Badge variant={playbook.active_version_id ? "healthy" : "warning"}>{playbook.active_version_id ? "Published" : "Draft"}</Badge></TableCell><TableCell className="text-right text-[10px] text-[var(--ink-soft)]">{formatDate(playbook.updated_at)}</TableCell></TableRow>)}</TableBody></Table></div>
-      <Modal isOpen={Boolean(selected)} onClose={() => setSelected(null)} title={selected?.name ?? "Playbook"}>
-        {selected && <><Section title="Procedure"><DetailList><Detail label="Platform"><Provider value={selected.platform} /></Detail><Detail label="Version">{selected.latest_version}</Detail><Detail label="Status"><Badge variant={selected.active_version_id ? "healthy" : "warning"}>{selected.active_version_id ? "Published" : "Draft"}</Badge></Detail><Detail label="Updated">{formatDate(selected.updated_at, true)}</Detail></DetailList></Section><Section title="Browser connections"><div className="space-y-2">{attached(selected).map((connection) => <div key={connection.id} className="rounded-xl border border-[var(--border-soft)] bg-white/65 p-4 text-[11px] font-semibold">{connection.display_name}</div>)}{attached(selected).length === 0 && <div className="text-[10px] text-[var(--ink-muted)]">Not attached to a browser connection.</div>}</div></Section></>}
-      </Modal>
-      <PlaybookSetup isOpen={creating} onClose={() => setCreating(false)} onCreated={async () => { await queryClient.invalidateQueries({ queryKey: ["playbooks"] }) }} />
-    </div>
-  )
+  if (creating) return <PlaybookSetup onClose={() => setCreating(false)} onCreated={async () => { await queryClient.invalidateQueries({ queryKey: ["playbooks"] }); setCreating(false) }} />
+
+  if (selected) return <div className="page">
+    <PageHeader eyebrow="Playbooks" title={selected.name} description="A versioned browser procedure for performing credential actions on this platform." onBack={() => setSelected(null)} />
+    <div className="grid gap-5 xl:grid-cols-2"><Section title="Procedure"><DetailList><Detail label="Platform"><Provider value={selected.platform} /></Detail><Detail label="Version">{selected.latest_version}</Detail><Detail label="Status"><Badge variant={selected.active_version_id ? "healthy" : "warning"}>{selected.active_version_id ? "Published" : "Draft"}</Badge></Detail><Detail label="Updated">{formatDate(selected.updated_at, true)}</Detail></DetailList></Section><Section title="Browser connections"><div className="space-y-2">{attached(selected).map((connection) => <div key={connection.id} className="rounded-xl border border-[var(--border-soft)] p-4 text-[11px] font-semibold">{connection.display_name}</div>)}{attached(selected).length === 0 && <div className="rounded-xl bg-[var(--surface-soft)] p-5 text-[10px] text-[var(--ink-soft)]">Not attached to a browser connection. Attach it from a matching connection.</div>}</div></Section></div>
+  </div>
+
+  return <div className="page">
+    <PageHeader title="Playbooks" description="Turn text, links, or video walkthroughs into versioned browser action procedures." actions={<Button onClick={() => setCreating(true)}><Plus className="size-3.5" /> Add playbook</Button>} />
+    <Toolbar value={search} onChange={setSearch} placeholder="Search playbooks or platforms" resultCount={rows.length} resultLabel="playbooks" onClear={() => { setSearch(""); setPlatform("all"); setStatus("all") }} filters={[{ label: "Platform", value: platform, defaultValue: "all", onChange: (event) => setPlatform(event.target.value), children: <><option value="all">All platforms</option>{[...new Set(playbooks.data!.map((item) => item.platform))].map((item) => <option key={item} value={item}>{providerName(item)}</option>)}</> }, { label: "Status", value: status, defaultValue: "all", onChange: (event) => setStatus(event.target.value), children: <><option value="all">All statuses</option><option value="published">Published</option><option value="draft">Draft</option></> }]} />
+    <Table><TableHeader><TableRow><TableHead>Playbook</TableHead><TableHead>Platform</TableHead><TableHead>Connections</TableHead><TableHead>Version</TableHead><TableHead>Status</TableHead><TableHead className="w-36">Action</TableHead></TableRow></TableHeader><TableBody>{rows.map((playbook) => <TableRow key={playbook.id}><TableCell><button className="flex items-center gap-3 text-left font-medium hover:underline" onClick={() => setSelected(playbook)}><Marker icon={BookOpenText} />{playbook.name}</button></TableCell><TableCell><Provider value={playbook.platform} /></TableCell><TableCell>{attached(playbook).length}</TableCell><TableCell>{playbook.latest_version}</TableCell><TableCell><Badge variant={playbook.active_version_id ? "healthy" : "warning"}>{playbook.active_version_id ? "Published" : "Draft"}</Badge></TableCell><TableCell><Button variant="ghost" size="sm" onClick={() => setSelected(playbook)}>View details <ChevronRight className="size-3.5" /></Button></TableCell></TableRow>)}</TableBody></Table>
+  </div>
 }
 
-function PlaybookSetup({ isOpen, onClose, onCreated }: { isOpen: boolean; onClose: () => void; onCreated: () => Promise<void> }) {
+function PlaybookSetup({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
   const [step, setStep] = useState(0)
   const [sourceType, setSourceType] = useState<"text" | "link" | "video">("text")
   const [source, setSource] = useState("")
@@ -79,11 +74,6 @@ function PlaybookSetup({ isOpen, onClose, onCreated }: { isOpen: boolean; onClos
   const [loginUrl, setLoginUrl] = useState("")
   const [actions, setActions] = useState("Open credential settings\nCreate replacement credential and capture it\nFind the previous credential\nRevoke the previous credential")
   const mutation = useMutation({ mutationFn: (input: CreatePlaybookInput) => api.createPlaybook(input), onSuccess: onCreated })
-
-  useEffect(() => {
-    if (!isOpen) return
-    setStep(0); setSourceType("text"); setSource(""); setSourceNotes(""); setName(""); setPlatform(""); setDomains(""); setLoginUrl(""); setActions("Open credential settings\nCreate replacement credential and capture it\nFind the previous credential\nRevoke the previous credential"); mutation.reset()
-  }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const actionList = actions.split("\n").map((item) => item.trim()).filter(Boolean)
   function canContinue() {
@@ -135,11 +125,10 @@ function PlaybookSetup({ isOpen, onClose, onCreated }: { isOpen: boolean; onClos
     onClose()
   }
 
-  return <Modal isOpen={isOpen} onClose={onClose} title="Add Playbook" size="wide" footerStart={step > 0 ? <Button variant="ghost" onClick={() => setStep((value) => value - 1)}><ArrowLeft className="size-3.5" /> Back</Button> : undefined} actions={step < steps.length - 1 ? <Button onClick={() => setStep((value) => value + 1)} disabled={!canContinue()}>Continue <ArrowRight className="size-3.5" /></Button> : <Button onClick={submit} disabled={mutation.isPending}>{mutation.isPending ? "Publishing…" : "Publish Playbook"}</Button>}>
-    <Journey steps={steps} current={step} />
-    {step === 0 && <div className="grid gap-4 sm:grid-cols-2"><Label title="Source type"><select className={field} value={sourceType} onChange={(event) => setSourceType(event.target.value as typeof sourceType)}><option value="text">Text instructions</option><option value="link">Resource link</option><option value="video">Video walkthrough</option></select></Label><div className="sm:col-span-2"><Label title={sourceType === "text" ? "Instructions" : sourceType === "link" ? "Resource URL" : "Video URL"}>{sourceType === "text" ? <textarea className={`${field} h-32 py-3`} value={source} onChange={(event) => setSource(event.target.value)} placeholder="Describe how an operator creates and revokes the credential." /> : <input className={field} type="url" value={source} onChange={(event) => setSource(event.target.value)} placeholder="https://…" />}</Label></div>{sourceType !== "text" && <div className="sm:col-span-2"><Label title="Sanitised notes or transcript"><textarea className={`${field} h-28 py-3`} value={sourceNotes} onChange={(event) => setSourceNotes(event.target.value)} placeholder="Paste the relevant non-secret procedure from this resource." /></Label><div className="mt-2 text-[9px] text-[var(--ink-muted)]">The URL is retained only as provenance. The version is built from these sanitised notes.</div></div>}</div>}
-    {step === 1 && <div className="grid gap-4 sm:grid-cols-2"><Label title="Playbook name"><input className={field} value={name} onChange={(event) => setName(event.target.value)} placeholder="Production credential rotation" /></Label><Label title="Platform"><input className={field} value={platform} onChange={(event) => setPlatform(event.target.value)} placeholder="platform-id" /></Label><Label title="Allowed domains"><input className={field} value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="*.platform.example" /></Label><Label title="Login URL pattern"><input className={field} value={loginUrl} onChange={(event) => setLoginUrl(event.target.value)} placeholder="https://platform.example/login*" /></Label><div className="sm:col-span-2"><Label title="Ordered actions"><textarea className={`${field} h-36 py-3`} value={actions} onChange={(event) => setActions(event.target.value)} /></Label><div className="mt-2 text-[9px] text-[var(--ink-muted)]">One action per line. Actions become deterministic steps inside this Playbook version.</div></div></div>}
-    {step === 2 && <><Section title="Version"><DetailList><Detail label="Name">{name}</Detail><Detail label="Platform"><Provider value={slug(platform)} /></Detail><Detail label="Source">{sourceType}</Detail><Detail label="Actions">{actionList.length}</Detail></DetailList></Section><Section title="Structural validation"><div className="space-y-2 text-[10px] text-[var(--ink-soft)]"><div className="rounded-xl bg-white/70 p-3">Allowed domains and login checkpoint declared</div><div className="rounded-xl bg-white/70 p-3">Secure capture kept outside the model and recording</div><div className="rounded-xl bg-white/70 p-3">Create and revoke actions present</div></div></Section></>}
-    {mutation.error && <div role="alert" className="mt-5 rounded-xl bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{mutation.error.message}</div>}
-  </Modal>
+  const primary = ["Continue to procedure", "Review playbook", "Build and publish"][step]
+  return <SetupPage eyebrow="Playbooks" title="Add playbook" description="Provide a browser walkthrough, refine its ordered actions, and publish a versioned procedure." steps={steps} current={step} onBack={() => setStep((value) => value - 1)} onCancel={onClose} error={mutation.error?.message} primary={step < 2 ? <Button onClick={() => setStep((value) => value + 1)} disabled={!canContinue()}>{primary}</Button> : <Button onClick={submit} disabled={mutation.isPending}>{mutation.isPending ? "Building…" : primary}</Button>}>
+    {step === 0 && <FormGrid><Field label="Source type"><select className={formControl} value={sourceType} onChange={(event) => setSourceType(event.target.value as typeof sourceType)}><option value="text">Text instructions</option><option value="link">Resource link</option><option value="video">Video walkthrough</option></select></Field><Field label={sourceType === "text" ? "Instructions" : sourceType === "link" ? "Resource URL" : "Video URL"} wide>{sourceType === "text" ? <textarea className={`${formControl} h-36 py-3`} value={source} onChange={(event) => setSource(event.target.value)} placeholder="Describe how to create, capture, and revoke the credential." /> : <input className={formControl} type="url" value={source} onChange={(event) => setSource(event.target.value)} placeholder="https://…" />}</Field>{sourceType !== "text" && <Field label="Sanitised notes or transcript" hint="The URL remains provenance. The playbook is built from these non-secret instructions." wide><textarea className={`${formControl} h-28 py-3`} value={sourceNotes} onChange={(event) => setSourceNotes(event.target.value)} placeholder="Paste the relevant non-secret procedure." /></Field>}</FormGrid>}
+    {step === 1 && <FormGrid><Field label="Playbook name"><input className={formControl} value={name} onChange={(event) => setName(event.target.value)} placeholder="Production credential rotation" /></Field><Field label="Platform"><input className={formControl} value={platform} onChange={(event) => setPlatform(event.target.value)} placeholder="platform-id" /></Field><Field label="Allowed domains"><input className={formControl} value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="*.platform.example" /></Field><Field label="Login URL pattern"><input className={formControl} value={loginUrl} onChange={(event) => setLoginUrl(event.target.value)} placeholder="https://platform.example/login*" /></Field><Field label="Ordered actions" hint="One action per line. These become the steps inside this playbook version." wide><textarea className={`${formControl} h-40 py-3`} value={actions} onChange={(event) => setActions(event.target.value)} /></Field></FormGrid>}
+    {step === 2 && <div className="grid gap-5 lg:grid-cols-2"><Section title="Version"><DetailList><Detail label="Name">{name}</Detail><Detail label="Platform"><Provider value={slug(platform)} /></Detail><Detail label="Source">{sourceType}</Detail><Detail label="Actions">{actionList.length}</Detail></DetailList></Section><Section title="Safety boundaries"><div className="space-y-2 text-[10px] text-[var(--ink-soft)]"><div className="rounded-xl bg-[var(--surface-soft)] p-3">Playbook Builder Agent will use the sanitised source evidence</div><div className="rounded-xl bg-[var(--surface-soft)] p-3">Secure capture remains outside the model and recording</div><div className="rounded-xl bg-[var(--surface-soft)] p-3">Schema, domain, create, and revoke checks run before publication</div></div></Section></div>}
+  </SetupPage>
 }

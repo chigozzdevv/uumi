@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query"
-import { ArrowUpRight, Plus } from "lucide-react"
+import { ArrowUpRight, ChevronRight, Plus } from "lucide-react"
 import { Detail, DetailList } from "../components/detail"
 import { PageHeader } from "../components/header"
 import { Provider } from "../components/provider"
@@ -9,7 +9,6 @@ import { Failure, Loading } from "../components/state"
 import { Toolbar } from "../components/toolbar"
 import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
-import { Modal } from "../components/ui/modal"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import type { ManagedCredential } from "../types"
 import { api } from "../lib/api"
@@ -65,7 +64,7 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
     return { label: "Active", variant: "healthy" as const }
   }
 
-  function actionFor(item: ManagedCredential): { label: string; target: CredentialTarget; runId?: string } {
+  function actionFor(item: ManagedCredential): { label: string; target?: CredentialTarget; runId?: string } {
     const run = runs.data!.find((entry) => entry.credential_id === item.id && !["completed", "compensated"].includes(entry.status))
     const incident = incidents.data!.find((entry) => entry.credential_id === item.id && !["resolved", "dismissed"].includes(entry.status))
     const connection = connections.data!.find((entry) => entry.id === item.connection_id)
@@ -73,7 +72,14 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
     if (connection?.status === "reauthentication-required" || connection?.status === "degraded") return { label: "Open connection", target: "connections" }
     if (run) return { label: "Open rotation", target: "rotations", runId: run.id }
     if (incident) return { label: "Open incident", target: "incidents" }
-    return { label: "Open application", target: "applications" }
+    return { label: "View details" }
+  }
+
+  function performAction(item: ManagedCredential) {
+    const action = actionFor(item)
+    if (action.runId) onNavigateRotation(action.runId)
+    else if (action.target) onNavigate(action.target)
+    else { setSelected(item); setTab("overview") }
   }
 
   const selectedServices = selected ? graph.data!.services.filter((service) => selected.consumer_ids.includes(service.id)) : []
@@ -82,10 +88,27 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
   const selectedState = selected ? operationalState(selected) : undefined
   const selectedAction = selected ? actionFor(selected) : undefined
 
+  if (creating) return <CredentialSetup isOpen onClose={() => setCreating(false)} graph={graph.data!} connections={connections.data!} applications={applications.data!} environments={environments.data!} policies={policies.data!} onCreate={(input) => createCredential.mutateAsync(input)} />
+
+  if (selected) return (
+    <div className="page">
+      <PageHeader eyebrow="Credentials" title={selected.display_name} description="Workload credential identity, consumer mappings, management access, and active rotation controls." onBack={() => setSelected(null)} actions={<>{(selectedAction?.target || selectedAction?.runId) && <Button onClick={() => performAction(selected)}>{selectedAction.label}<ArrowUpRight className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => onNavigate("applications")}>View applications</Button></>} />
+      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--border)] bg-white px-5 py-4"><Provider value={selected.provider} /><span className="text-[10px] text-[var(--ink-muted)]">{titleCase(selected.kind)}</span><Badge variant={selectedState!.variant}>{selectedState!.label}</Badge><span className="ml-auto text-[10px] text-[var(--ink-muted)]">Updated {formatDate(selected.updated_at, true)}</span></div>
+      <div className="mb-6 flex gap-1 border-b border-[var(--border)]">{["overview", "consumers", "control"].map((item) => <button key={item} className={`focus-ring border-b-2 px-4 py-3 text-[11px] font-semibold capitalize ${tab === item ? "border-[var(--ink)] text-[var(--ink)]" : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]"}`} onClick={() => setTab(item)}>{item}</button>)}</div>
+      <section className="rounded-2xl border border-[var(--border)] bg-white p-6">
+        {tab === "overview" && <DetailList><Detail label="Type">{titleCase(selected.kind)}</Detail><Detail label="Scopes">{selected.scopes.join(", ") || "None"}</Detail><Detail label="Provider ID">{selected.provider_id ?? "Not recorded"}</Detail><Detail label="Consumers">{selected.consumer_ids.length}</Detail><Detail label="Secret reference"><span className="mono-code break-all">{selected.secret_reference}</span></Detail><Detail label="Updated">{formatDate(selected.updated_at, true)}</Detail></DetailList>}
+        {tab === "consumers" && <div className="divide-y divide-[var(--border-soft)]">{selectedServices.map((service) => <div key={service.id} className="grid gap-2 py-4 sm:grid-cols-[1fr_1.5fr]"><div className="text-[11px] font-semibold">{service.display_name}</div><div className="text-[10px] text-[var(--ink-soft)]"><div>{service.runtime_resource}</div><div className="mt-1 text-[var(--ink-muted)]">{applications.data!.find((item) => item.id === service.application_id)?.display_name} · {environments.data!.find((item) => item.id === service.environment_id)?.display_name}</div></div></div>)}</div>}
+        {tab === "control" && <DetailList><Detail label="Management connection">{selectedConnection?.display_name}</Detail><Detail label="Interface">{titleCase(selectedConnection?.interface ?? "unknown")}</Detail><Detail label="Secret store">{selectedSecretStore?.display_name}</Detail><Detail label="Policy">{policies.data!.find((item) => item.active_version_id === selected.policy_version)?.name}</Detail><Detail label="Browser Playbook">{selectedConnection?.interface === "browser" ? selectedConnection.playbook_version_id : "Not required"}</Detail><Detail label="Connection status"><Badge variant={selectedConnection?.status === "ready" ? "healthy" : "danger"}>{titleCase(selectedConnection?.status ?? "unknown")}</Badge></Detail></DetailList>}
+      </section>
+    </div>
+  )
+
   return (
     <div className="page">
       <PageHeader
-        section="Inventory · Credentials"
+        eyebrow="Inventory"
+        title="Credentials"
+        description="Workload credentials FireKey manages, where they are stored, and the services that consume them."
         actions={<Button onClick={() => setCreating(true)}><Plus className="size-3.5" /> Add credential</Button>}
       />
 
@@ -93,8 +116,12 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
         value={search}
         onChange={setSearch}
         placeholder="Search credentials or providers"
+        resultCount={rows.length}
+        resultLabel="credentials"
+        onClear={() => { setSearch(""); setProvider("all") }}
         filters={[{
           label: "Provider",
+          defaultValue: "all",
           value: provider,
           onChange: (event) => setProvider(event.target.value),
           children: <><option value="all">All providers</option>{[...new Set(graph.data!.credentials.map((item) => item.provider))].map((item) => <option key={item} value={item}>{providerName(item)}</option>)}</>,
@@ -103,17 +130,18 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
 
       <div>
         <Table>
-          <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Consumer</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Updated</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Consumer</TableHead><TableHead>Status</TableHead><TableHead>Updated</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
           <TableBody>
             {rows.map((item) => {
               const status = operationalState(item)
               const service = graph.data!.services.find((entry) => entry.id === item.consumer_ids[0])
               return (
-                <TableRow key={item.id} className="cursor-pointer" onClick={() => { setSelected(item); setTab("overview") }}>
-                  <TableCell><div className="flex items-center gap-3"><Provider value={item.provider} label={false} /><div><div className="font-medium">{item.display_name}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{titleCase(item.kind)}</div></div></div></TableCell>
+                <TableRow key={item.id}>
+                  <TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left" onClick={() => { setSelected(item); setTab("overview") }}><Provider value={item.provider} label={false} /><div><div className="font-medium hover:underline">{item.display_name}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{titleCase(item.kind)}</div></div></button></TableCell>
                   <TableCell><div>{service?.display_name ?? "Unmapped"}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{item.consumer_ids.length} binding{item.consumer_ids.length === 1 ? "" : "s"}</div></TableCell>
                   <TableCell><Badge variant={status.variant}>{status.label}</Badge></TableCell>
-                  <TableCell className="text-right text-[10px] text-[var(--ink-soft)]">{formatDate(item.updated_at)}</TableCell>
+                  <TableCell className="text-[10px] text-[var(--ink-soft)]">{formatDate(item.updated_at)}</TableCell>
+                  <TableCell className="text-right"><Button variant="ghost" size="sm" onClick={() => performAction(item)}>{actionFor(item).label}<ChevronRight className="size-3.5" /></Button></TableCell>
                 </TableRow>
               )
             })}
@@ -121,41 +149,6 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
         </Table>
       </div>
 
-      <Modal
-        isOpen={Boolean(selected)}
-        onClose={() => setSelected(null)}
-        title={selected?.display_name ?? "Credential"}
-        actions={selected && <Button onClick={() => { setSelected(null); if (selectedAction!.runId) onNavigateRotation(selectedAction!.runId); else onNavigate(selectedAction!.target) }}>{selectedAction!.label}<ArrowUpRight className="size-3.5" /></Button>}
-      >
-        {selected && (
-          <>
-            <div className="mb-5 flex items-center justify-between gap-4 rounded-xl bg-white/65 px-4 py-3.5">
-              <div className="min-w-0">
-                <Provider value={selected.provider} />
-                <div className="mt-1 text-[9px] text-[var(--ink-muted)]">{titleCase(selected.kind)}</div>
-              </div>
-              <Badge variant={selectedState!.variant}>{selectedState!.label}</Badge>
-            </div>
-            <div className="mb-6 flex gap-5">
-              {["overview", "consumers", "control"].map((item) => <button key={item} className={`focus-ring -mb-px border-b-2 px-3 pb-3 text-[10px] font-semibold capitalize ${tab === item ? "border-[var(--accent)] text-[var(--accent)]" : "border-transparent text-[var(--ink-muted)]"}`} onClick={() => setTab(item)}>{item}</button>)}
-            </div>
-            {tab === "overview" && <DetailList><Detail label="Type">{titleCase(selected.kind)}</Detail><Detail label="Scopes">{selected.scopes.join(", ") || "None"}</Detail><Detail label="Consumers">{selected.consumer_ids.length}</Detail><Detail label="Updated">{formatDate(selected.updated_at, true)}</Detail></DetailList>}
-            {tab === "consumers" && <div className="grid gap-5 sm:grid-cols-2">{selectedServices.map((service) => <div key={service.id}><div className="text-[11px] font-semibold">{service.display_name}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{service.runtime_resource}</div></div>)}</div>}
-            {tab === "control" && <DetailList><Detail label="Provider connection">{selectedConnection?.display_name}</Detail><Detail label="Secret store">{selectedSecretStore?.display_name}</Detail><Detail label="Policy">{policies.data!.find((item) => item.active_version_id === selected.policy_version)?.name}</Detail><Detail label="Browser Playbook">{selectedConnection?.interface === "browser" ? selectedConnection.playbook_version_id : "Not required"}</Detail><Detail label="Status"><Badge variant={selectedConnection?.status === "ready" ? "healthy" : "danger"}>{titleCase(selectedConnection?.status ?? "unknown")}</Badge></Detail></DetailList>}
-          </>
-        )}
-      </Modal>
-
-      <CredentialSetup
-        isOpen={creating}
-        onClose={() => setCreating(false)}
-        graph={graph.data!}
-        connections={connections.data!}
-        applications={applications.data!}
-        environments={environments.data!}
-        policies={policies.data!}
-        onCreate={(input) => createCredential.mutateAsync(input)}
-      />
     </div>
   )
 }

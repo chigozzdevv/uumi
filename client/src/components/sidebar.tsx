@@ -50,7 +50,6 @@ const groups: NavGroup[] = [
     items: [
       { id: "credentials", label: "Credentials" },
       { id: "applications", label: "Applications" },
-      { id: "playbooks", label: "Playbooks" },
     ],
   },
   {
@@ -68,9 +67,10 @@ const groups: NavGroup[] = [
     label: "Management",
     icon: ShieldCheck,
     items: [
+      { id: "connections", label: "Connections" },
+      { id: "playbooks", label: "Playbooks" },
       { id: "policies", label: "Policies" },
       { id: "agents", label: "Agents" },
-      { id: "connections", label: "Connections" },
     ],
   },
 ]
@@ -78,7 +78,7 @@ const groups: NavGroup[] = [
 function Brand() {
   return (
     <div className="flex items-center gap-3 px-3 text-[1.35rem] font-semibold tracking-[-0.045em] text-[var(--ink)]">
-      <span className="grid size-10 place-items-center rounded-xl bg-[var(--accent)] text-white shadow-[0_7px_18px_rgba(61,50,111,0.18)]">
+      <span className="grid size-10 place-items-center rounded-xl bg-[var(--accent)] text-white shadow-[0_7px_18px_rgba(25,27,30,0.12)]">
         <KeyRound className="size-5" strokeWidth={2} />
       </span>
       FireKey
@@ -112,7 +112,7 @@ function SidebarContent({ currentNav, onNavigate }: { currentNav: NavItem; onNav
               <div key={group.id}>
                 <button
                   className={`focus-ring flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition hover:bg-white/35 ${
-                    groupActive ? "text-[var(--ink)]" : "text-[#433b73]"
+                    groupActive ? "text-[var(--ink)]" : "text-[var(--ink-soft)]"
                   }`}
                   aria-expanded={open}
                   onClick={() => setExpanded((current) => ({ ...current, [group.id]: !current[group.id] }))}
@@ -135,14 +135,14 @@ function SidebarContent({ currentNav, onNavigate }: { currentNav: NavItem; onNav
                           className={`focus-ring flex w-full items-center rounded-lg px-3 py-2 text-left text-[13px] font-medium transition ${
                             active
                               ? "bg-[var(--surface-active)] text-[var(--ink)]"
-                              : "text-[#433b73] hover:bg-white/35 hover:text-[var(--ink)]"
+                              : "text-[var(--ink-soft)] hover:bg-white/45 hover:text-[var(--ink)]"
                           }`}
                           onClick={() => onNavigate(item.id)}
                           onPointerUp={(event) => event.currentTarget.blur()}
                         >
                           <span className="flex-1">{item.label}</span>
                           {count ? (
-                            <span className="grid min-w-5 place-items-center rounded-lg bg-[#dcdce6] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent)]">
+                            <span className="grid min-w-5 place-items-center rounded-lg bg-white px-1.5 py-0.5 text-[10px] font-semibold text-[var(--ink-soft)]">
                               {count}
                             </span>
                           ) : null}
@@ -177,7 +177,7 @@ function PrimaryItem({ icon: Icon, label, active, onClick }: { icon: LucideIcon;
   return (
     <button
       className={`focus-ring flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition ${
-        active ? "bg-[var(--surface-active)] text-[var(--ink)]" : "text-[#433b73] hover:bg-white/35 hover:text-[var(--ink)]"
+        active ? "bg-[var(--surface-active)] text-[var(--ink)]" : "text-[var(--ink-soft)] hover:bg-white/45 hover:text-[var(--ink)]"
       }`}
       onClick={onClick}
       onPointerUp={(event) => event.currentTarget.blur()}
@@ -204,7 +204,7 @@ export function Shell({ currentNav, onNavigate, children }: { currentNav: NavIte
       <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
         <header className="flex h-14 items-center justify-between bg-[var(--workspace)] px-6 lg:hidden">
           <Brand />
-          <button className="focus-ring rounded-lg p-2 text-[var(--ink-soft)] hover:bg-white/50" onClick={() => setMobileOpen(true)}>
+          <button aria-label="Open navigation" className="focus-ring rounded-lg p-2 text-[var(--ink-soft)] hover:bg-white/50" onClick={() => setMobileOpen(true)}>
             <Menu className="size-5" />
           </button>
         </header>
@@ -216,10 +216,10 @@ export function Shell({ currentNav, onNavigate, children }: { currentNav: NavIte
 
       {mobileOpen && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
-          <div className="fixed inset-0 bg-[#17152f]/25 backdrop-blur-sm" onClick={() => setMobileOpen(false)} />
+          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm" onClick={() => setMobileOpen(false)} />
           <div className="relative z-10 flex w-[280px] flex-col bg-[var(--sidebar)]">
             <div className="flex h-14 items-center justify-end px-4">
-              <button className="focus-ring rounded-lg p-2 text-[var(--ink-soft)] hover:bg-white/50" onClick={() => setMobileOpen(false)}>
+              <button aria-label="Close navigation" className="focus-ring rounded-lg p-2 text-[var(--ink-soft)] hover:bg-white/50" onClick={() => setMobileOpen(false)}>
                 <X className="size-5" />
               </button>
             </div>

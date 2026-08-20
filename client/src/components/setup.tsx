@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { ArrowLeft, ArrowRight } from "lucide-react"
 import type { ImportCredentialInput } from "../lib/api"
 import type { Application, Connection, Environment, InventoryGraph, Policy } from "../types"
 import { titleCase } from "../lib/format"
 import { Detail, DetailList, Section } from "./detail"
-import { Journey } from "./journey"
 import { Provider } from "./provider"
 import { Badge } from "./ui/badge"
 import { Button } from "./ui/button"
-import { Modal } from "./ui/modal"
+import { SetupPage } from "./workspace"
 
 const steps = ["Management", "Storage", "Consumers", "Policy", "Review"]
 const field = "focus-ring h-11 w-full rounded-xl border border-[var(--border)] bg-white px-3.5 text-[11px] text-[var(--ink)] outline-none"
@@ -170,15 +168,19 @@ export function CredentialSetup({
   }
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
+    <SetupPage
+      eyebrow="Inventory / Credentials"
       title="Add credential"
-      size="wide"
-      footerStart={step > 0 && <Button variant="ghost" onClick={() => setStep((value) => Math.max(0, value - 1))} disabled={submitting}><ArrowLeft className="size-3.5" /> Back</Button>}
-      actions={step < steps.length - 1 ? <Button onClick={next} disabled={!canContinue()}>Continue <ArrowRight className="size-3.5" /></Button> : <Button onClick={submit} disabled={submitting}>{submitting ? "Adding…" : "Add credential"}</Button>}
+      description="Map one workload credential to its management access, storage location, consumers, and control policy. FireKey never asks for the secret value."
+      steps={steps}
+      current={step}
+      onBack={() => setStep((value) => Math.max(0, value - 1))}
+      onCancel={onClose}
+      error={error}
+      primary={step < steps.length - 1
+        ? <Button onClick={next} disabled={!canContinue()}>{["Continue to storage", "Continue to consumers", "Continue to policy", "Review credential"][step]}</Button>
+        : <Button onClick={submit} disabled={submitting}>{submitting ? "Adding credential…" : "Add credential"}</Button>}
     >
-      <Journey steps={steps} current={step} />
 
       {step === 0 && <div className="grid gap-4 sm:grid-cols-2">
         <Label title="Management connection"><select className={field} value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>{managementConnections.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></Label>
@@ -215,8 +217,6 @@ export function CredentialSetup({
         <Section title="Controls"><DetailList><Detail label="Policy">{selectedPolicy?.name}</Detail><Detail label="Browser Playbook">{connection?.interface === "browser" ? connection.playbook_version_id : "Not required"}</Detail><Detail label="Connection"><Badge variant={connection?.status === "ready" ? "healthy" : "warning"}>{titleCase(connection?.status ?? "unknown")}</Badge></Detail></DetailList></Section>
       </div>}
 
-      {error && <div role="alert" className="mt-5 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{error}</div>}
-
-    </Modal>
+    </SetupPage>
   )
 }

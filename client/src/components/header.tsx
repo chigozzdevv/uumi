@@ -1,9 +1,21 @@
-import { Check, ChevronRight } from "lucide-react"
+import { ArrowLeft, Check, ChevronDown } from "lucide-react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 
-export function PageHeader({ section, actions }: { section: string; actions?: ReactNode }) {
+type PageHeaderProps = {
+  section?: string
+  eyebrow?: string
+  title?: string
+  description?: string
+  actions?: ReactNode
+  onBack?: () => void
+}
+
+export function PageHeader({ section, eyebrow, title, description, actions, onBack }: PageHeaderProps) {
   const [organisationsOpen, setOrganisationsOpen] = useState(false)
   const organisationMenu = useRef<HTMLDivElement>(null)
+  const parts = section?.split(" · ") ?? []
+  const resolvedTitle = title ?? parts.at(-1) ?? ""
+  const resolvedEyebrow = eyebrow ?? (parts.length > 1 ? parts.slice(0, -1).join(" / ") : undefined)
 
   useEffect(() => {
     const close = (event: PointerEvent) => {
@@ -14,20 +26,22 @@ export function PageHeader({ section, actions }: { section: string; actions?: Re
   }, [])
 
   return (
-    <header className="mb-8 flex min-h-8 items-center justify-between gap-4">
-      <div className="flex items-center gap-2 text-[11px] font-medium text-[var(--ink-muted)]">
-        <div ref={organisationMenu} className="relative">
+    <header className="mb-8 flex items-start justify-between gap-6">
+      <div className="min-w-0">
+        <div className="mb-4 flex items-center gap-2 text-[10px] font-medium text-[var(--ink-muted)]">
+          {onBack && <button className="focus-ring -ml-2 grid size-7 place-items-center rounded-lg transition hover:bg-white hover:text-[var(--ink)]" aria-label="Back" onClick={onBack}><ArrowLeft className="size-3.5" /></button>}
+          <div ref={organisationMenu} className="relative">
           <button
-            className="focus-ring -ml-2 flex items-center gap-1 rounded-lg px-2 py-1.5 transition hover:bg-white/60 hover:text-[var(--ink)]"
+            className="focus-ring flex items-center gap-1 rounded-lg px-2 py-1.5 transition hover:bg-white hover:text-[var(--ink)]"
             aria-expanded={organisationsOpen}
             aria-haspopup="menu"
             onClick={() => setOrganisationsOpen((open) => !open)}
           >
             <span>Acme Corporation</span>
-            <ChevronRight className={`size-3 transition-transform ${organisationsOpen ? "rotate-90" : ""}`} />
+            <ChevronDown className={`size-3 transition-transform ${organisationsOpen ? "rotate-180" : ""}`} />
           </button>
           {organisationsOpen && (
-            <div className="absolute left-0 top-9 z-40 w-56 rounded-xl border border-[var(--border)] bg-white p-2 shadow-[0_16px_45px_rgba(23,21,47,0.12)]" role="menu">
+            <div className="absolute left-0 top-9 z-40 w-56 rounded-xl border border-[var(--border)] bg-white p-2 shadow-[0_16px_45px_rgba(25,27,30,0.12)]" role="menu">
               <div className="px-3 pb-2 pt-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]">Organization</div>
               <button className="focus-ring flex w-full items-center justify-between rounded-lg bg-[var(--surface-soft)] px-3 py-2.5 text-left text-[11px] font-semibold text-[var(--ink)]" role="menuitem" onClick={() => setOrganisationsOpen(false)}>
                 Acme Corporation
@@ -35,10 +49,13 @@ export function PageHeader({ section, actions }: { section: string; actions?: Re
               </button>
             </div>
           )}
+          </div>
+          {resolvedEyebrow && <><span>/</span><span>{resolvedEyebrow}</span></>}
         </div>
-        <span className="text-[var(--ink)]">{section}</span>
+        <h1 className="m-0 text-[28px] font-semibold tracking-[-0.045em] text-[var(--ink)]">{resolvedTitle}</h1>
+        {description && <p className="mt-2 max-w-2xl text-[12px] leading-5 text-[var(--ink-soft)]">{description}</p>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && <div className="flex shrink-0 items-center gap-2 pt-9">{actions}</div>}
     </header>
   )
 }

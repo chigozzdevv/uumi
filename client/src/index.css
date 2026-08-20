@@ -2,19 +2,19 @@
 
 @layer base {
   :root {
-    --canvas: #f0f2f3;
-    --workspace: #f0f2f3;
-    --sidebar: #e3e4ea;
+    --canvas: #f5f6f7;
+    --workspace: #f5f6f7;
+    --sidebar: #eceeef;
     --surface: #ffffff;
-    --surface-soft: #f8f8f6;
-    --surface-active: rgba(255, 255, 255, 0.82);
-    --border: #dedfdc;
-    --border-soft: #e8e9e6;
-    --ink: #17152f;
-    --ink-soft: #5f5d72;
-    --ink-muted: #9998a5;
-    --accent: #3d326f;
-    --accent-soft: #e6e2f5;
+    --surface-soft: #f7f8f8;
+    --surface-active: #ffffff;
+    --border: #dfe2e4;
+    --border-soft: #eaeced;
+    --ink: #191b1e;
+    --ink-soft: #5f646b;
+    --ink-muted: #8a9097;
+    --accent: #24272b;
+    --accent-soft: #e9ebed;
     --green: #1f7a56;
     --green-soft: #e5f2eb;
     --amber: #9a651c;
@@ -80,7 +80,7 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 18px;
-    box-shadow: 0 10px 30px rgba(23, 21, 47, 0.04);
+    box-shadow: 0 8px 24px rgba(25, 27, 30, 0.035);
   }
 
   .panel-subtle {
@@ -120,7 +120,7 @@
   }
 
   .resource-toolbar {
-    margin-bottom: 56px;
+    margin-bottom: 24px;
   }
 
   .focus-ring:focus-visible {
@@ -147,6 +147,6 @@
   }
 
   .resource-toolbar {
-    margin-bottom: 40px;
+    margin-bottom: 24px;
   }
 }

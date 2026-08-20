@@ -1,13 +1,13 @@
 import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ScrollText } from "lucide-react"
+import { ChevronRight, ScrollText } from "lucide-react"
 import { Detail, DetailList, Section } from "../components/detail"
 import { PageHeader } from "../components/header"
 import { Marker } from "../components/marker"
 import { Failure, Loading } from "../components/state"
 import { Toolbar } from "../components/toolbar"
 import { Badge } from "../components/ui/badge"
-import { Modal } from "../components/ui/modal"
+import { Button } from "../components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import type { AuditEvent } from "../types"
 import { api } from "../lib/api"
@@ -28,14 +28,13 @@ export function AuditsPage() {
   if (query.isLoading) return <div className="page"><Loading /></div>
   if (query.error) return <div className="page"><Failure error={query.error} /></div>
 
+  if (selected) return <div className="page"><PageHeader eyebrow="Audit" title={titleCase(selected.kind)} description="Immutable metadata evidence recorded for this system action." onBack={() => setSelected(null)} /><Section title="Event"><DetailList><Detail label="Sequence">#{selected.sequence}</Detail><Detail label="Actor">{actorName(selected.actor_id)}</Detail><Detail label="Resource">{resourceName(selected.resource)}</Detail><Detail label="Occurred">{formatDate(selected.occurred_at, true)}</Detail><Detail label="Region">{selected.region}</Detail><Detail label="Status"><Badge variant="healthy">Verified</Badge></Detail></DetailList></Section></div>
+
   return (
     <div className="page">
-      <PageHeader section="System · Audit" />
-      <Toolbar value={search} onChange={setSearch} placeholder="Search audit events" filters={[{ label: "Event", value: kind, onChange: (event) => setKind(event.target.value), children: <><option value="all">All events</option>{[...new Set(query.data!.map((item) => item.kind))].map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}</> }]} />
-      <div><Table><TableHeader><TableRow><TableHead>Event</TableHead><TableHead>Time</TableHead><TableHead>Actor</TableHead><TableHead>Resource</TableHead><TableHead>Sequence</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>{rows.map((event) => <TableRow key={event.id} className="cursor-pointer" onClick={() => setSelected(event)}><TableCell><div className="flex items-center gap-3"><Marker icon={ScrollText} /><span className="font-medium">{titleCase(event.kind)}</span></div></TableCell><TableCell className="text-[10px] text-[var(--ink-soft)]">{formatDate(event.occurred_at, true)}</TableCell><TableCell>{actorName(event.actor_id)}</TableCell><TableCell className="max-w-[260px] truncate text-[10px]">{resourceName(event.resource)}</TableCell><TableCell className="text-[10px] text-[var(--ink-muted)]">#{event.sequence}</TableCell><TableCell><Badge variant="healthy">Verified</Badge></TableCell></TableRow>)}</TableBody></Table></div>
-      <Modal isOpen={Boolean(selected)} onClose={() => setSelected(null)} title={selected ? titleCase(selected.kind) : "Audit event"}>
-        {selected && <Section title="Event"><DetailList><Detail label="Sequence">#{selected.sequence}</Detail><Detail label="Actor">{actorName(selected.actor_id)}</Detail><Detail label="Resource">{resourceName(selected.resource)}</Detail><Detail label="Occurred">{formatDate(selected.occurred_at, true)}</Detail><Detail label="Region">{selected.region}</Detail><Detail label="Status"><Badge variant="healthy">Verified</Badge></Detail></DetailList></Section>}
-      </Modal>
+      <PageHeader title="Audit" description="Immutable metadata evidence for actions, decisions, and workflow transitions." />
+      <Toolbar value={search} onChange={setSearch} placeholder="Search audit events" resultCount={rows.length} resultLabel="events" onClear={() => { setSearch(""); setKind("all") }} filters={[{ label: "Event", value: kind, defaultValue: "all", onChange: (event) => setKind(event.target.value), children: <><option value="all">All events</option>{[...new Set(query.data!.map((item) => item.kind))].map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}</> }]} />
+      <Table><TableHeader><TableRow><TableHead>Event</TableHead><TableHead>Time</TableHead><TableHead>Actor</TableHead><TableHead>Resource</TableHead><TableHead>Sequence</TableHead><TableHead className="w-36">Action</TableHead></TableRow></TableHeader><TableBody>{rows.map((event) => <TableRow key={event.id}><TableCell><button className="flex items-center gap-3 text-left font-medium hover:underline" onClick={() => setSelected(event)}><Marker icon={ScrollText} />{titleCase(event.kind)}</button></TableCell><TableCell className="text-[10px] text-[var(--ink-soft)]">{formatDate(event.occurred_at, true)}</TableCell><TableCell>{actorName(event.actor_id)}</TableCell><TableCell className="max-w-[260px] truncate text-[10px]">{resourceName(event.resource)}</TableCell><TableCell className="text-[10px] text-[var(--ink-muted)]">#{event.sequence}</TableCell><TableCell><Button variant="ghost" size="sm" onClick={() => setSelected(event)}>View event <ChevronRight className="size-3.5" /></Button></TableCell></TableRow>)}</TableBody></Table>
     </div>
   )
 }

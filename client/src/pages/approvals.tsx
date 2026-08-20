@@ -45,7 +45,7 @@ export function ApprovalsPage() {
 
   return (
     <div className="page">
-      <PageHeader section="Operations · Approvals" />
+      <PageHeader title="Approvals" description="Review protected actions with current evidence before FireKey continues." />
       {notice && <button className="mb-5 flex w-full items-center gap-3 rounded-[14px] border border-[#bad8c9] bg-[var(--green-soft)] px-4 py-3 text-left text-[11px] text-[var(--green)]" onClick={() => setNotice("")}><Check className="size-3.5" />{notice}<span className="ml-auto">Dismiss</span></button>}
       {decide.error && <div className="mb-5 rounded-[14px] border border-[#dfb8bd] bg-[var(--red-soft)] px-4 py-3 text-[11px] text-[var(--red)]">{decide.error.message}</div>}
 
@@ -53,7 +53,7 @@ export function ApprovalsPage() {
         <div className="space-y-2">{approvals.data!.map((approval) => {
           const linkedRun = runs.data!.find((item) => item.id === approval.run_id)
           const item = graph.data!.credentials.find((entry) => entry.id === linkedRun?.credential_id)
-          return <button key={approval.id} className={`focus-ring w-full rounded-[15px] border p-4 text-left transition ${selected?.id === approval.id ? "border-[#bab5ce] bg-white" : "border-[var(--border-soft)] bg-white/40 hover:bg-white/70"}`} onClick={() => setSelectedId(approval.id)}><div className="flex items-center justify-between gap-2"><div className="truncate text-[11px] font-semibold">{titleCase(approval.action_id.replace("action_", ""))}</div><Badge variant={approval.decision === "pending" ? "warning" : approval.decision === "approved" ? "healthy" : "neutral"}>{titleCase(approval.decision)}</Badge></div><div className="mt-2 truncate text-[10px] text-[var(--ink-soft)]">{item?.display_name ?? "Credential"}</div><div className="mt-3 flex items-center gap-1.5 text-[9px] text-[var(--ink-muted)]"><Clock3 className="size-3" /> Expires {formatDate(approval.expires_at, true)}</div></button>
+          return <button key={approval.id} className={`focus-ring w-full rounded-[15px] border p-4 text-left transition ${selected?.id === approval.id ? "border-[var(--ink)] bg-white" : "border-[var(--border-soft)] bg-white/40 hover:bg-white/70"}`} onClick={() => setSelectedId(approval.id)}><div className="flex items-center justify-between gap-2"><div className="truncate text-[11px] font-semibold">{titleCase(approval.action_id.replace("action_", ""))}</div><Badge variant={approval.decision === "pending" ? "warning" : approval.decision === "approved" ? "healthy" : "neutral"}>{titleCase(approval.decision)}</Badge></div><div className="mt-2 truncate text-[10px] text-[var(--ink-soft)]">{item?.display_name ?? "Credential"}</div><div className="mt-3 flex items-center gap-1.5 text-[9px] text-[var(--ink-muted)]"><Clock3 className="size-3" /> Expires {formatDate(approval.expires_at, true)}</div></button>
         })}</div>
 
         {selected && <section className="panel overflow-hidden">

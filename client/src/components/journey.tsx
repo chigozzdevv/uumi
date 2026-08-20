@@ -3,7 +3,7 @@ import { Check } from "lucide-react"
 export function Journey({ steps, current }: { steps: string[]; current: number }) {
   return (
     <div className="mb-7" aria-label={`Step ${current + 1} of ${steps.length}`}>
-      <ol className="grid grid-cols-5">
+      <ol className="grid" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
         {steps.map((label, index) => {
           const complete = index < current
           const active = index === current

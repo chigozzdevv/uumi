@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react"
-import { useQueries } from "@tanstack/react-query"
-import { Check, Circle, Clock3, RotateCw, TriangleAlert } from "lucide-react"
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query"
+import { Check, Circle, Clock3, Plus, RotateCw, TriangleAlert } from "lucide-react"
 import { Detail, DetailList, Section } from "../components/detail"
 import { PageHeader } from "../components/header"
 import { Provider } from "../components/provider"
 import { Failure, Loading } from "../components/state"
 import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
+import { Modal } from "../components/ui/modal"
+import { Field, formControl } from "../components/workspace"
 import type { RotationRun, StageName } from "../types"
 import { api } from "../lib/api"
 import { formatDate, titleCase } from "../lib/format"
@@ -34,12 +36,21 @@ function variant(run: RotationRun) {
 }
 
 export function RotationsPage({ activeRunId, onNavigateApproval }: { activeRunId?: string; onNavigateApproval: () => void }) {
+  const queryClient = useQueryClient()
   const [filter, setFilter] = useState("active")
   const [selectedId, setSelectedId] = useState(activeRunId ?? "")
+  const [creating, setCreating] = useState(false)
+  const [credentialId, setCredentialId] = useState("")
+  const [reason, setReason] = useState("Routine credential rotation")
+  const [urgency, setUrgency] = useState<"routine" | "urgent" | "emergency">("routine")
   const [runs, graph] = useQueries({ queries: [
     { queryKey: ["rotations"], queryFn: () => api.getRotations() },
     { queryKey: ["graph"], queryFn: () => api.getGraph() },
   ] })
+  const create = useMutation({ mutationFn: () => {
+    const selectedCredential = graph.data!.credentials.find((item) => item.id === credentialId)!
+    return api.startRotation({ credential_id: selectedCredential.id, policy_version: selectedCredential.policy_version, reason: reason.trim(), urgency })
+  }, onSuccess: async (run) => { await queryClient.invalidateQueries({ queryKey: ["rotations"] }); setSelectedId(run.id); setFilter("active"); setCreating(false) } })
 
   useEffect(() => { if (activeRunId) setSelectedId(activeRunId) }, [activeRunId])
 
@@ -57,10 +68,19 @@ export function RotationsPage({ activeRunId, onNavigateApproval }: { activeRunId
   const selected = runs.data!.find((run) => run.id === selectedId) ?? filtered[0] ?? runs.data![0]
   const credential = graph.data!.credentials.find((item) => item.id === selected?.credential_id)
   const stageIndex = stages.findIndex((stage) => stage.id === selected?.stage)
+  const availableCredentials = graph.data!.credentials.filter((item) => !runs.data!.some((run) => run.credential_id === item.id && !["completed", "compensated", "failed", "cleanup-required"].includes(run.status)))
+
+  function openCreate() {
+    setCredentialId(availableCredentials[0]?.id ?? "")
+    setReason("Routine credential rotation")
+    setUrgency("routine")
+    create.reset()
+    setCreating(true)
+  }
 
   return (
     <div className="page">
-      <PageHeader section="Operations · Rotations" />
+      <PageHeader title="Rotations" description="Follow active runs across FireKey’s twelve evidence-gated stages." actions={<Button onClick={openCreate} disabled={!availableCredentials.length}><Plus className="size-3.5" /> Start rotation</Button>} />
       <div className="mb-6 flex gap-1 border-b border-[var(--border)]">
         {["active", "scheduled", "completed", "failed"].map((item) => <button key={item} className={`focus-ring -mb-px border-b-2 px-4 pb-3 text-[10px] font-semibold capitalize ${filter === item ? "border-[var(--accent)] text-[var(--accent)]" : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]"}`} onClick={() => setFilter(item)}>{titleCase(item)}</button>)}
       </div>
@@ -70,7 +90,7 @@ export function RotationsPage({ activeRunId, onNavigateApproval }: { activeRunId
           {filtered.length === 0 && <div className="panel p-8 text-center text-[11px] text-[var(--ink-muted)]">No runs in this view.</div>}
           {filtered.map((run) => {
             const item = graph.data!.credentials.find((entry) => entry.id === run.credential_id)
-            return <button key={run.id} className={`focus-ring w-full rounded-[15px] border p-4 text-left transition ${selected?.id === run.id ? "border-[#bab5ce] bg-white" : "border-[var(--border-soft)] bg-white/40 hover:bg-white/70"}`} onClick={() => setSelectedId(run.id)}><div className="flex items-start gap-3"><Provider value={item?.provider ?? "firekey"} label={false} /><div className="min-w-0 flex-1 truncate text-[11px] font-semibold">{item?.display_name ?? "Credential"}</div><Badge variant={variant(run)}>{titleCase(run.status)}</Badge></div><div className="mt-4 flex items-center justify-between text-[9px] text-[var(--ink-soft)]"><span>{titleCase(run.stage)}</span><span>{formatDate(run.updated_at, true)}</span></div></button>
+            return <button key={run.id} className={`focus-ring w-full rounded-[15px] border p-4 text-left transition ${selected?.id === run.id ? "border-[var(--ink)] bg-white" : "border-[var(--border-soft)] bg-white/40 hover:bg-white/70"}`} onClick={() => setSelectedId(run.id)}><div className="flex items-start gap-3"><Provider value={item?.provider ?? "firekey"} label={false} /><div className="min-w-0 flex-1 truncate text-[11px] font-semibold">{item?.display_name ?? "Credential"}</div><Badge variant={variant(run)}>{titleCase(run.status)}</Badge></div><div className="mt-4 flex items-center justify-between text-[9px] text-[var(--ink-soft)]"><span>{titleCase(run.stage)}</span><span>{formatDate(run.updated_at, true)}</span></div></button>
           })}
         </div>
 
@@ -97,6 +117,9 @@ export function RotationsPage({ activeRunId, onNavigateApproval }: { activeRunId
           </div>
         </section>}
       </div>
+      <Modal isOpen={creating} onClose={() => setCreating(false)} title="Start rotation" description="Start a manual run using the policy already assigned to the credential." actions={<Button onClick={() => create.mutate()} disabled={!credentialId || !reason.trim() || create.isPending}>{create.isPending ? "Starting…" : "Start rotation"}</Button>}>
+        <div className="space-y-4"><Field label="Credential"><select className={formControl} value={credentialId} onChange={(event) => setCredentialId(event.target.value)}>{availableCredentials.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></Field><Field label="Urgency"><select className={formControl} value={urgency} onChange={(event) => setUrgency(event.target.value as typeof urgency)}><option value="routine">Routine</option><option value="urgent">Urgent</option><option value="emergency">Emergency</option></select></Field><Field label="Reason"><textarea className={`${formControl} h-24 py-3`} value={reason} onChange={(event) => setReason(event.target.value)} /></Field>{create.error && <div role="alert" className="rounded-xl bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{create.error.message}</div>}</div>
+      </Modal>
     </div>
   )
 }
