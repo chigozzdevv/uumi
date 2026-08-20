@@ -4,17 +4,18 @@ from pydantic import AwareDatetime, Field
 
 from contracts.base import Contract, Identifier
 from contracts.evidence import StageProof
-from contracts.playbook import DryRun
+from contracts.plan import RuntimeDeployment
 from contracts.recovery import RecoveryMode
 from contracts.run import Failure, Trigger
 
 
 class StageBindings(Contract):
-    playbook_version: Identifier | None = None
+    browser_playbook_version: Identifier | None = None
     plan_id: Identifier | None = None
     plan_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     current_generation_id: Identifier | None = None
     target_generation_id: Identifier | None = None
+    deployments: tuple[RuntimeDeployment, ...] = ()
 
 
 class CreateRunCommand(Contract):
@@ -25,7 +26,6 @@ class CreateRunCommand(Contract):
     policy_version: Identifier
     trigger: Trigger
     run_id: Identifier | None = None
-    dry_run: DryRun | None = None
 
 
 class RunCommand(Contract):

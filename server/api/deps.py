@@ -175,7 +175,6 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         playbooks=PlaybookService(
             FirestorePlaybookRepository(client),
             _now,
-            workflow,
             inventory_repository,
         ),
         approvals=ApprovalService(approval_repository, _now, notifications, audit),

@@ -8,10 +8,7 @@ from contracts import (
     BrowserPolicy,
     BrowserSession,
     BrowserStatus,
-    DryRun,
-    DryRunStatus,
     EventKind,
-    ExecutionMethod,
     MutationMode,
     MutationSemantics,
     OutboxEvent,
@@ -26,6 +23,7 @@ from contracts import (
     RotationStrategy,
     RunEvent,
     RunStatus,
+    SecureField,
     Selector,
     SelectorKind,
     Stage,
@@ -55,7 +53,7 @@ def test_rollout_must_be_ordered_and_complete() -> None:
             run_id="run_one",
             credential_id="cred_one",
             policy_version="policy_one",
-            playbook_version="playbook_one",
+            browser_playbook_version=None,
             strategy=RotationStrategy.PARALLEL,
             target_scopes=frozenset({"mail.send"}),
             consumer_ids=("service_one",),
@@ -137,17 +135,16 @@ def test_outbox_publication_requires_provider_receipt() -> None:
         OutboxEvent(event=event, available_at=NOW, published_at=NOW)
 
 
-def test_computer_playbook_requires_a_login_url_pattern() -> None:
-    from contracts import SecureField
+def test_legacy_playbook_stage_migrates_to_plan() -> None:
+    assert Stage("playbook") is Stage.PLAN
 
+
+def test_browser_playbook_requires_a_login_url_pattern() -> None:
     with pytest.raises(ValidationError, match="login URL"):
         PlaybookDraft(
             name="Vendor rotation",
-            provider="vendor",
-            execution=ExecutionMethod.COMPUTER,
+            platform="vendor",
             allowed_domains=("vendor.example.com",),
-            allowed_tools=frozenset({"browser.secure-capture"}),
-            required_connections=("connection_one",),
             steps=(
                 PlaybookStep(
                     id="step_one",
@@ -160,8 +157,6 @@ def test_computer_playbook_requires_a_login_url_pattern() -> None:
                     secure_field=SecureField(
                         name="api_key",
                         selector=Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),
-                        sink_connection_id="sink_one",
-                        secret_resource="projects/project-one/secrets/key",
                         provider_id_selector=Selector(
                             kind=SelectorKind.TEST_ID, value="new-key-id"
                         ),
@@ -172,15 +167,13 @@ def test_computer_playbook_requires_a_login_url_pattern() -> None:
         )
 
 
-def test_computer_playbook_requires_secure_capture() -> None:
+def test_browser_playbook_requires_secure_capture() -> None:
     with pytest.raises(ValidationError, match="secure capture"):
         PlaybookDraft(
             name="Vendor rotation",
-            provider="vendor",
-            execution=ExecutionMethod.COMPUTER,
+            platform="vendor",
             allowed_domains=("vendor.example.com",),
-            allowed_tools=frozenset({"browser.click"}),
-            required_connections=("connection_one",),
+            login_url_pattern="https://vendor.example.com/login",
             steps=(
                 PlaybookStep(
                     id="step_one",
@@ -196,6 +189,49 @@ def test_computer_playbook_requires_secure_capture() -> None:
         )
 
 
+def test_browser_playbook_cannot_embed_approval_policy() -> None:
+    selector = Selector(kind=SelectorKind.TEST_ID, value="credential-control")
+    checkpoint = PageCheckpoint(url_pattern="https://vendor.example.com/keys")
+
+    with pytest.raises(ValidationError, match="policy protects operations"):
+        PlaybookDraft(
+            name="Vendor rotation",
+            platform="vendor",
+            allowed_domains=("vendor.example.com",),
+            login_url_pattern="https://vendor.example.com/login",
+            steps=(
+                PlaybookStep(
+                    id="create_key",
+                    stage=Stage.CREATE,
+                    tool="browser.secure-capture",
+                    operation="capture",
+                    objective="Capture the replacement credential",
+                    selectors=(selector,),
+                    checkpoint=checkpoint,
+                    protected=True,
+                    secure_field=SecureField(
+                        name="api_key",
+                        selector=selector,
+                        provider_id_selector=Selector(
+                            kind=SelectorKind.TEST_ID, value="credential-id"
+                        ),
+                    ),
+                    evidence_checks=frozenset({"captured"}),
+                ),
+                PlaybookStep(
+                    id="revoke_key",
+                    stage=Stage.REVOKE,
+                    tool="browser.click",
+                    operation="revoke",
+                    objective="Revoke the prior credential",
+                    selectors=(selector,),
+                    checkpoint=checkpoint,
+                    evidence_checks=frozenset({"revoked"}),
+                ),
+            ),
+        )
+
+
 def test_secure_capture_session_requires_both_barriers() -> None:
     with pytest.raises(ValidationError, match="barriers"):
         BrowserSession(
@@ -205,6 +241,8 @@ def test_secure_capture_session_requires_both_barriers() -> None:
             playbook_id="playbook_one",
             playbook_version="playbook_one",
             provider_connection_id="provider_one",
+            secret_store_connection_id="secret_store_one",
+            secret_resource="projects/project-one/secrets/key",
             status=BrowserStatus.CAPTURING,
             policy=BrowserPolicy(
                 allowed_domains=("vendor.example.com",),
@@ -216,23 +254,6 @@ def test_secure_capture_session_requires_both_barriers() -> None:
             created_at=NOW,
             updated_at=NOW,
             expires_at=NOW + timedelta(minutes=30),
-        )
-
-
-def test_terminal_dry_run_requires_completion() -> None:
-    with pytest.raises(ValidationError, match="completion time"):
-        DryRun(
-            id="dryrun_one",
-            organisation_id="org_one",
-            playbook_id="playbook_one",
-            version_id="version_one",
-            run_id="run_one",
-            status=DryRunStatus.FAILED,
-            environment_id="test_one",
-            credential_id="credential_one",
-            requested_by="actor_one",
-            failure="checkpoint changed",
-            started_at=NOW,
         )
 
 

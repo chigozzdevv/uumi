@@ -70,44 +70,47 @@ async def plan_rotation(tool_context: ToolContext) -> dict[str, Any]:
 
 
 async def select_strategy(tool_context: ToolContext) -> dict[str, Any]:
-    """Return allowed execution choices from the assigned immutable playbook."""
+    """Return policy, inventory, and the optional browser procedure for a run."""
     context = AgentContext(tool_context)
     run = await context.run()
-    assignment = await context.document(
-        FirestorePaths.assignment(context.organisation_id, _string(run, "credential_id"))
+    credential = await context.document(
+        FirestorePaths.credential(context.organisation_id, _string(run, "credential_id"))
     )
-    version = await context.document(
-        FirestorePaths.playbook_version(
-            context.organisation_id,
-            _string(assignment, "playbook_id"),
-            _string(assignment, "version_id"),
+    connection = await context.document(
+        FirestorePaths.connection(context.organisation_id, _string(credential, "connection_id"))
+    )
+    policy = await context.document(
+        FirestorePaths.policy_version(context.organisation_id, _string(run, "policy_version"))
+    )
+    version = None
+    playbook_id = connection.get("playbook_id")
+    version_id = connection.get("playbook_version_id")
+    if isinstance(playbook_id, str) and isinstance(version_id, str):
+        version = await context.document(
+            FirestorePaths.playbook_version(
+                context.organisation_id,
+                playbook_id,
+                version_id,
+            )
         )
-    )
-    return {"assignment": assignment, "version": version}
+    return {
+        "credential": credential,
+        "provider_connection": connection,
+        "policy": policy,
+        "browser_playbook": version,
+    }
 
 
 async def bind_playbook(tool_context: ToolContext) -> dict[str, Any]:
-    """Confirm that the assigned playbook and connections are still active and exact."""
-    context = AgentContext(tool_context)
-    run = await context.run()
+    """Confirm that a browser connection still references its published playbook."""
     selected = await select_strategy(tool_context)
-    assignment = selected["assignment"]
-    version = selected["version"]
-    dry_run = isinstance(run.get("dry_run_id"), str)
-    if dry_run:
-        if not assignment.get("dry_run_only") or version.get("state") != "test-required":
-            raise ValueError("dry run is not bound to its test-required playbook")
-    elif assignment.get("dry_run_only") or version.get("state") != "active":
-        raise ValueError("production run is not bound to an active playbook")
-    connections = []
-    for connection_id in assignment.get("connection_ids", []):
-        if isinstance(connection_id, str):
-            connections.append(
-                await context.document(
-                    FirestorePaths.connection(context.organisation_id, connection_id)
-                )
-            )
-    return {**selected, "connections": connections, "dry_run": dry_run}
+    connection = selected["provider_connection"]
+    version = selected["browser_playbook"]
+    if connection.get("interface") == "browser" and (
+        not isinstance(version, dict) or version.get("state") != "published"
+    ):
+        raise ValueError("browser connection is not bound to a published playbook")
+    return selected
 
 
 async def diagnose_failed_stage(tool_context: ToolContext) -> dict[str, Any]:
@@ -137,17 +140,33 @@ async def recommend_authorised_recovery(tool_context: ToolContext) -> dict[str, 
 
 
 async def build_playbook(definition: dict[str, Any], tool_context: ToolContext) -> dict[str, Any]:
-    """Validate a complete provider playbook against FireKey lifecycle invariants."""
+    """Canonicalise one versioned browser procedure from sanitised source evidence."""
     AgentContext(tool_context)
     draft = PlaybookDraft.model_validate(definition)
     validate_definition(draft)
     return draft.model_dump(mode="json")
 
 
+async def validate_playbook(
+    definition: dict[str, Any], tool_context: ToolContext
+) -> dict[str, Any]:
+    """Validate browser-only actions, checkpoints, domains, and secure capture declarations."""
+    AgentContext(tool_context)
+    draft = PlaybookDraft.model_validate(definition)
+    validate_definition(draft)
+    return {
+        "valid": True,
+        "actions": len(draft.steps),
+        "create_actions": sum(step.stage.value == "create" for step in draft.steps),
+        "revoke_actions": sum(step.stage.value == "revoke" for step in draft.steps),
+        "secure_capture_declared": any(step.secure_field is not None for step in draft.steps),
+    }
+
+
 async def analyse_walkthrough(
     playbook_id: str, source_id: str, tool_context: ToolContext
 ) -> dict[str, Any]:
-    """Load one sanitised walkthrough evidence record for playbook analysis."""
+    """Load one sanitised video, recording, text, or linked-resource evidence record."""
     context = AgentContext(tool_context)
     source = await context.document(
         FirestorePaths.walkthrough(context.organisation_id, playbook_id, source_id)
@@ -160,32 +179,14 @@ async def analyse_walkthrough(
     return analysis
 
 
-async def generate_dry_run(
-    playbook_id: str, version_id: str, tool_context: ToolContext
-) -> dict[str, Any]:
-    """Return the immutable playbook and isolated environment inputs for a real dry run."""
-    context = AgentContext(tool_context)
-    version = await context.document(
-        FirestorePaths.playbook_version(context.organisation_id, playbook_id, version_id)
-    )
-    draft = PlaybookDraft.model_validate(version.get("definition"))
-    validate_definition(draft)
-    return {
-        "playbook_id": playbook_id,
-        "version_id": version_id,
-        "digest": version.get("digest"),
-        "definition": draft.model_dump(mode="json"),
-        "required_checks": sorted(
-            {check for step in draft.steps for check in step.evidence_checks}
-        ),
-    }
-
-
 async def execute_console_playbook(step_id: str, tool_context: ToolContext) -> dict[str, Any]:
     """Load exactly one immutable browser step for the separate Computer Use worker."""
     context = AgentContext(tool_context)
     selected = await bind_playbook(tool_context)
-    steps = selected["version"].get("definition", {}).get("steps", [])
+    version = selected.get("browser_playbook")
+    if not isinstance(version, dict):
+        raise ValueError("run does not use a browser playbook")
+    steps = version.get("definition", {}).get("steps", [])
     matches = [step for step in steps if step.get("id") == step_id]
     if len(matches) != 1 or not str(matches[0].get("tool", "")).startswith("browser."):
         raise ValueError("requested step is not one immutable browser action")

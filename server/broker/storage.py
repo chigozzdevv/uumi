@@ -4,8 +4,9 @@ from typing import Any
 from contracts import (
     Approval,
     Connection,
-    PlaybookAssignment,
-    PlaybookVersion,
+    ConsumerBinding,
+    ManagedCredential,
+    PolicyVersion,
     ProtectedAction,
     RotationRun,
     ToolAttempt,
@@ -169,17 +170,25 @@ class FirestoreBrokerRepository:
             FirestorePaths.connection(organisation_id, connection_id), Connection
         )
 
-    async def assignment(self, organisation_id: str, credential_id: str) -> PlaybookAssignment:
+    async def credential(self, organisation_id: str, credential_id: str) -> ManagedCredential:
         return await self._catalog.get(
-            FirestorePaths.assignment(organisation_id, credential_id), PlaybookAssignment
+            FirestorePaths.credential(organisation_id, credential_id), ManagedCredential
         )
 
-    async def version(
-        self, organisation_id: str, playbook_id: str, version_id: str
-    ) -> PlaybookVersion:
+    async def bindings(
+        self, organisation_id: str, credential_id: str
+    ) -> tuple[ConsumerBinding, ...]:
+        path = f"{FirestorePaths.organisation(organisation_id)}/bindings"
+        values: list[ConsumerBinding] = []
+        async for snapshot in (
+            self._client.collection(path).where("credential_id", "==", credential_id).stream()
+        ):
+            values.append(ConsumerBinding.model_validate(_data(snapshot)))
+        return tuple(values)
+
+    async def policy(self, organisation_id: str, version_id: str) -> PolicyVersion:
         return await self._catalog.get(
-            FirestorePaths.playbook_version(organisation_id, playbook_id, version_id),
-            PlaybookVersion,
+            FirestorePaths.policy_version(organisation_id, version_id), PolicyVersion
         )
 
     async def approval(self, organisation_id: str, approval_id: str) -> Approval:

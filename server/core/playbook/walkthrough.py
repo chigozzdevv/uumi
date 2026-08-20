@@ -1,8 +1,17 @@
+import hashlib
+import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
+from urllib.parse import urlparse
 
-from contracts import WalkthroughAnalysis, WalkthroughSource, WalkthroughStatus
+from contracts import (
+    TimedText,
+    WalkthroughAnalysis,
+    WalkthroughKind,
+    WalkthroughSource,
+    WalkthroughStatus,
+)
 
 from core.errors import PlaybookError
 
@@ -68,6 +77,46 @@ class WalkthroughService:
         self._bucket = bucket
         self._clock = clock
 
+    async def register(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        source_id: str,
+        kind: WalkthroughKind,
+        content: str,
+        actor_id: str,
+        resource_url: str | None = None,
+    ) -> tuple[WalkthroughSource, bool]:
+        if kind is WalkthroughKind.TEXT:
+            resource = f"sha256:{hashlib.sha256(content.encode()).hexdigest()}"
+            content_type = "text/plain"
+        else:
+            resource = _source_url(resource_url)
+            content_type = "text/uri-list"
+        sanitised, redactions = sanitise_source_text(content)
+        now = self._clock()
+        candidate = WalkthroughSource(
+            id=source_id,
+            organisation_id=organisation_id,
+            playbook_id=playbook_id,
+            kind=kind,
+            resource=resource,
+            content_type=content_type,
+            size=len(content.encode()),
+            status=WalkthroughStatus.READY,
+            analysis=WalkthroughAnalysis(
+                source_id=source_id,
+                transcript=(TimedText(start_seconds=0, end_seconds=0, text=sanitised),),
+                redaction_count=redactions,
+                processor="firekey-source-sanitizer",
+                created_at=now,
+            ),
+            created_by=actor_id,
+            created_at=now,
+            updated_at=now,
+        )
+        return await self._repository.reserve(candidate)
+
     async def begin(
         self,
         organisation_id: str,
@@ -87,6 +136,7 @@ class WalkthroughService:
             id=source_id,
             organisation_id=organisation_id,
             playbook_id=playbook_id,
+            kind=WalkthroughKind.VIDEO,
             object_name=object_name,
             resource=f"gs://{self._bucket}/{object_name}",
             content_type=content_type,
@@ -112,6 +162,8 @@ class WalkthroughService:
         source = await self._repository.get(organisation_id, playbook_id, source_id)
         if source.status is not WalkthroughStatus.UPLOADING:
             return source
+        if source.object_name is None or source.crc32c is None:
+            raise PlaybookError("uploaded walkthrough metadata is incomplete")
         generation = await self._uploads.verify(
             source.object_name,
             source.content_type,
@@ -168,3 +220,43 @@ class WalkthroughService:
                 raise PlaybookError(f"walkthrough {source_id} analysis is not ready")
             values.append(source)
         return tuple(values)
+
+
+_SOURCE_REDACTIONS = (
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+    re.compile(
+        r"(?i)\b(?:authorization|password|passphrase|api[_-]?key|credential|secret|token)\b\s*[:=]\s*[^\s,;]+"
+    ),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}"),
+    re.compile(
+        r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|sk_(?:live|test)_[A-Za-z0-9]{16,})\b"
+    ),
+    re.compile(r"\b[A-Za-z0-9_-]{32,}\b"),
+)
+
+
+def sanitise_source_text(value: str) -> tuple[str, int]:
+    text = value.strip()
+    if not text or len(text) > 100_000:
+        raise PlaybookError("source instructions must contain between 1 and 100000 characters")
+    redactions = 0
+    for pattern in _SOURCE_REDACTIONS:
+        text, count = pattern.subn("[REDACTED]", text)
+        redactions += count
+    return text, redactions
+
+
+def _source_url(value: str | None) -> str:
+    if value is None:
+        raise PlaybookError("linked sources require a resource URL")
+    parsed = urlparse(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise PlaybookError("source URLs must be HTTPS and cannot contain credentials or queries")
+    return value

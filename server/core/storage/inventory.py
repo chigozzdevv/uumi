@@ -53,6 +53,39 @@ class FirestoreInventoryRepository:
         await self._catalog.create(FirestorePaths.service(value.organisation_id, value.id), value)
         return value
 
+    async def add_application_setup(
+        self,
+        application: Application,
+        environment: Environment,
+        service: ConsumerService,
+    ) -> tuple[Application, Environment, ConsumerService]:
+        references = (
+            self._client.document(
+                FirestorePaths.application(application.organisation_id, application.id)
+            ),
+            self._client.document(
+                FirestorePaths.environment(environment.organisation_id, environment.id)
+            ),
+            self._client.document(FirestorePaths.service(service.organisation_id, service.id)),
+        )
+
+        @async_transactional
+        async def apply(
+            transaction: AsyncTransaction,
+        ) -> tuple[Application, Environment, ConsumerService]:
+            snapshots = [await reference.get(transaction=transaction) for reference in references]
+            if any(snapshot.exists for snapshot in snapshots):
+                raise ResourceConflictError("application setup resource already exists")
+            for reference, value in zip(
+                references,
+                (application, environment, service),
+                strict=True,
+            ):
+                transaction.create(reference, encode(value))
+            return application, environment, service
+
+        return await apply(self._client.transaction(max_attempts=5))
+
     async def get_application(self, organisation_id: str, resource_id: str) -> Application:
         return await self._catalog.get(
             FirestorePaths.application(organisation_id, resource_id), Application
@@ -61,6 +94,11 @@ class FirestoreInventoryRepository:
     async def get_environment(self, organisation_id: str, resource_id: str) -> Environment:
         return await self._catalog.get(
             FirestorePaths.environment(organisation_id, resource_id), Environment
+        )
+
+    async def get_service(self, organisation_id: str, resource_id: str) -> ConsumerService:
+        return await self._catalog.get(
+            FirestorePaths.service(organisation_id, resource_id), ConsumerService
         )
 
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
@@ -97,6 +135,46 @@ class FirestoreInventoryRepository:
             changed = current.model_copy(
                 update={
                     "authorization_reference": authorization_reference,
+                    "status": status,
+                    "updated_at": updated_at,
+                    "revision": current.revision + 1,
+                }
+            )
+            transaction.set(reference, encode(changed))
+            return changed
+
+        return await apply(self._client.transaction(max_attempts=5))
+
+    async def attach_playbook(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        expected_revision: int,
+        playbook_id: str,
+        version_id: str,
+        updated_at: datetime,
+    ) -> Connection:
+        reference = self._client.document(FirestorePaths.connection(organisation_id, connection_id))
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> Connection:
+            snapshot = await reference.get(transaction=transaction)
+            if not snapshot.exists:
+                raise ResourceNotFoundError(f"connection {connection_id} was not found")
+            current = Connection.model_validate(_snapshot_data(snapshot))
+            if current.revision != expected_revision:
+                raise ResourceConflictError(
+                    f"connection expected revision {expected_revision}, found {current.revision}"
+                )
+            status = (
+                ConnectionStatus.READY
+                if current.authorization_reference is not None
+                else ConnectionStatus.SETUP_REQUIRED
+            )
+            changed = current.model_copy(
+                update={
+                    "playbook_id": playbook_id,
+                    "playbook_version_id": version_id,
                     "status": status,
                     "updated_at": updated_at,
                     "revision": current.revision + 1,
@@ -178,12 +256,18 @@ class FirestoreInventoryRepository:
         connection_ref = self._client.document(
             FirestorePaths.connection(credential.organisation_id, credential.connection_id)
         )
+        secret_connection_ref = self._client.document(
+            FirestorePaths.connection(
+                credential.organisation_id, credential.secret_store_connection_id
+            )
+        )
 
         @async_transactional
         async def apply(transaction: AsyncTransaction) -> ManagedCredential:
             credential_snapshot = await credential_ref.get(transaction=transaction)
             generation_snapshot = await generation_ref.get(transaction=transaction)
             connection_snapshot = await connection_ref.get(transaction=transaction)
+            secret_connection_snapshot = await secret_connection_ref.get(transaction=transaction)
             binding_snapshots = [
                 await reference.get(transaction=transaction) for reference in binding_refs
             ]
@@ -194,8 +278,10 @@ class FirestoreInventoryRepository:
                 raise ResourceConflictError(f"credential {credential.id} is already imported")
             if any(snapshot.exists for snapshot in binding_snapshots):
                 raise ResourceConflictError("one or more credential bindings already exist")
-            if not connection_snapshot.exists or any(
-                not snapshot.exists for snapshot in service_snapshots
+            if (
+                not connection_snapshot.exists
+                or not secret_connection_snapshot.exists
+                or any(not snapshot.exists for snapshot in service_snapshots)
             ):
                 raise ResourceNotFoundError("credential connection or consumer service is missing")
             transaction.create(credential_ref, encode(credential))

@@ -13,6 +13,7 @@ from broker import (
 )
 from broker.capability import request_digest
 from broker.server import server as mcp_server
+from broker.validate import validate_request
 from connectors import ConnectorContext, ConnectorResponse, SecretValue
 from connectors.base.errors import AmbiguousMutationError
 from connectors.google import GoogleRestClient
@@ -25,12 +26,9 @@ from contracts import (
     ConnectionInterface,
     ConnectionRole,
     ConnectionStatus,
-    ExecutionMethod,
-    PlaybookAssignment,
-    PlaybookDraft,
-    PlaybookState,
-    PlaybookStep,
-    PlaybookVersion,
+    ConsumerBinding,
+    ManagedCredential,
+    PolicyVersion,
     ProtectedAction,
     RunStatus,
     Stage,
@@ -40,8 +38,9 @@ from contracts import (
     ToolResult,
 )
 from core.audit import AuditWriter
+from core.errors import CapabilityError
 from google.oauth2.credentials import Credentials
-from testkit import make_run
+from testkit import make_policy_version, make_run
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
@@ -100,7 +99,6 @@ class Repository:
                     "expires_at": NOW + timedelta(minutes=5),
                 },
                 "fencing_token": 1,
-                "playbook_version": "version_one",
             }
         )
         self.provider = _connection(
@@ -112,47 +110,28 @@ class Repository:
             "google-secret-manager",
             SecretManagerConnector.tools,
         )
-        definition = PlaybookDraft(
-            name="Provider rotation",
+        self.credential_value = ManagedCredential(
+            id=self.run_value.credential_id,
+            organisation_id="org_one",
+            connection_id="provider_one",
+            secret_store_connection_id="sink_one",
+            secret_reference="projects/project-one/secrets/credential",
             provider="provider",
-            execution=ExecutionMethod.API,
-            allowed_tools=frozenset({"provider.createCredential"}),
-            required_connections=("provider_one", "sink_one"),
-            steps=(
-                PlaybookStep(
-                    id="create_one",
-                    stage=Stage.CREATE,
-                    tool="provider.createCredential",
-                    operation="create",
-                    objective="Create the replacement provider credential",
-                    evidence_checks=frozenset({"provider-created"}),
-                ),
-            ),
-        )
-        self.assignment_value = PlaybookAssignment(
-            id="assignment_one",
-            organisation_id="org_one",
-            credential_id=self.run_value.credential_id,
-            playbook_id="playbook_one",
-            version_id="version_one",
-            connection_ids=("provider_one", "sink_one"),
-            assigned_by="admin_one",
-            assigned_at=NOW,
-        )
-        self.version_value = PlaybookVersion(
-            id="version_one",
-            organisation_id="org_one",
-            playbook_id="playbook_one",
-            number=1,
-            definition=definition,
-            digest="a" * 64,
-            state=PlaybookState.ACTIVE,
-            dry_run_id="dryrun_one",
-            approved_by="admin_one",
-            approved_at=NOW,
-            created_by="builder_one",
+            kind="api-key",
+            display_name="Production credential",
+            policy_version=self.run_value.policy_version,
             created_at=NOW,
+            updated_at=NOW,
         )
+        policy = make_policy_version(now=NOW)
+        definition = policy.definition.model_copy(
+            update={
+                "allowed_tools": frozenset(
+                    {"provider.createCredential", "provider.revokeCredential", "verification.run"}
+                )
+            }
+        )
+        self.policy_value = policy.model_copy(update={"definition": definition})
 
     async def attempt(self, request: ToolRequest, request_hash: str) -> ToolAttempt | None:
         value = self.results.get(request.id)
@@ -245,13 +224,17 @@ class Repository:
         assert organisation_id == "org_one"
         return {"provider_one": self.provider, "sink_one": self.sink}[connection_id]
 
-    async def assignment(self, organisation_id: str, credential_id: str) -> PlaybookAssignment:
-        return self.assignment_value
+    async def credential(self, organisation_id: str, credential_id: str) -> ManagedCredential:
+        assert credential_id == self.credential_value.id
+        return self.credential_value
 
-    async def version(
-        self, organisation_id: str, playbook_id: str, version_id: str
-    ) -> PlaybookVersion:
-        return self.version_value
+    async def bindings(
+        self, organisation_id: str, credential_id: str
+    ) -> tuple[ConsumerBinding, ...]:
+        return ()
+
+    async def policy(self, organisation_id: str, version_id: str) -> PolicyVersion:
+        return self.policy_value
 
     async def approval(self, organisation_id: str, approval_id: str) -> Approval:
         raise AssertionError("automatic creation requires no approval")
@@ -672,3 +655,42 @@ def test_mcp_broker_exposes_only_capability_scoped_connector_tools() -> None:
     status = tools["provider.getCredentialStatus"].annotations
     assert revoke is not None and revoke.destructive_hint is True
     assert status is not None and status.read_only_hint is True
+
+
+def test_provider_resource_boundary_uses_connection_platform_and_credential_id() -> None:
+    repository = Repository()
+    run = repository.run_value.model_copy(update={"stage": Stage.REVOKE})
+    connection = repository.provider.model_copy(
+        update={"allowed_resources": ("provider:credentials:*",)}
+    )
+    request = ToolRequest(
+        id="request_revoke",
+        organisation_id="org_one",
+        run_id=run.id,
+        agent_id="operator_one",
+        tool="provider.revokeCredential",
+        connection_id=connection.id,
+        payload={"provider_id": "provider-key-one"},
+        fencing_token=run.fencing_token,
+    )
+
+    validate_request(
+        request,
+        run,
+        connection,
+        repository.credential_value,
+        (),
+        repository.policy_value,
+    )
+
+    with pytest.raises(CapabilityError, match="resource boundary"):
+        validate_request(
+            request,
+            run,
+            connection.model_copy(
+                update={"allowed_resources": ("provider:credentials:another-key",)}
+            ),
+            repository.credential_value,
+            (),
+            repository.policy_value,
+        )

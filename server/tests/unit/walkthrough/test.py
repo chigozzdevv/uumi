@@ -6,9 +6,11 @@ from connectors.video import VideoIntelligenceConnector
 from contracts import (
     TimedText,
     WalkthroughAnalysis,
+    WalkthroughKind,
     WalkthroughSource,
     WalkthroughStatus,
 )
+from core.errors import PlaybookError
 from core.playbook import WalkthroughService
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -123,6 +125,56 @@ async def test_walkthrough_upload_analysis_and_ready_handoff() -> None:
     assert ready.status is WalkthroughStatus.READY
     assert ready.analysis is not None
     assert ready.analysis.transcript[0].text == "Open settings"
+
+
+@pytest.mark.anyio
+async def test_text_source_is_stored_as_sanitised_evidence_with_digest_only() -> None:
+    repository = Repository()
+    service = WalkthroughService(
+        repository,
+        Uploads(),
+        Video(),
+        "walkthroughs",
+        lambda: NOW,
+    )
+
+    source, created = await service.register(
+        "org_one",
+        "playbook_one",
+        "source_text",
+        WalkthroughKind.TEXT,
+        "Open settings. password=do-not-store then click Create.",
+        "user_one",
+    )
+
+    assert created is True
+    assert source.resource.startswith("sha256:")
+    assert "do-not-store" not in source.model_dump_json()
+    assert source.analysis is not None
+    assert source.analysis.transcript[0].text == "Open settings. [REDACTED] then click Create."
+    assert source.analysis.redaction_count == 1
+
+
+@pytest.mark.anyio
+async def test_link_source_rejects_credentials_or_queries_in_its_url() -> None:
+    service = WalkthroughService(
+        Repository(),
+        Uploads(),
+        Video(),
+        "walkthroughs",
+        lambda: NOW,
+    )
+
+    with pytest.raises(PlaybookError, match="cannot contain credentials or queries"):
+        await service.register(
+            "org_one",
+            "playbook_one",
+            "source_link",
+            WalkthroughKind.LINK,
+            "Open credential settings",
+            "user_one",
+            "https://docs.example.com/rotation?token=do-not-store",
+        )
 
 
 class Google:

@@ -24,7 +24,6 @@ from contracts import (
     IngestionEvent,
     ManagedCredential,
     Playbook,
-    PlaybookAssignment,
     PlaybookDraft,
     PlaybookVersion,
     Policy,
@@ -242,37 +241,15 @@ class PlaybookRepository:
     ) -> PlaybookVersion:
         raise AssertionError("not used")
 
-    async def get_dryrun(self, organisation_id: str, playbook_id: str, dryrun_id: str) -> None:
-        raise AssertionError("not used")
-
-    async def validate_dryrun(
+    async def publish(
         self,
         organisation_id: str,
         playbook_id: str,
         version_id: str,
-        environment_id: str,
-        credential_id: str,
-    ) -> None:
-        raise AssertionError("not used")
-
-    async def activate(
-        self,
-        organisation_id: str,
-        playbook_id: str,
-        version_id: str,
-        dryrun_id: str,
         actor_id: str,
-        activated_at: datetime,
+        published_at: datetime,
     ) -> PlaybookVersion:
         raise AssertionError("not used")
-
-    async def assign(self, assignment: PlaybookAssignment) -> PlaybookAssignment:
-        raise AssertionError("not used")
-
-    async def get_assignment(
-        self, organisation_id: str, credential_id: str
-    ) -> PlaybookAssignment | None:
-        return None
 
 
 class AuditRepository:
@@ -373,13 +350,35 @@ class InventoryRepository:
     async def add_service(self, value: ConsumerService) -> ConsumerService:
         raise AssertionError("not used")
 
+    async def add_application_setup(
+        self,
+        application: Application,
+        environment: Environment,
+        service: ConsumerService,
+    ) -> tuple[Application, Environment, ConsumerService]:
+        raise AssertionError("not used")
+
     async def get_application(self, organisation_id: str, resource_id: str) -> Application:
         raise AssertionError("not used")
 
     async def get_environment(self, organisation_id: str, resource_id: str) -> Environment:
         raise AssertionError("not used")
 
+    async def get_service(self, organisation_id: str, resource_id: str) -> ConsumerService:
+        raise AssertionError("not used")
+
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
+        raise AssertionError("not used")
+
+    async def attach_playbook(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        expected_revision: int,
+        playbook_id: str,
+        version_id: str,
+        updated_at: datetime,
+    ) -> Connection:
         raise AssertionError("not used")
 
     async def update_authentication(
@@ -407,11 +406,12 @@ class InventoryRepository:
                 id="credential_one",
                 organisation_id="org_one",
                 connection_id="connection_one",
+                secret_store_connection_id="connection_secret",
+                secret_reference="projects/org-one/secrets/sendgrid",
                 provider="sendgrid",
                 kind="api-key",
                 display_name="production-password-emailer",
                 policy_version="policy_version_one",
-                playbook_version="playbook_version_one",
                 created_at=NOW,
                 updated_at=NOW,
             ),
@@ -517,6 +517,8 @@ class BrowserSetup:
             authorization_reference=f"{session.secret_container}/versions/2",
             capabilities=frozenset({"browser.execute"}),
             allowed_resources=("*.vendor.example.com",),
+            playbook_id="playbook_vendor",
+            playbook_version_id="playbook_vendor_v1",
             status=ConnectionStatus.READY,
             region="us-east1",
             created_at=NOW,
@@ -630,7 +632,7 @@ def _playbook(playbook_id: str, created_at: datetime) -> Playbook:
         id=playbook_id,
         organisation_id="org_one",
         name=f"SendGrid Mail API Key Rotation {playbook_id}",
-        provider="sendgrid",
+        platform="sendgrid",
         created_at=created_at,
         updated_at=created_at,
     )

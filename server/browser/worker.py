@@ -133,6 +133,8 @@ class ComputerUseWorker:
                 session.id,
                 step.secure_field,
                 step.checkpoint,
+                session.secret_store_connection_id,
+                session.secret_resource,
             )
             resumed = await self._sessions.complete_capture(result, authorised.revision)
             return resumed, result

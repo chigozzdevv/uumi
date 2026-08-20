@@ -672,12 +672,22 @@ async def _validate_step(
         PlaybookVersion,
     )
     matches = tuple(item for item in version.definition.steps if item.id == step.id)
-    if len(matches) != 1 or not _resolved_step(matches[0], step):
+    if len(matches) != 1 or not _resolved_step(matches[0], step, session.policy.protected_tools):
         raise CapabilityError("browser step differs from the immutable playbook")
 
 
-def _resolved_step(template: PlaybookStep, resolved: PlaybookStep) -> bool:
-    return resolved.model_copy(update={"parameters": template.parameters}) == template
+def _resolved_step(
+    template: PlaybookStep,
+    resolved: PlaybookStep,
+    protected_tools: frozenset[str],
+) -> bool:
+    expected = template.model_copy(
+        update={
+            "parameters": resolved.parameters,
+            "protected": template.tool in protected_tools,
+        }
+    )
+    return resolved == expected
 
 
 async def _validate_takeover_action(
@@ -702,7 +712,7 @@ async def _validate_takeover_action(
     protected = {
         selector
         for step in version.definition.steps
-        if step.protected
+        if step.tool in session.policy.protected_tools
         for selector in (
             *step.selectors,
             *(
@@ -813,6 +823,8 @@ async def _secure_input(
             steps[0].secure_field,
             steps[0].checkpoint,
             plaintext,
+            session.secret_store_connection_id,
+            session.secret_resource,
         )
         completed = await runtime.sessions.complete_capture(result, armed.revision)
         return completed, result

@@ -1,22 +1,16 @@
 from enum import StrEnum
+from typing import Any
 
 from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
+from contracts.plan import OperationStep
 from contracts.state import Stage
-
-
-class ExecutionMethod(StrEnum):
-    API = "provider-api"
-    COMPUTER = "computer-use"
 
 
 class PlaybookState(StrEnum):
     DRAFT = "draft"
-    VALIDATING = "validating"
-    TEST = "test-required"
-    APPROVAL = "approval-required"
-    ACTIVE = "active"
+    PUBLISHED = "published"
     SUPERSEDED = "superseded"
     REVIEW = "review-required"
 
@@ -45,8 +39,6 @@ class PageCheckpoint(Contract):
 class SecureField(Contract):
     name: Identifier
     selector: Selector
-    sink_connection_id: Identifier
-    secret_resource: str = Field(min_length=1, max_length=1024)
     provider_id_selector: Selector
 
 
@@ -56,40 +48,13 @@ class StepOutput(Contract):
     attribute: str = Field(default="text", pattern=r"^(text|value)$")
 
 
-class RecoveryAction(Contract):
-    tool: str = Field(min_length=3, max_length=128)
-    operation: str = Field(min_length=1, max_length=96)
-    parameters: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
-    protected: bool = False
-
-
-class RecoveryBranch(Contract):
-    mode: str = Field(pattern=r"^(retry|rollback|rollforward|cleanup|escalate)$")
-    actions: tuple[RecoveryAction, ...] = Field(min_length=1)
-    preserves_old_generation: bool
-
-    @model_validator(mode="after")
-    def validate_retry(self) -> "RecoveryBranch":
-        if self.mode == "retry" and any(item.protected for item in self.actions):
-            raise ValueError("retry recovery cannot introduce protected mutations")
-        return self
-
-
-class PlaybookStep(Contract):
-    id: Identifier
-    stage: Stage
-    tool: str = Field(min_length=3, max_length=128)
-    operation: str = Field(min_length=1, max_length=96)
-    objective: str = Field(min_length=1, max_length=1024)
-    parameters: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
+class PlaybookStep(OperationStep):
     selectors: tuple[Selector, ...] = ()
     checkpoint: PageCheckpoint | None = None
-    protected: bool = False
     secure_field: SecureField | None = None
     outputs: tuple[StepOutput, ...] = ()
     timeout_seconds: int = Field(default=30, ge=1, le=600)
     retry_limit: int = Field(default=0, ge=0, le=5)
-    evidence_checks: frozenset[str] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_capture(self) -> "PlaybookStep":
@@ -106,70 +71,40 @@ class PlaybookStep(Contract):
 
 class PlaybookDraft(Contract):
     name: str = Field(min_length=1, max_length=160)
-    provider: str = Field(min_length=1, max_length=64)
-    execution: ExecutionMethod
+    platform: str = Field(min_length=1, max_length=64)
     allowed_domains: tuple[str, ...] = ()
-    allowed_tools: frozenset[str] = Field(min_length=1)
-    required_connections: tuple[Identifier, ...] = Field(min_length=1)
     steps: tuple[PlaybookStep, ...] = Field(min_length=1)
-    recovery: dict[str, RecoveryBranch] = Field(default_factory=dict)
     login_url_pattern: str | None = Field(default=None, max_length=1024)
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_provider(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "platform" in value or "provider" not in value:
+            return value
+        migrated = dict(value)
+        migrated["platform"] = migrated.pop("provider")
+        migrated.pop("execution", None)
+        migrated.pop("allowed_tools", None)
+        migrated.pop("required_connections", None)
+        migrated.pop("recovery", None)
+        return migrated
+
     @model_validator(mode="after")
-    def validate_execution(self) -> "PlaybookDraft":
-        browser_steps = tuple(step for step in self.steps if step.tool.startswith("browser."))
-        if self.execution is ExecutionMethod.COMPUTER:
-            if not self.allowed_domains or not browser_steps:
-                raise ValueError("computer-use playbooks require domains and browser steps")
-            if not any(step.secure_field for step in browser_steps):
-                raise ValueError("computer-use playbooks require an explicit secure capture step")
-            if not self.login_url_pattern:
-                raise ValueError("computer-use playbooks require a login URL pattern")
-        elif browser_steps:
-            raise ValueError("browser steps require computer-use execution")
+    def validate_browser_procedure(self) -> "PlaybookDraft":
+        if not self.allowed_domains or not self.login_url_pattern:
+            raise ValueError("browser playbooks require domains and a login URL pattern")
+        if any(not step.tool.startswith("browser.") for step in self.steps):
+            raise ValueError("playbooks contain browser steps only")
+        if any(step.protected for step in self.steps):
+            raise ValueError("playbooks cannot declare approvals; policy protects operations")
+        if not any(step.stage is Stage.CREATE and step.secure_field for step in self.steps):
+            raise ValueError("browser playbooks require a secure capture step in create")
+        if not any(step.stage is Stage.REVOKE for step in self.steps):
+            raise ValueError("browser playbooks require revoke steps")
         if tuple(dict.fromkeys(step.id for step in self.steps)) != tuple(
             step.id for step in self.steps
         ):
             raise ValueError("playbook step IDs must be unique")
-        return self
-
-
-class DryRunStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    RECOVERY = "recovery-required"
-    PASSED = "passed"
-    FAILED = "failed"
-
-
-class DryRun(Contract):
-    id: Identifier
-    organisation_id: Identifier
-    playbook_id: Identifier
-    version_id: Identifier
-    run_id: Identifier
-    status: DryRunStatus
-    environment_id: Identifier
-    credential_id: Identifier
-    requested_by: Identifier
-    checks: frozenset[str] = frozenset()
-    evidence_ids: tuple[Identifier, ...] = ()
-    replay_reference: str | None = Field(default=None, max_length=1024)
-    failure: str | None = Field(default=None, max_length=1024)
-    started_at: AwareDatetime
-    completed_at: AwareDatetime | None = None
-
-    @model_validator(mode="after")
-    def validate_result(self) -> "DryRun":
-        terminal = self.status in {DryRunStatus.PASSED, DryRunStatus.FAILED}
-        if terminal != (self.completed_at is not None):
-            raise ValueError("terminal dry runs require a completion time")
-        if self.status is DryRunStatus.PASSED and not self.evidence_ids:
-            raise ValueError("a passed dry run requires evidence")
-        if self.status is DryRunStatus.FAILED and not self.failure:
-            raise ValueError("a failed dry run requires a reason")
-        if self.status is DryRunStatus.RECOVERY and not self.failure:
-            raise ValueError("a recoverable dry run requires a failure reason")
         return self
 
 
@@ -182,19 +117,18 @@ class PlaybookVersion(Contract):
     digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     state: PlaybookState
     source_ids: tuple[Identifier, ...] = ()
-    dry_run_id: Identifier | None = None
-    approved_by: Identifier | None = None
-    approved_at: AwareDatetime | None = None
+    published_by: Identifier | None = None
+    published_at: AwareDatetime | None = None
     created_by: Identifier
     created_at: AwareDatetime
 
     @model_validator(mode="after")
-    def validate_activation(self) -> "PlaybookVersion":
-        approved = self.approved_by is not None and self.approved_at is not None
-        if (self.approved_by is None) != (self.approved_at is None):
-            raise ValueError("playbook approval identity and time must be set together")
-        if self.state is PlaybookState.ACTIVE and (not approved or self.dry_run_id is None):
-            raise ValueError("active playbooks require approval and a passed dry run")
+    def validate_publication(self) -> "PlaybookVersion":
+        published = self.published_by is not None and self.published_at is not None
+        if (self.published_by is None) != (self.published_at is None):
+            raise ValueError("playbook publisher identity and time must be set together")
+        if self.state is PlaybookState.PUBLISHED and not published:
+            raise ValueError("published playbooks require publisher identity and time")
         return self
 
 
@@ -202,28 +136,9 @@ class Playbook(Contract):
     id: Identifier
     organisation_id: Identifier
     name: str = Field(min_length=1, max_length=160)
-    provider: str = Field(min_length=1, max_length=64)
+    platform: str = Field(min_length=1, max_length=64)
     latest_version: int = Field(default=0, ge=0)
     active_version_id: Identifier | None = None
     created_at: AwareDatetime
     updated_at: AwareDatetime
     revision: int = Field(default=0, ge=0)
-
-
-class PlaybookAssignment(Contract):
-    id: Identifier
-    organisation_id: Identifier
-    credential_id: Identifier
-    playbook_id: Identifier
-    version_id: Identifier
-    connection_ids: tuple[Identifier, ...] = Field(min_length=1)
-    dry_run_only: bool = False
-    environment_id: Identifier | None = None
-    assigned_by: Identifier
-    assigned_at: AwareDatetime
-
-    @model_validator(mode="after")
-    def validate_environment(self) -> "PlaybookAssignment":
-        if self.dry_run_only != (self.environment_id is not None):
-            raise ValueError("dry-run assignments require exactly one isolated environment")
-        return self

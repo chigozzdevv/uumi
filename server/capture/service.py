@@ -51,6 +51,8 @@ class SecureCapture:
         session_id: str,
         field: SecureField,
         checkpoint: PageCheckpoint,
+        sink_connection_id: str,
+        secret_resource: str,
     ) -> SecureCaptureResult:
         await self._checkpoint(checkpoint)
         locator = await self._driver.locator(field.selector)
@@ -62,7 +64,15 @@ class SecureCapture:
         if not provider_id or len(provider_id) > 256:
             raise CaptureError("declared provider identifier is empty or invalid")
         return await self._store_and_mask(
-            capture_id, organisation_id, session_id, field, raw, provider_id, locator
+            capture_id,
+            organisation_id,
+            session_id,
+            field,
+            sink_connection_id,
+            secret_resource,
+            raw,
+            provider_id,
+            locator,
         )
 
     async def transfer_supplied(
@@ -73,6 +83,8 @@ class SecureCapture:
         field: SecureField,
         checkpoint: PageCheckpoint,
         supplied: bytearray,
+        sink_connection_id: str,
+        secret_resource: str,
     ) -> SecureCaptureResult:
         await self._checkpoint(checkpoint)
         locator = await self._driver.locator(field.selector)
@@ -87,7 +99,15 @@ class SecureCapture:
         if not provider_id or len(provider_id) > 256:
             raise CaptureError("declared provider identifier is empty or invalid")
         return await self._store_and_mask(
-            capture_id, organisation_id, session_id, field, raw, provider_id, locator
+            capture_id,
+            organisation_id,
+            session_id,
+            field,
+            sink_connection_id,
+            secret_resource,
+            raw,
+            provider_id,
+            locator,
         )
 
     async def _store_and_mask(
@@ -96,6 +116,8 @@ class SecureCapture:
         organisation_id: str,
         session_id: str,
         field: SecureField,
+        sink_connection_id: str,
+        secret_resource: str,
         raw: str,
         provider_id: str,
         locator: Locator,
@@ -108,20 +130,18 @@ class SecureCapture:
             value = SecretValue(secret_bytes)
             try:
                 connection = await self._connections.get_connection(
-                    organisation_id, field.sink_connection_id
+                    organisation_id, sink_connection_id
                 )
                 if (
                     connection.platform != "google-secret-manager"
                     or ConnectionRole.SECRET_STORE not in connection.roles
                     or connection.interface is not ConnectionInterface.API
-                    or not _resource_allowed(field.secret_resource, connection.allowed_resources)
+                    or not _resource_allowed(secret_resource, connection.allowed_resources)
                 ):
                     raise CaptureError(
                         "secure capture sink is not an assigned Secret Manager connection"
                     )
-                stored = await self._secrets.add_version_for(
-                    connection, field.secret_resource, value
-                )
+                stored = await self._secrets.add_version_for(connection, secret_resource, value)
             finally:
                 value.clear()
             secret_reference = _string(stored.get("secret_reference"), "secret reference")

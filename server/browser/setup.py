@@ -171,6 +171,10 @@ class BrowserSetupService:
             or connection.authorization is not ConnectionAuthorization.BROWSER_SESSION
         ):
             raise ResourceConflictError("browser setup requires a browser connection")
+        if connection.playbook_id is None or connection.playbook_version_id is None:
+            raise ResourceConflictError(
+                "attach a published playbook before opening the secure browser"
+            )
         await self._require_secret(secret_container)
         domains = connection.allowed_resources
         if not domains or any(not is_domain_pattern(value) for value in domains):

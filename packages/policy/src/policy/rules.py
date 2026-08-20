@@ -25,7 +25,7 @@ REQUIRED_CHECKS: dict[Stage, frozenset[str]] = {
             "no-conflict",
         }
     ),
-    Stage.PLAYBOOK: frozenset(
+    Stage.PLAN: frozenset(
         {
             "plan-bound",
             "policy-approved",

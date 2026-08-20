@@ -6,6 +6,7 @@ from contracts import (
     RecoveryMode,
     RotationRun,
     RunStatus,
+    RuntimeDeployment,
     Stage,
     StageBindings,
     StageProof,
@@ -210,9 +211,21 @@ def test_gate_policy_covers_all_twelve_stages() -> None:
 
 def bindings(stage: Stage) -> StageBindings:
     if stage is Stage.PREFLIGHT:
-        return StageBindings(playbook_version="version_one", current_generation_id="generation_old")
-    if stage is Stage.PLAYBOOK:
+        return StageBindings(current_generation_id="generation_old")
+    if stage is Stage.PLAN:
         return StageBindings(plan_id="plan_one", plan_hash="a" * 64)
     if stage is Stage.CREATE:
         return StageBindings(target_generation_id="generation_new")
+    if stage is Stage.DEPLOY:
+        return StageBindings(
+            deployments=(
+                RuntimeDeployment(
+                    binding_id="binding_one",
+                    connection_id="runtime_one",
+                    service="service_one",
+                    candidate_revision="revision_new",
+                    rollback_revision="revision_old",
+                ),
+            )
+        )
     return StageBindings()

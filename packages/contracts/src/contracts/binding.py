@@ -11,6 +11,7 @@ class ConsumerBinding(Contract):
     environment_id: Identifier
     runtime_connection_id: Identifier
     runtime_resource: str = Field(min_length=1, max_length=512)
+    runtime_secret_name: str = Field(min_length=1, max_length=256)
     secret_reference: str = Field(min_length=1, max_length=1024)
     current_generation_id: Identifier
     target_generation_id: Identifier | None = None

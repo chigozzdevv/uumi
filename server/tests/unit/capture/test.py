@@ -133,6 +133,8 @@ async def test_capture_stores_masks_checks_and_only_returns_reference() -> None:
         "session_one",
         _field(),
         _checkpoint(),
+        "sink_one",
+        "projects/project-one/secrets/key",
     )
 
     assert secrets.seen == b"one-time-key"
@@ -161,6 +163,8 @@ async def test_capture_fails_closed_if_secret_remains_elsewhere_in_dom() -> None
             "session_one",
             _field(),
             _checkpoint(),
+            "sink_one",
+            "projects/project-one/secrets/key",
         )
 
     assert raised.value.secret_reference is not None
@@ -171,8 +175,6 @@ def _field() -> SecureField:
     return SecureField(
         name="api_key",
         selector=Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),
-        sink_connection_id="sink_one",
-        secret_resource="projects/project-one/secrets/key",
         provider_id_selector=Selector(kind=SelectorKind.TEST_ID, value="new-key-id"),
     )
 

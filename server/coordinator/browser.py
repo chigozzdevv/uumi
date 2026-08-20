@@ -19,7 +19,7 @@ from contracts import (
     ConnectionInterface,
     ConnectionRole,
     ConnectionStatus,
-    PlaybookAssignment,
+    ManagedCredential,
     PlaybookStep,
     PlaybookVersion,
     ProtectedAction,
@@ -55,11 +55,14 @@ class BrowserStepExecutor:
     async def execute(
         self,
         run: RotationRun,
-        assignment: PlaybookAssignment,
+        connection: Connection,
+        version: PlaybookVersion,
+        credential: ManagedCredential,
+        protected_tools: frozenset[str],
         step: PlaybookStep,
         approval: Approval | None = None,
     ) -> dict[str, Any]:
-        session = await self._session(run, assignment)
+        session = await self._session(run, connection, version, credential, protected_tools)
         if step.operation == "navigate":
             payload = {"step": step.model_dump(mode="json")}
             result = await self._post(
@@ -159,7 +162,14 @@ class BrowserStepExecutor:
         if session.worker_instance:
             await self._vms.delete(session.worker_instance)
 
-    async def _session(self, run: RotationRun, assignment: PlaybookAssignment) -> BrowserSession:
+    async def _session(
+        self,
+        run: RotationRun,
+        connection: Connection,
+        version: PlaybookVersion,
+        credential: ManagedCredential,
+        protected_tools: frozenset[str],
+    ) -> BrowserSession:
         session_id = _session_id(run.id)
         try:
             session = await self._catalog.get(
@@ -167,35 +177,28 @@ class BrowserStepExecutor:
             )
         except ResourceNotFoundError:
             session = None
+        if (
+            session is not None
+            and session.status is not BrowserStatus.TERMINATED
+            and session.policy.protected_tools != protected_tools
+        ):
+            raise RuntimeError("browser session policy differs from the pinned rotation policy")
         if session is None or session.status is BrowserStatus.TERMINATED:
-            version = await self._catalog.get(
-                FirestorePaths.playbook_version(
-                    run.organisation_id, assignment.playbook_id, assignment.version_id
-                ),
-                PlaybookVersion,
-            )
             now = datetime.now(UTC)
-            browser_connections = []
-            for connection_id in assignment.connection_ids:
-                connection = await self._catalog.get(
-                    FirestorePaths.connection(run.organisation_id, connection_id),
-                    Connection,
-                )
-                if (
-                    connection.interface is ConnectionInterface.BROWSER
-                    and ConnectionRole.PROVIDER in connection.roles
-                    and connection.authorization is ConnectionAuthorization.BROWSER_SESSION
-                ):
-                    browser_connections.append(connection)
-            if len(browser_connections) != 1:
-                raise RuntimeError("browser run requires exactly one browser connection") from None
-            browser_connection = browser_connections[0]
             if (
-                browser_connection.status is not ConnectionStatus.READY
-                or browser_connection.authorization_reference is None
+                connection.interface is not ConnectionInterface.BROWSER
+                or ConnectionRole.PROVIDER not in connection.roles
+                or connection.authorization is not ConnectionAuthorization.BROWSER_SESSION
+                or connection.playbook_id != version.playbook_id
+                or connection.playbook_version_id != version.id
+            ):
+                raise RuntimeError("browser run connection and published playbook differ")
+            if (
+                connection.status is not ConnectionStatus.READY
+                or connection.authorization_reference is None
                 or (
-                    browser_connection.authorization_expires_at is not None
-                    and browser_connection.authorization_expires_at <= now
+                    connection.authorization_expires_at is not None
+                    and connection.authorization_expires_at <= now
                 )
             ):
                 raise BrowserPauseError(
@@ -203,15 +206,13 @@ class BrowserStepExecutor:
                     {
                         "authentication_required": True,
                         "session_id": session_id,
-                        "connection_id": browser_connection.id,
+                        "connection_id": connection.id,
                     },
                 )
             policy = BrowserPolicy(
                 allowed_domains=version.definition.allowed_domains,
                 allowed_actions=frozenset(BrowserActionKind),
-                protected_operations=frozenset(
-                    step.operation for step in version.definition.steps if step.protected
-                ),
+                protected_tools=protected_tools,
                 login_url_pattern=version.definition.login_url_pattern,
             )
             if session is None:
@@ -220,9 +221,11 @@ class BrowserStepExecutor:
                         id=session_id,
                         organisation_id=run.organisation_id,
                         run_id=run.id,
-                        playbook_id=assignment.playbook_id,
-                        playbook_version=assignment.version_id,
-                        provider_connection_id=browser_connection.id,
+                        playbook_id=version.playbook_id,
+                        playbook_version=version.id,
+                        provider_connection_id=connection.id,
+                        secret_store_connection_id=credential.secret_store_connection_id,
+                        secret_resource=credential.secret_reference,
                         status=BrowserStatus.PROVISIONING,
                         policy=policy,
                         fencing_token=run.fencing_token,
@@ -236,7 +239,11 @@ class BrowserStepExecutor:
                     session.organisation_id,
                     session.id,
                     session.revision,
-                    browser_connection.id,
+                    connection.id,
+                    version.playbook_id,
+                    version.id,
+                    credential.secret_store_connection_id,
+                    credential.secret_reference,
                     policy,
                     run.fencing_token,
                     now + timedelta(hours=2),

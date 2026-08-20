@@ -3,17 +3,19 @@ from google.adk.agents import Agent
 from google.adk.apps import App
 
 from agents.shared.app import managed_app
-from agents.shared.tools import analyse_walkthrough, build_playbook, generate_dry_run
+from agents.shared.tools import analyse_walkthrough, build_playbook, validate_playbook
 
 root_agent = Agent(
     name="playbook_builder_agent",
     model="gemini-3.7-flash",
-    description="Builds typed provider playbooks from sanitised walkthrough evidence.",
-    instruction="""Analyse only sanitised walkthrough evidence. Use semantic selectors and exact
-page checkpoints. Include complete lifecycle, evidence checks, recovery, protected creation and
-revocation, and explicit secure capture for computer-use. Validate every candidate with the
-build_playbook tool. Never place secrets in a playbook or response.""",
-    tools=[analyse_walkthrough, build_playbook, generate_dry_run],
+    description="Builds versioned browser procedures from sanitised source evidence.",
+    instruction="""Analyse only sanitised source evidence. Produce ordered browser actions for
+credential creation and revocation with deterministic selectors, exact page checkpoints, and
+explicit Secure Capture for generated values. Do not add triggers, approvals, runtime deployment,
+verification, rollout, observation, or recovery; those belong to policy and orchestration. Use
+build_playbook to canonicalise the candidate and validate_playbook before returning it. Never put
+secret values in a playbook or response.""",
+    tools=[analyse_walkthrough, build_playbook, validate_playbook],
     output_schema=PlaybookDraft,
     output_key="playbook_draft",
     mode="task",
@@ -21,4 +23,4 @@ build_playbook tool. Never place secrets in a playbook or response.""",
     disallow_transfer_to_peers=True,
 )
 app = App(name="firekey_playbook", root_agent=root_agent)
-agent_app = managed_app(app, {"build_playbook", "analyse_walkthrough", "generate_dry_run"})
+agent_app = managed_app(app, {"build_playbook", "analyse_walkthrough", "validate_playbook"})

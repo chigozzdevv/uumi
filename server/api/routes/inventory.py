@@ -36,6 +36,16 @@ class InventoryGraph(Contract):
     bindings: tuple[ConsumerBinding, ...]
 
 
+class ApplicationSetupRequest(Contract):
+    application: Application
+    environment: Environment
+    service: ConsumerService
+
+
+class ApplicationSetupResponse(ApplicationSetupRequest):
+    pass
+
+
 class BeginSetupRequest(Contract):
     secret_container: str = Field(
         pattern=r"^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+$", max_length=1024
@@ -89,6 +99,31 @@ async def add_application(
     await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
     _organisation(body.organisation_id, organisation_id)
     return await required(api.inventory, "inventory").add_application(body)
+
+
+@router.post(
+    "/application-setups",
+    response_model=ApplicationSetupResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_application_setup(
+    organisation_id: Identifier,
+    body: ApplicationSetupRequest,
+    identity: Identity,
+    request: Request,
+) -> ApplicationSetupResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    for value in (body.application, body.environment, body.service):
+        _organisation(value.organisation_id, organisation_id)
+    application, environment, service = await required(
+        api.inventory, "inventory"
+    ).add_application_setup(body.application, body.environment, body.service)
+    return ApplicationSetupResponse(
+        application=application,
+        environment=environment,
+        service=service,
+    )
 
 
 @router.post("/environments", response_model=Environment, status_code=status.HTTP_201_CREATED)

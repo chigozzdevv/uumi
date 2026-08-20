@@ -32,16 +32,13 @@ from contracts import (
     ConnectionRole,
     ConnectionStatus,
     ConnectionWaiter,
-    ExecutionMethod,
+    ManagedCredential,
     NotificationKind,
     PageCheckpoint,
-    PlaybookAssignment,
     PlaybookDraft,
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
-    RecoveryAction,
-    RecoveryBranch,
     ReplayCheckpoint,
     RotationRun,
     RunStatus,
@@ -351,7 +348,13 @@ async def test_takeover_blocks_an_alternate_selector_for_a_protected_element(
 
     monkeypatch.setattr(workerapp, "FirestoreCatalog", lambda firestore: VersionCatalog())
     session = _session().model_copy(
-        update={"status": BrowserStatus.TAKEOVER, "takeover_subject": "user_one"}
+        update={
+            "status": BrowserStatus.TAKEOVER,
+            "takeover_subject": "user_one",
+            "policy": _session().policy.model_copy(
+                update={"protected_tools": frozenset({"browser.click"})}
+            ),
+        }
     )
     action = BrowserAction(
         id="action_one",
@@ -455,6 +458,8 @@ async def test_auth_broker_accepts_only_allowlisted_playwright_state() -> None:
         authorization_reference="projects/project/secrets/session/versions/1",
         capabilities=frozenset({"browser.authenticate"}),
         allowed_resources=("console.vendor.example.com",),
+        playbook_id="playbook_one",
+        playbook_version_id="version_one",
         status=ConnectionStatus.READY,
         region="us-central1",
         created_at=NOW,
@@ -480,6 +485,8 @@ async def test_auth_broker_rejects_cross_domain_cookie() -> None:
         authorization_reference="projects/project/secrets/session/versions/1",
         capabilities=frozenset({"browser.authenticate"}),
         allowed_resources=("console.vendor.example.com",),
+        playbook_id="playbook_one",
+        playbook_version_id="version_one",
         status=ConnectionStatus.READY,
         region="us-central1",
         created_at=NOW,
@@ -523,6 +530,8 @@ def _session() -> BrowserSession:
         playbook_id="playbook_one",
         playbook_version="version_one",
         provider_connection_id="provider_one",
+        secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
         status=BrowserStatus.PROVISIONING,
         policy=BrowserPolicy(
             allowed_domains=("*.vendor.example.com",),
@@ -762,6 +771,8 @@ def _browser_connection() -> Connection:
         authorization=ConnectionAuthorization.BROWSER_SESSION,
         capabilities=frozenset({"browser.execute"}),
         allowed_resources=("*.vendor.example.com",),
+        playbook_id="playbook_one",
+        playbook_version_id="version_one",
         status=ConnectionStatus.DISABLED,
         region="us-east1",
         created_at=NOW,
@@ -1701,24 +1712,6 @@ def test_blocked_redirect_is_authentication_required() -> None:
         driver._check_blocked_egress()
 
 
-def test_ready_browser_connections_are_required_before_resume() -> None:
-    from core.playbook import require_ready_browser_connections
-
-    waiting = _browser_connection()
-    with pytest.raises(ResourceConflictError, match="still needs login"):
-        require_ready_browser_connections((waiting,))
-    ready = waiting.model_copy(
-        update={
-            "status": ConnectionStatus.READY,
-            "authorization_reference": "projects/p/secrets/s/versions/1",
-        }
-    )
-    require_ready_browser_connections((ready,))
-    expired = ready.model_copy(update={"authorization_expires_at": NOW})
-    with pytest.raises(ResourceConflictError, match="still needs login"):
-        require_ready_browser_connections((expired,))
-
-
 @pytest.mark.anyio
 async def test_setup_begin_rejects_a_second_active_session() -> None:
     catalog = SetupCatalog()
@@ -1771,6 +1764,10 @@ async def test_terminated_browser_can_be_reprovisioned() -> None:
         session.id,
         session.revision,
         "connection_browser",
+        "playbook_one",
+        "version_one",
+        "secret_one",
+        "projects/project-one/secrets/key",
         session.policy,
         4,
         NOW + timedelta(hours=2),
@@ -1793,15 +1790,18 @@ async def test_executor_binds_the_browser_connection() -> None:
     )
     version = _computer_version()
     run = make_run(NOW).model_copy(update={"fencing_token": 3})
-    assignment = PlaybookAssignment(
-        id="assignment_one",
+    credential = ManagedCredential(
+        id="cred_one",
         organisation_id="org_one",
-        credential_id="cred_one",
-        playbook_id="playbook_one",
-        version_id="version_one",
-        connection_ids=("connection_browser",),
-        assigned_by="admin_one",
-        assigned_at=NOW,
+        connection_id="connection_browser",
+        secret_store_connection_id="secret_one",
+        secret_reference="projects/project-one/secrets/key",
+        provider="internal-vendor",
+        kind="api-key",
+        display_name="Vendor production key",
+        policy_version="policy_one",
+        created_at=NOW,
+        updated_at=NOW,
     )
     catalog = SessionCatalog(version, {"connection_browser": connection})
     vms = SetupVms()
@@ -1818,21 +1818,18 @@ async def test_executor_binds_the_browser_connection() -> None:
         ),
     )
 
-    session = await executor._session(run, assignment)
+    session = await executor._session(
+        run,
+        connection,
+        version,
+        credential,
+        frozenset({"browser.secure-capture", "browser.click"}),
+    )
 
     assert session.provider_connection_id == "connection_browser"
     assert session.policy.login_url_pattern == "https://*.vendor.example.com/login*"
+    assert session.policy.protected_tools == frozenset({"browser.secure-capture", "browser.click"})
     assert vms.created[0]["session_id"] == session.id
-
-
-def test_computer_use_preflight_requires_a_browser_connection() -> None:
-    from coordinator.service import required_connection_roles
-
-    expected = frozenset(
-        {ConnectionRole.PROVIDER, ConnectionRole.SECRET_STORE, ConnectionRole.RUNTIME}
-    )
-    assert required_connection_roles(ExecutionMethod.COMPUTER) == expected
-    assert required_connection_roles(ExecutionMethod.API) == expected
 
 
 class SessionCatalog:
@@ -1861,36 +1858,23 @@ class SessionCatalog:
 def _computer_version() -> PlaybookVersion:
     from policy import digest
 
-    stages = (
-        Stage.CREATE,
-        Stage.STORE,
-        Stage.DEPLOY,
-        Stage.VERIFY,
-        Stage.ROLLOUT,
-        Stage.OBSERVE,
-        Stage.REVOKE,
-    )
+    stages = (Stage.CREATE, Stage.REVOKE)
     steps = tuple(
         PlaybookStep(
             id=f"step_{stage.value}",
             stage=stage,
-            tool="browser.secure-capture" if stage is Stage.CREATE else f"test.{stage.value}",
+            tool="browser.secure-capture" if stage is Stage.CREATE else "browser.click",
             operation=stage.value,
             objective=f"Execute the {stage.value} lifecycle stage",
             selectors=(
                 (Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),)
                 if stage is Stage.CREATE
-                else ()
+                else (Selector(kind=SelectorKind.TEST_ID, value="revoke-key"),)
             ),
-            checkpoint=PageCheckpoint(url_pattern="https://app.vendor.example.com/keys")
-            if stage is Stage.CREATE
-            else None,
-            protected=stage in {Stage.CREATE, Stage.REVOKE},
+            checkpoint=PageCheckpoint(url_pattern="https://app.vendor.example.com/keys"),
             secure_field=SecureField(
                 name="api_key",
                 selector=Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),
-                sink_connection_id="sink_one",
-                secret_resource="projects/project-one/secrets/key",
                 provider_id_selector=Selector(kind=SelectorKind.TEST_ID, value="new-key-id"),
             )
             if stage is Stage.CREATE
@@ -1901,26 +1885,9 @@ def _computer_version() -> PlaybookVersion:
     )
     definition = PlaybookDraft(
         name="Vendor rotation",
-        provider="vendor",
-        execution=ExecutionMethod.COMPUTER,
+        platform="internal-vendor",
         allowed_domains=("*.vendor.example.com",),
-        allowed_tools=frozenset(step.tool for step in steps),
-        required_connections=("connection_browser", "secret_one", "runtime_one"),
         steps=steps,
-        recovery={
-            stage.value: RecoveryBranch(
-                mode="rollforward" if stage is Stage.REVOKE else "rollback",
-                actions=(
-                    RecoveryAction(
-                        tool="test.recover",
-                        operation="recover",
-                        parameters={"connection_id": "runtime_one"},
-                    ),
-                ),
-                preserves_old_generation=stage is not Stage.REVOKE,
-            )
-            for stage in stages
-        },
         login_url_pattern="https://*.vendor.example.com/login*",
     )
     return PlaybookVersion(
@@ -1930,10 +1897,9 @@ def _computer_version() -> PlaybookVersion:
         number=1,
         definition=definition,
         digest=digest(definition),
-        state=PlaybookState.ACTIVE,
-        dry_run_id="dryrun_one",
-        approved_by="admin_one",
-        approved_at=NOW,
+        state=PlaybookState.PUBLISHED,
+        published_by="admin_one",
+        published_at=NOW,
         created_by="author_one",
         created_at=NOW,
     )

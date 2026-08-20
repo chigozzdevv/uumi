@@ -1,4 +1,4 @@
-from contracts import Contract, Identifier, WalkthroughSource
+from contracts import Contract, Identifier, WalkthroughKind, WalkthroughSource
 from core.auth import Permission
 from fastapi import APIRouter, Request, Response, status
 from pydantic import Field
@@ -21,6 +21,38 @@ class BeginWalkthroughRequest(Contract):
 class BeginWalkthroughResponse(Contract):
     source: WalkthroughSource
     upload_url: str = Field(pattern=r"^https://")
+
+
+class RegisterSourceRequest(Contract):
+    source_id: Identifier
+    kind: WalkthroughKind
+    content: str = Field(min_length=1, max_length=100_000)
+    resource_url: str | None = Field(default=None, max_length=2048)
+
+
+@router.post("/references", response_model=WalkthroughSource, status_code=status.HTTP_201_CREATED)
+async def register(
+    organisation_id: Identifier,
+    playbook_id: Identifier,
+    body: RegisterSourceRequest,
+    identity: Identity,
+    request: Request,
+    response: Response,
+) -> WalkthroughSource:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    source, created = await required(api.walkthroughs, "walkthroughs").register(
+        organisation_id,
+        playbook_id,
+        body.source_id,
+        body.kind,
+        body.content,
+        identity.actor_id,
+        body.resource_url,
+    )
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return source
 
 
 @router.post("", response_model=BeginWalkthroughResponse, status_code=status.HTTP_201_CREATED)

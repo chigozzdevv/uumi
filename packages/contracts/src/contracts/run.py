@@ -2,6 +2,7 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
 from contracts.evidence import StageProof
+from contracts.plan import RuntimeDeployment
 from contracts.recovery import RecoveryMode
 from contracts.state import RunStatus, Stage
 
@@ -50,17 +51,16 @@ class RotationRun(Contract):
     credential_id: Identifier
     trigger: Trigger
     policy_version: Identifier
-    dry_run_id: Identifier | None = None
-    dry_run_playbook_id: Identifier | None = None
     stage: Stage = Stage.TRIGGER
     status: RunStatus = RunStatus.PENDING
     lease: Lease | None = None
     fencing_token: int = Field(default=0, ge=0)
-    playbook_version: Identifier | None = None
+    browser_playbook_version: Identifier | None = None
     plan_id: Identifier | None = None
     plan_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     current_generation_id: Identifier | None = None
     target_generation_id: Identifier | None = None
+    deployments: tuple[RuntimeDeployment, ...] = ()
     failure: Failure | None = None
     recovery_id: Identifier | None = None
     recovery_stage: Stage | None = None
@@ -73,8 +73,6 @@ class RotationRun(Contract):
 
     @model_validator(mode="after")
     def validate_terminal_state(self) -> "RotationRun":
-        if (self.dry_run_id is None) != (self.dry_run_playbook_id is None):
-            raise ValueError("dry-run identity and playbook binding must be set together")
         if self.status is RunStatus.COMPLETED and self.stage is not Stage.COMPLETE:
             raise ValueError("a completed run must be in the complete stage")
         if self.lease is not None and self.lease.fencing_token != self.fencing_token:

@@ -7,6 +7,8 @@ class ManagedCredential(Contract):
     id: Identifier
     organisation_id: Identifier
     connection_id: Identifier
+    secret_store_connection_id: Identifier
+    secret_reference: str = Field(min_length=1, max_length=1024)
     provider: str = Field(min_length=1, max_length=64)
     kind: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=160)
@@ -15,7 +17,6 @@ class ManagedCredential(Contract):
     consumer_ids: tuple[Identifier, ...] = ()
     active_generation_id: Identifier | None = None
     policy_version: Identifier
-    playbook_version: Identifier
     expires_at: AwareDatetime | None = None
     rotation_due_at: AwareDatetime | None = None
     last_observed_at: AwareDatetime | None = None
@@ -26,6 +27,8 @@ class ManagedCredential(Contract):
 
     @model_validator(mode="after")
     def validate_rotation_due(self) -> "ManagedCredential":
+        if len(set(self.consumer_ids)) != len(self.consumer_ids):
+            raise ValueError("credential consumer IDs must be unique")
         if self.rotation_due_at is not None and self.expires_at is None:
             raise ValueError("a credential rotation due time requires an expiry")
         if (

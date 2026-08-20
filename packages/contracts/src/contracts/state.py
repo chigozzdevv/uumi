@@ -4,7 +4,7 @@ from enum import StrEnum
 class Stage(StrEnum):
     TRIGGER = "trigger"
     PREFLIGHT = "preflight"
-    PLAYBOOK = "playbook"
+    PLAN = "plan"
     CREATE = "create"
     STORE = "store"
     DEPLOY = "deploy"
@@ -14,6 +14,12 @@ class Stage(StrEnum):
     APPROVAL = "approval"
     REVOKE = "revoke"
     COMPLETE = "complete"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "Stage | None":
+        if value == "playbook":
+            return cls.PLAN
+        return None
 
 
 STAGES: tuple[Stage, ...] = tuple(Stage)

@@ -4,6 +4,8 @@ from contracts import (
     CleanupRunCommand,
     CompleteRecoveryCommand,
     CompleteStageCommand,
+    ConnectionInterface,
+    ConnectionStatus,
     Contract,
     CreateRunCommand,
     FailRunCommand,
@@ -24,7 +26,7 @@ from contracts import (
     Trigger,
 )
 from core.auth import Permission
-from core.playbook import require_ready_browser_connections
+from core.errors import ResourceConflictError
 from core.storage import MutationResult
 from fastapi import APIRouter, Query, Request, Response, status
 from pydantic import AwareDatetime, Field
@@ -406,15 +408,15 @@ async def complete_recovery(
 
 
 async def _require_ready_browser_session(api: ApiServices, run: RotationRun) -> None:
-    if api.playbooks is None or api.inventory is None:
+    if api.inventory is None:
         return
-    assignment = await api.playbooks.get_assignment(run.organisation_id, run.credential_id)
-    if assignment is None:
+    credentials, _, _ = await api.inventory.graph(run.organisation_id)
+    credential = next((item for item in credentials if item.id == run.credential_id), None)
+    if credential is None:
         return
-    connections = tuple(
-        [
-            await api.inventory.get_connection(run.organisation_id, item)
-            for item in assignment.connection_ids
-        ]
-    )
-    require_ready_browser_connections(connections)
+    connection = await api.inventory.get_connection(run.organisation_id, credential.connection_id)
+    if connection.interface is ConnectionInterface.BROWSER and (
+        connection.status is not ConnectionStatus.READY
+        or connection.authorization_reference is None
+    ):
+        raise ResourceConflictError("connection still needs login")

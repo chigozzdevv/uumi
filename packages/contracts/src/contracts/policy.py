@@ -4,7 +4,7 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
 from contracts.incident import Confidence
-from contracts.recovery import RecoveryMode
+from contracts.recovery import RecoveryBranch, RecoveryMode
 from contracts.state import Stage
 
 
@@ -29,6 +29,8 @@ class PolicyDefinition(Contract):
     automatic_triggers: frozenset[str] = frozenset()
     emergency_triggers: frozenset[str] = frozenset()
     minimum_automatic_confidence: Confidence = Confidence.VERIFIED
+    probe_versions: dict[Stage, tuple[Identifier, ...]] = Field(default_factory=dict)
+    recovery: dict[Stage, RecoveryBranch] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_coverage(self) -> "PolicyDefinition":

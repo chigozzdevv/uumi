@@ -13,13 +13,32 @@ class RotationStrategy(StrEnum):
     MULTI = "multi-consumer"
 
 
+class OperationStep(Contract):
+    id: Identifier
+    stage: Stage
+    tool: str = Field(min_length=3, max_length=128)
+    operation: str = Field(min_length=1, max_length=96)
+    objective: str = Field(min_length=1, max_length=1024)
+    parameters: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
+    protected: bool = False
+    evidence_checks: frozenset[str] = Field(min_length=1)
+
+
+class RuntimeDeployment(Contract):
+    binding_id: Identifier
+    connection_id: Identifier
+    service: str = Field(min_length=1, max_length=512)
+    candidate_revision: str = Field(min_length=1, max_length=512)
+    rollback_revision: str = Field(min_length=1, max_length=512)
+
+
 class RotationPlan(Contract):
     id: Identifier
     organisation_id: Identifier
     run_id: Identifier
     credential_id: Identifier
     policy_version: Identifier
-    playbook_version: Identifier
+    browser_playbook_version: Identifier | None = None
     strategy: RotationStrategy
     target_scopes: frozenset[str]
     consumer_ids: tuple[Identifier, ...] = Field(min_length=1)

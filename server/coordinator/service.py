@@ -2,6 +2,7 @@ import contextlib
 import hashlib
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -22,15 +23,11 @@ from contracts import (
     ConnectionWaiter,
     ConsumerBinding,
     CredentialGeneration,
-    DryRun,
-    DryRunStatus,
-    Environment,
-    ExecutionMethod,
     GenerationState,
     IncidentStatus,
     ManagedCredential,
     NotificationKind,
-    PlaybookAssignment,
+    OperationStep,
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
@@ -48,6 +45,7 @@ from contracts import (
     RotationRun,
     RotationStrategy,
     RunStatus,
+    RuntimeDeployment,
     Severity,
     Stage,
     StageBindings,
@@ -78,6 +76,21 @@ class StageExecutionError(ValueError):
     def __init__(self, message: str, retryable: bool = False) -> None:
         super().__init__(message)
         self.retryable = retryable
+
+
+@dataclass(frozen=True, slots=True)
+class RotationContext:
+    credential: ManagedCredential
+    provider: Connection
+    secret_store: Connection
+    bindings: tuple[ConsumerBinding, ...]
+    runtimes: dict[str, Connection]
+    browser_playbook: PlaybookVersion | None
+
+    @property
+    def connections(self) -> tuple[Connection, ...]:
+        values = [self.provider, self.secret_store, *self.runtimes.values()]
+        return tuple({item.id: item for item in values}.values())
 
 
 class StageCoordinator:
@@ -371,7 +384,7 @@ class StageCoordinator:
         handlers = {
             Stage.TRIGGER: self._trigger,
             Stage.PREFLIGHT: self._preflight,
-            Stage.PLAYBOOK: self._playbook,
+            Stage.PLAN: self._plan,
             Stage.CREATE: self._create,
             Stage.STORE: self._store,
             Stage.DEPLOY: self._deploy,
@@ -407,76 +420,37 @@ class StageCoordinator:
     async def _preflight(
         self, run: RotationRun
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
-        credential = await self._credential(run)
+        context = await self._rotation_context(run)
+        credential = context.credential
         if (
             credential.active_generation_id is None
             or not credential.scopes
             or not credential.consumer_ids
         ):
             raise ValueError("credential inventory is incomplete")
-        assignment, version = await self._playbook_context(run, credential)
-        if run.dry_run_id is not None:
-            dryrun = await self._catalog.get(
-                FirestorePaths.dryrun(
-                    run.organisation_id,
-                    _required(run.dry_run_playbook_id, "dry-run playbook"),
-                    run.dry_run_id,
-                ),
-                DryRun,
-            )
-            environment = await self._catalog.get(
-                FirestorePaths.environment(run.organisation_id, dryrun.environment_id),
-                Environment,
-            )
-            if (
-                dryrun.status is not DryRunStatus.RUNNING
-                or environment.production
-                or version.state is not PlaybookState.TEST
-                or not assignment.dry_run_only
-                or assignment.environment_id != environment.id
-                or dryrun.version_id != version.id
-                or dryrun.credential_id != credential.id
-            ):
-                raise ValueError("dry-run isolation or immutable playbook binding is invalid")
-        elif version.state is not PlaybookState.ACTIVE or assignment.dry_run_only:
-            raise ValueError("production rotation requires an active production assignment")
-        elif credential.playbook_version != version.id:
-            raise ValueError("credential inventory and production playbook assignment differ")
-        connections = [
-            await self._catalog.get(
-                FirestorePaths.connection(run.organisation_id, item), Connection
-            )
-            for item in assignment.connection_ids
-        ]
         now = self._clock()
         if any(
             item.status is not ConnectionStatus.READY
             or (item.authorization_expires_at is not None and item.authorization_expires_at <= now)
-            for item in connections
+            for item in context.connections
         ):
-            raise ValueError("one or more playbook connections are not ready")
-        roles = frozenset(role for item in connections for role in item.roles)
-        required = required_connection_roles(version.definition.execution)
+            raise ValueError("one or more credential connections are not ready")
+        roles = frozenset(role for item in context.connections for role in item.roles)
+        required = required_connection_roles()
         if not required.issubset(roles):
             names = ", ".join(sorted(item.value for item in required))
             raise ValueError(f"{names} connections are required")
-        provider_connections = tuple(
-            item for item in connections if ConnectionRole.PROVIDER in item.roles
-        )
-        if version.definition.execution is ExecutionMethod.COMPUTER:
+        if context.browser_playbook is not None:
             if (
-                len(provider_connections) != 1
-                or provider_connections[0].interface is not ConnectionInterface.BROWSER
+                context.provider.interface is not ConnectionInterface.BROWSER
+                or context.browser_playbook.state is not PlaybookState.PUBLISHED
             ):
-                raise ValueError("computer execution requires exactly one browser provider")
-        elif not any(
-            item.interface is ConnectionInterface.API for item in provider_connections
-        ) or any(item.interface is ConnectionInterface.BROWSER for item in connections):
-            raise ValueError("API execution requires an API provider connection")
-        bindings = await self._bindings(run, credential)
-        if {item.service_id for item in bindings} != set(credential.consumer_ids):
+                raise ValueError("browser execution requires the connection's published playbook")
+        elif context.provider.interface is not ConnectionInterface.API:
+            raise ValueError("provider execution requires an API or browser connection")
+        if {item.service_id for item in context.bindings} != set(credential.consumer_ids):
             raise ValueError("consumer bindings do not cover credential inventory")
-        await self._require_probes(run, version)
+        await self._require_probes(run)
         lock = await self._catalog.client.document(
             FirestorePaths.lock(run.organisation_id, credential.id)
         ).get()
@@ -499,34 +473,43 @@ class StageCoordinator:
             raise ValueError("inventory agent found unresolved consumer mappings")
         output = {
             "credential_id": credential.id,
-            "playbook_version": version.id,
-            "connections": [item.id for item in connections],
-            "bindings": [item.id for item in bindings],
+            "browser_playbook_version": (
+                context.browser_playbook.id if context.browser_playbook is not None else None
+            ),
+            "connections": [item.id for item in context.connections],
+            "bindings": [item.id for item in context.bindings],
             "agent": agent.output,
         }
         return (
             self._checks(run, Stage.PREFLIGHT),
             agent.evidence_ids,
             StageBindings(
-                playbook_version=version.id,
+                browser_playbook_version=(
+                    context.browser_playbook.id if context.browser_playbook is not None else None
+                ),
                 current_generation_id=credential.active_generation_id,
             ),
             output,
         )
 
-    async def _playbook(
+    async def _plan(
         self, run: RotationRun
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
-        credential = await self._credential(run)
-        _, version = await self._playbook_context(run, credential)
+        context = await self._rotation_context(run)
+        credential = context.credential
         task = AgentTask(
             id=_id("task", run.id, "plan"),
             organisation_id=run.organisation_id,
             run_id=run.id,
             agent=AgentKind.PLANNER,
             skill="plan_rotation",
-            objective="Select a complete rotation strategy bound to the assigned playbook.",
-            context={"credential_id": credential.id, "playbook_version": version.id},
+            objective="Select a rotation strategy from policy and confirmed inventory.",
+            context={
+                "credential_id": credential.id,
+                "browser_playbook_version": (
+                    context.browser_playbook.id if context.browser_playbook is not None else None
+                ),
+            },
             requested_at=self._clock(),
         )
         agent = await self._agents.execute(task)
@@ -545,17 +528,21 @@ class StageCoordinator:
             raise ValueError("immediate rotation is invalid for multiple consumers")
         recovery_ids: dict[Stage, str] = {}
         recoveries: list[RecoveryPlan] = []
-        for stage_name, branch in version.definition.recovery.items():
-            try:
-                failed_stage = Stage(stage_name)
-            except ValueError as error:
-                raise ValueError(f"playbook recovery stage {stage_name} is invalid") from error
+        policy_version, _ = await self._policy(run)
+        if not policy_version.definition.recovery:
+            raise ValueError("rotation policy has no recovery branches")
+        plan_key = (
+            context.browser_playbook.id
+            if context.browser_playbook is not None
+            else context.provider.id
+        )
+        for failed_stage, branch in policy_version.definition.recovery.items():
             recovery = RecoveryPlan(
-                id=_id("recovery", run.id, version.id, failed_stage.value),
+                id=_id("recovery", run.id, plan_key, failed_stage.value),
                 organisation_id=run.organisation_id,
                 run_id=run.id,
                 failed_stage=failed_stage,
-                mode=RecoveryMode(branch.mode),
+                mode=branch.mode,
                 steps=branch.actions,
                 preserves_old_generation=branch.preserves_old_generation,
                 requires_approval=any(item.protected for item in branch.actions),
@@ -563,19 +550,20 @@ class StageCoordinator:
             recovery_ids[failed_stage] = recovery.id
             recoveries.append(recovery)
         plan = RotationPlan(
-            id=_id("plan", run.id, version.id),
+            id=_id("plan", run.id, plan_key),
             organisation_id=run.organisation_id,
             run_id=run.id,
             credential_id=credential.id,
             policy_version=run.policy_version,
-            playbook_version=version.id,
+            browser_playbook_version=(
+                context.browser_playbook.id if context.browser_playbook is not None else None
+            ),
             strategy=strategy,
             target_scopes=credential.scopes,
             consumer_ids=credential.consumer_ids,
             observation_seconds=_integer(agent.output.get("observation_seconds"), 300),
             recovery_ids=recovery_ids,
         )
-        policy_version, _ = await self._policy(run)
         if plan.observation_seconds > policy_version.definition.maximum_observation_seconds:
             raise ValueError("planned observation exceeds the bound policy maximum")
         if policy_version.definition.preserve_old_generation and any(
@@ -583,7 +571,7 @@ class StageCoordinator:
             for item in recoveries
             if item.failed_stage is not Stage.REVOKE
         ):
-            raise ValueError("playbook recovery violates old-generation preservation policy")
+            raise ValueError("recovery plan violates old-generation preservation policy")
         for recovery in recoveries:
             await self._create_once(
                 FirestorePaths.recovery(run.organisation_id, recovery.id), recovery
@@ -591,7 +579,7 @@ class StageCoordinator:
         await self._create_once(FirestorePaths.plan(run.organisation_id, plan.id), plan)
         checksum = digest(plan)
         return (
-            self._checks(run, Stage.PLAYBOOK),
+            self._checks(run, Stage.PLAN),
             agent.evidence_ids,
             StageBindings(plan_id=plan.id, plan_hash=checksum),
             {"plan": plan.model_dump(mode="json"), "plan_hash": checksum},
@@ -600,9 +588,30 @@ class StageCoordinator:
     async def _create(
         self, run: RotationRun
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
-        credential = await self._credential(run)
-        assignment, version = await self._playbook_context(run, credential)
-        outputs, evidence = await self._execute_steps(run, assignment, version, Stage.CREATE)
+        context = await self._rotation_context(run)
+        credential = context.credential
+        if context.browser_playbook is not None:
+            outputs, evidence = await self._execute_browser_steps(run, context, Stage.CREATE)
+        else:
+            result, evidence = await self._execute_operation(
+                run,
+                OperationStep(
+                    id="provider_create",
+                    stage=Stage.CREATE,
+                    tool="provider.createCredential",
+                    operation="create",
+                    objective="Create the replacement credential through the typed provider API.",
+                    parameters={
+                        "connection_id": context.provider.id,
+                        "name": credential.display_name,
+                        "scopes": tuple(sorted(credential.scopes)),
+                        "sink_connection_id": context.secret_store.id,
+                        "secret_resource": credential.secret_reference,
+                    },
+                    evidence_checks=frozenset({"provider-created", "secret-transferred"}),
+                ),
+            )
+            outputs = [result]
         flattened = _flatten(outputs)
         provider_id = _find_string(flattened, "provider_id")
         secret_reference = _find_string(flattened, "secret_reference")
@@ -632,10 +641,25 @@ class StageCoordinator:
     async def _store(
         self, run: RotationRun
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
-        credential = await self._credential(run)
-        assignment, version = await self._playbook_context(run, credential)
+        context = await self._rotation_context(run)
+        credential = context.credential
         target = await self._target(run)
-        outputs, evidence = await self._execute_steps(run, assignment, version, Stage.STORE)
+        result, evidence = await self._execute_operation(
+            run,
+            OperationStep(
+                id="secret_store_verify",
+                stage=Stage.STORE,
+                tool="secretStore.getVersion",
+                operation="inspect",
+                objective="Verify the replacement secret version metadata.",
+                parameters={
+                    "connection_id": context.secret_store.id,
+                    "version": _required(target.secret_reference, "target secret reference"),
+                },
+                evidence_checks=frozenset({"secret-version-enabled"}),
+            ),
+        )
+        outputs = [result]
         states = {value.get("state") for value in _flatten(outputs) if isinstance(value, dict)}
         if states and "ENABLED" not in states:
             raise ValueError("stored secret version is not enabled")
@@ -662,17 +686,56 @@ class StageCoordinator:
     async def _deploy(
         self, run: RotationRun
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
-        credential = await self._credential(run)
-        assignment, version = await self._playbook_context(run, credential)
-        outputs, evidence = await self._execute_steps(run, assignment, version, Stage.DEPLOY)
-        flat = _flatten(outputs)
-        if not _find_optional(flat, "candidate_revision") or not _find_optional(
-            flat, "rollback_revision"
-        ):
-            raise ValueError("deployment returned no candidate or rollback revision")
-        if _find_optional(flat, "generation_id") != run.target_generation_id:
-            raise ValueError("runtime candidate does not carry the target generation")
-        return self._checks(run, Stage.DEPLOY), evidence, StageBindings(), {"steps": outputs}
+        context = await self._rotation_context(run)
+        target = await self._target(run)
+        secret_name, secret_version = _secret_parts(
+            _required(target.secret_reference, "target secret reference")
+        )
+        outputs: list[dict[str, Any]] = []
+        evidence: list[str] = []
+        deployments: list[RuntimeDeployment] = []
+        for binding in context.bindings:
+            result, ids = await self._execute_operation(
+                run,
+                OperationStep(
+                    id=f"deploy_{binding.id}",
+                    stage=Stage.DEPLOY,
+                    tool="runtime.deployCandidate",
+                    operation="deploy-candidate",
+                    objective="Deploy a zero-traffic consumer candidate using the replacement.",
+                    parameters={
+                        "connection_id": binding.runtime_connection_id,
+                        "service": binding.runtime_resource,
+                        "secret_env": binding.runtime_secret_name,
+                        "secret_name": secret_name,
+                        "secret_version": secret_version,
+                        "generation_id": _required(run.target_generation_id, "target generation"),
+                        "tag": f"firekey-{run.id[-12:]}",
+                    },
+                    evidence_checks=frozenset({"candidate-deployed", "rollback-pinned"}),
+                ),
+            )
+            candidate = _find_string([result], "candidate_revision")
+            rollback = _find_string([result], "rollback_revision")
+            if _find_optional([result], "generation_id") != run.target_generation_id:
+                raise ValueError("runtime candidate does not carry the target generation")
+            deployments.append(
+                RuntimeDeployment(
+                    binding_id=binding.id,
+                    connection_id=binding.runtime_connection_id,
+                    service=binding.runtime_resource,
+                    candidate_revision=candidate,
+                    rollback_revision=rollback,
+                )
+            )
+            outputs.append(result)
+            evidence.extend(ids)
+        return (
+            self._checks(run, Stage.DEPLOY),
+            tuple(dict.fromkeys(evidence)),
+            StageBindings(deployments=tuple(deployments)),
+            {"steps": outputs},
+        )
 
     async def _verify(
         self, run: RotationRun
@@ -699,8 +762,36 @@ class StageCoordinator:
         self, run: RotationRun
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
         credential = await self._credential(run)
-        assignment, version = await self._playbook_context(run, credential)
-        outputs, evidence = await self._execute_steps(run, assignment, version, Stage.ROLLOUT)
+        if not run.deployments:
+            raise ValueError("runtime deployment identities are missing")
+        plan = await self._catalog.get(
+            FirestorePaths.plan(run.organisation_id, _required(run.plan_id, "rotation plan")),
+            RotationPlan,
+        )
+        outputs: list[dict[str, Any]] = []
+        evidence: list[str] = []
+        for percent in plan.rollout:
+            for deployment in run.deployments:
+                result, ids = await self._execute_operation(
+                    run,
+                    OperationStep(
+                        id=f"rollout_{deployment.binding_id}_{percent}",
+                        stage=Stage.ROLLOUT,
+                        tool="runtime.shiftTraffic",
+                        operation="shift-traffic",
+                        objective="Promote the verified replacement candidate under policy.",
+                        parameters={
+                            "connection_id": deployment.connection_id,
+                            "service": deployment.service,
+                            "candidate_revision": deployment.candidate_revision,
+                            "rollback_revision": deployment.rollback_revision,
+                            "percent": percent,
+                        },
+                        evidence_checks=frozenset({"traffic-shifted"}),
+                    ),
+                )
+                outputs.append(result)
+                evidence.extend(ids)
         report = await self._latest_report(run, run.target_generation_id)
         bindings = await self._bindings(run, credential)
         await self._generations.promote(
@@ -734,21 +825,42 @@ class StageCoordinator:
     async def _approval(
         self, run: RotationRun
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
-        credential = await self._credential(run)
-        _, version = await self._playbook_context(run, credential)
         approvals = []
-        context = await self._step_context(run)
-        for step in version.definition.steps:
-            if step.stage is not Stage.REVOKE or not step.protected:
+        rotation = await self._rotation_context(run)
+        step_context = await self._step_context(run)
+        steps = list(await self._provider_steps(run, rotation, Stage.REVOKE))
+        old = await self._catalog.get(
+            FirestorePaths.generation(
+                run.organisation_id, _required(run.current_generation_id, "old generation")
+            ),
+            CredentialGeneration,
+        )
+        if old.secret_reference is not None:
+            steps.append(
+                OperationStep(
+                    id="secret_store_disable_old",
+                    stage=Stage.REVOKE,
+                    tool="secretStore.disableVersion",
+                    operation="disable",
+                    objective="Disable the superseded secret-store version.",
+                    parameters={
+                        "connection_id": rotation.secret_store.id,
+                        "version": old.secret_reference,
+                    },
+                    evidence_checks=frozenset({"old-secret-disabled"}),
+                )
+            )
+        policy_version, _ = await self._policy(run)
+        for step in steps:
+            if step.tool not in policy_version.definition.protected_tools:
                 continue
-            payload = _resolve(step.parameters, context)
+            protected = step.model_copy(update={"protected": True})
+            payload = _resolve(step.parameters, step_context)
             if not isinstance(payload, dict):
-                raise ValueError(f"playbook step {step.id} parameters are invalid")
+                raise ValueError(f"protected operation {step.id} parameters are invalid")
             payload.pop("connection_id", None)
             payload.pop("approval_id", None)
-            approvals.append(await self._approval_for_step(run, step, payload))
-        if not approvals:
-            raise ValueError("revocation has no protected action approval")
+            approvals.append(await self._approval_for_step(run, protected, payload))
         return (
             self._checks(run, Stage.APPROVAL),
             (),
@@ -763,9 +875,32 @@ class StageCoordinator:
     async def _revoke(
         self, run: RotationRun
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
-        credential = await self._credential(run)
-        assignment, version = await self._playbook_context(run, credential)
-        outputs, evidence = await self._execute_steps(run, assignment, version, Stage.REVOKE)
+        context = await self._rotation_context(run)
+        outputs, evidence = await self._execute_provider_steps(run, context, Stage.REVOKE)
+        old = await self._catalog.get(
+            FirestorePaths.generation(
+                run.organisation_id, _required(run.current_generation_id, "old generation")
+            ),
+            CredentialGeneration,
+        )
+        if old.secret_reference is not None:
+            result, ids = await self._execute_operation(
+                run,
+                OperationStep(
+                    id="secret_store_disable_old",
+                    stage=Stage.REVOKE,
+                    tool="secretStore.disableVersion",
+                    operation="disable",
+                    objective="Disable the superseded secret-store version.",
+                    parameters={
+                        "connection_id": context.secret_store.id,
+                        "version": old.secret_reference,
+                    },
+                    evidence_checks=frozenset({"old-secret-disabled"}),
+                ),
+            )
+            outputs.append(result)
+            evidence = tuple(dict.fromkeys((*evidence, *ids)))
         report = await self._run_verification(run, negative=True)
         if report.status is not VerificationStatus.PASSED:
             raise ValueError("old credential still works after revocation")
@@ -807,64 +942,122 @@ class StageCoordinator:
             {"active_generation": credential.active_generation_id, "audit_valid": True},
         )
 
-    async def _execute_steps(
+    async def _provider_steps(
         self,
         run: RotationRun,
-        assignment: PlaybookAssignment,
-        version: PlaybookVersion,
+        context: RotationContext,
+        stage: Stage,
+    ) -> tuple[OperationStep, ...]:
+        policy_version, _ = await self._policy(run)
+        if context.browser_playbook is not None:
+            steps = tuple(
+                item for item in context.browser_playbook.definition.steps if item.stage is stage
+            )
+            return tuple(
+                item.model_copy(
+                    update={"protected": item.tool in policy_version.definition.protected_tools}
+                )
+                for item in steps
+            )
+        if stage is Stage.REVOKE:
+            return (
+                OperationStep(
+                    id="provider_revoke",
+                    stage=Stage.REVOKE,
+                    tool="provider.revokeCredential",
+                    operation="revoke",
+                    objective="Revoke the superseded credential through the typed provider API.",
+                    parameters={
+                        "connection_id": context.provider.id,
+                        "provider_id": "${old_provider_id}",
+                    },
+                    protected=(
+                        "provider.revokeCredential" in policy_version.definition.protected_tools
+                    ),
+                    evidence_checks=frozenset({"provider-revoked"}),
+                ),
+            )
+        return ()
+
+    async def _execute_provider_steps(
+        self,
+        run: RotationRun,
+        context: RotationContext,
         stage: Stage,
     ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
-        steps = tuple(item for item in version.definition.steps if item.stage is stage)
+        steps = await self._provider_steps(run, context, stage)
         if not steps:
-            raise ValueError(f"playbook has no {stage.value} execution step")
-        context = await self._step_context(run)
-        policy_version, _ = await self._policy(run)
-        outputs = []
+            raise ValueError(f"provider execution has no {stage.value} steps")
+        outputs: list[dict[str, Any]] = []
         evidence: list[str] = []
+        policy_version, _ = await self._policy(run)
         for step in steps:
-            if step.tool not in policy_version.definition.allowed_tools:
-                raise ValueError(f"playbook tool {step.tool} is forbidden by policy")
-            if step.tool in policy_version.definition.protected_tools and not step.protected:
-                raise ValueError(f"policy requires protected execution for {step.tool}")
-            if step.tool == "verification.run":
-                continue
-            payload = _resolve(step.parameters, context)
-            if not isinstance(payload, dict):
-                raise ValueError(f"playbook step {step.id} parameters are invalid")
-            connection_id = payload.pop("connection_id", None)
-            declared_approval = payload.pop("approval_id", None)
-            if declared_approval is not None:
-                raise ValueError("approval IDs are runtime bindings, not playbook parameters")
-            approval = await self._approval_for_step(run, step, payload) if step.protected else None
-            if step.tool.startswith("browser."):
+            if isinstance(step, PlaybookStep):
+                step_context = await self._step_context(run)
+                payload = _resolve(step.parameters, step_context)
+                if not isinstance(payload, dict):
+                    raise ValueError(f"playbook step {step.id} parameters are invalid")
+                approval = (
+                    await self._approval_for_step(run, step, payload) if step.protected else None
+                )
                 decision = await self._operator_decision(run, step)
                 resolved = step.model_copy(update={"parameters": payload})
-                browser_output = await self._browser.execute(run, assignment, resolved, approval)
-                outputs.append(
-                    {
-                        **browser_output,
-                        "operator": decision.model_dump(mode="json"),
-                    }
+                browser_output = await self._browser.execute(
+                    run,
+                    context.provider,
+                    _required_playbook(context.browser_playbook),
+                    context.credential,
+                    policy_version.definition.protected_tools,
+                    resolved,
+                    approval,
                 )
-                continue
-            if not isinstance(connection_id, str):
-                raise ValueError(f"playbook step {step.id} has no connection_id")
-            result = await self._broker.execute(
-                run,
-                _id("tool", run.id, step.id),
-                connection_id,
-                step.tool,
-                payload,
-                approval.id if approval is not None else None,
-            )
-            if not result.succeeded:
-                raise StageExecutionError(
-                    f"playbook tool {step.tool} failed: {result.error_code}",
-                    retryable=result.result.get("retryable") is True,
-                )
-            outputs.append(result.result)
-            evidence.extend(result.evidence_ids)
+                outputs.append({**browser_output, "operator": decision.model_dump(mode="json")})
+            else:
+                result, ids = await self._execute_operation(run, step)
+                outputs.append(result)
+                evidence.extend(ids)
         return outputs, tuple(dict.fromkeys(evidence))
+
+    async def _execute_browser_steps(
+        self,
+        run: RotationRun,
+        context: RotationContext,
+        stage: Stage,
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+        return await self._execute_provider_steps(run, context, stage)
+
+    async def _execute_operation(
+        self,
+        run: RotationRun,
+        step: OperationStep,
+    ) -> tuple[dict[str, Any], tuple[str, ...]]:
+        policy_version, _ = await self._policy(run)
+        if step.tool not in policy_version.definition.allowed_tools:
+            raise ValueError(f"operation {step.tool} is forbidden by policy")
+        step_context = await self._step_context(run)
+        payload = _resolve(step.parameters, step_context)
+        if not isinstance(payload, dict):
+            raise ValueError(f"operation {step.id} parameters are invalid")
+        connection_id = payload.pop("connection_id", None)
+        if not isinstance(connection_id, str):
+            raise ValueError(f"operation {step.id} has no connection_id")
+        protected = step.tool in policy_version.definition.protected_tools
+        effective = step.model_copy(update={"protected": protected})
+        approval = await self._approval_for_step(run, effective, payload) if protected else None
+        result = await self._broker.execute(
+            run,
+            _id("tool", run.id, step.id),
+            connection_id,
+            step.tool,
+            payload,
+            approval.id if approval is not None else None,
+        )
+        if not result.succeeded:
+            raise StageExecutionError(
+                f"operation {step.tool} failed: {result.error_code}",
+                retryable=result.result.get("retryable") is True,
+            )
+        return result.result, result.evidence_ids
 
     async def _operator_decision(self, run: RotationRun, step: PlaybookStep) -> OperatorDecision:
         result = await self._agents.execute(
@@ -927,7 +1120,7 @@ class StageCoordinator:
     async def _approval_for_step(
         self,
         run: RotationRun,
-        step: PlaybookStep,
+        step: OperationStep,
         payload: dict[str, Any],
     ) -> Approval:
         if run.plan_id is None or run.plan_hash is None:
@@ -1037,8 +1230,7 @@ class StageCoordinator:
         observation: bool = False,
     ) -> VerificationReport:
         credential = await self._credential(run)
-        _, version = await self._playbook_context(run, credential)
-        definitions = await self._probes(run, version, negative, observation)
+        definitions = await self._probes(run, negative, observation)
         connection = await self._catalog.get(
             FirestorePaths.connection(run.organisation_id, credential.connection_id), Connection
         )
@@ -1063,19 +1255,13 @@ class StageCoordinator:
     async def _probes(
         self,
         run: RotationRun,
-        version: PlaybookVersion,
         negative: bool,
         observation: bool,
     ) -> tuple[ProbeDefinition, ...]:
-        ids: list[str] = []
-        for step in version.definition.steps:
-            if step.stage is not run.stage or step.tool != "verification.run":
-                continue
-            value = step.parameters.get("probe_ids", ())
-            if isinstance(value, tuple):
-                ids.extend(item for item in value if isinstance(item, str))
+        policy_version, _ = await self._policy(run)
+        ids = list(policy_version.definition.probe_versions.get(run.stage, ()))
         if not ids:
-            raise ValueError(f"stage {run.stage.value} declares no deterministic probes")
+            raise ValueError(f"policy declares no deterministic probes for {run.stage.value}")
         resolved = []
         for item in ids:
             probe_version = await self._catalog.get(
@@ -1127,14 +1313,18 @@ class StageCoordinator:
                 raise ValueError("verification probe coverage is incomplete")
         return values
 
-    async def _require_probes(self, run: RotationRun, version: PlaybookVersion) -> None:
-        ids: set[str] = set()
-        for step in version.definition.steps:
-            value = step.parameters.get("probe_ids", ())
-            if step.tool == "verification.run" and isinstance(value, tuple):
-                ids.update(item for item in value if isinstance(item, str))
-        if not ids:
-            raise ValueError("playbook has no deterministic verification probes")
+    async def _require_probes(self, run: RotationRun) -> None:
+        policy_version, _ = await self._policy(run)
+        required_stages = {Stage.VERIFY, Stage.OBSERVE, Stage.REVOKE}
+        missing = required_stages.difference(policy_version.definition.probe_versions)
+        if missing:
+            names = ", ".join(sorted(stage.value for stage in missing))
+            raise ValueError(f"policy has no deterministic probes for: {names}")
+        ids = {
+            probe_id
+            for stage in required_stages
+            for probe_id in policy_version.definition.probe_versions.get(stage, ())
+        }
         for probe_id in ids:
             probe_version = await self._catalog.get(
                 FirestorePaths.probe_version(run.organisation_id, probe_id), ProbeVersion
@@ -1183,25 +1373,69 @@ class StageCoordinator:
             ManagedCredential,
         )
 
-    async def _playbook_context(
-        self, run: RotationRun, credential: ManagedCredential
-    ) -> tuple[PlaybookAssignment, PlaybookVersion]:
-        assignment = await self._catalog.get(
-            FirestorePaths.assignment(run.organisation_id, credential.id), PlaybookAssignment
+    async def _rotation_context(self, run: RotationRun) -> RotationContext:
+        credential = await self._credential(run)
+        provider = await self._catalog.get(
+            FirestorePaths.connection(run.organisation_id, credential.connection_id), Connection
         )
-        version = await self._catalog.get(
-            FirestorePaths.playbook_version(
-                run.organisation_id, assignment.playbook_id, assignment.version_id
-            ),
-            PlaybookVersion,
+        secret_store = await self._catalog.get(
+            FirestorePaths.connection(run.organisation_id, credential.secret_store_connection_id),
+            Connection,
         )
-        if run.playbook_version is not None and run.playbook_version != version.id:
-            raise ValueError("run playbook binding changed")
-        if run.dry_run_id is not None and (
-            not assignment.dry_run_only or run.dry_run_playbook_id != assignment.playbook_id
+        if (
+            ConnectionRole.PROVIDER not in provider.roles
+            or provider.platform != credential.provider
         ):
-            raise ValueError("dry-run assignment changed")
-        return assignment, version
+            raise ValueError("credential provider connection changed")
+        if (
+            ConnectionRole.SECRET_STORE not in secret_store.roles
+            or secret_store.interface is not ConnectionInterface.API
+        ):
+            raise ValueError("credential secret-store connection changed")
+        bindings = await self._bindings(run, credential)
+        runtimes: dict[str, Connection] = {}
+        for binding in bindings:
+            connection = await self._catalog.get(
+                FirestorePaths.connection(run.organisation_id, binding.runtime_connection_id),
+                Connection,
+            )
+            if (
+                ConnectionRole.RUNTIME not in connection.roles
+                or connection.interface is not ConnectionInterface.API
+            ):
+                raise ValueError("consumer runtime connection changed")
+            runtimes[connection.id] = connection
+        version = None
+        if provider.interface is ConnectionInterface.BROWSER:
+            version = await self._catalog.get(
+                FirestorePaths.playbook_version(
+                    run.organisation_id,
+                    _required(provider.playbook_id, "browser connection playbook"),
+                    _required(provider.playbook_version_id, "browser connection playbook version"),
+                ),
+                PlaybookVersion,
+            )
+            if (
+                version.state is not PlaybookState.PUBLISHED
+                or version.digest != digest(version.definition)
+                or version.definition.platform != provider.platform
+            ):
+                raise ValueError("browser connection playbook is not published and immutable")
+            if (
+                run.browser_playbook_version is not None
+                and run.browser_playbook_version != version.id
+            ):
+                raise ValueError("run browser playbook binding changed")
+        elif run.browser_playbook_version is not None:
+            raise ValueError("API rotation cannot acquire a browser playbook")
+        return RotationContext(
+            credential=credential,
+            provider=provider,
+            secret_store=secret_store,
+            bindings=bindings,
+            runtimes=runtimes,
+            browser_playbook=version,
+        )
 
     async def _bindings(
         self, run: RotationRun, credential: ManagedCredential
@@ -1399,8 +1633,22 @@ def _execution_id(request: StageExecutionRequest) -> str:
     return _id("stage", request.run_id, request.stage.value, str(request.expected_revision))
 
 
-def required_connection_roles(_: ExecutionMethod) -> frozenset[ConnectionRole]:
+def required_connection_roles() -> frozenset[ConnectionRole]:
     return frozenset({ConnectionRole.PROVIDER, ConnectionRole.SECRET_STORE, ConnectionRole.RUNTIME})
+
+
+def _required_playbook(value: PlaybookVersion | None) -> PlaybookVersion:
+    if value is None:
+        raise ValueError("browser playbook is missing")
+    return value
+
+
+def _secret_parts(reference: str) -> tuple[str, str]:
+    marker = "/versions/"
+    secret, separator, version = reference.rpartition(marker)
+    if not separator or not secret or not version:
+        raise ValueError("secret reference must identify one immutable version")
+    return secret, version
 
 
 def _id(prefix: str, *values: str) -> str:

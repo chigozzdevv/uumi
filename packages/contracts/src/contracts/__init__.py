@@ -90,20 +90,14 @@ from contracts.notification import (
     NotificationState,
 )
 from contracts.overview import OverviewSummary
-from contracts.plan import RotationPlan, RotationStrategy
+from contracts.plan import OperationStep, RotationPlan, RotationStrategy, RuntimeDeployment
 from contracts.playbook import (
-    DryRun,
-    DryRunStatus,
-    ExecutionMethod,
     PageCheckpoint,
     Playbook,
-    PlaybookAssignment,
     PlaybookDraft,
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
-    RecoveryAction,
-    RecoveryBranch,
     SecureField,
     Selector,
     SelectorKind,
@@ -111,7 +105,13 @@ from contracts.playbook import (
 )
 from contracts.policy import Policy, PolicyDefinition, PolicyState, PolicyVersion
 from contracts.provider import ConnectorCapabilities, MutationMode, MutationSemantics
-from contracts.recovery import RecoveryMode, RecoveryPlan, RecoveryResult
+from contracts.recovery import (
+    RecoveryAction,
+    RecoveryBranch,
+    RecoveryMode,
+    RecoveryPlan,
+    RecoveryResult,
+)
 from contracts.run import Failure, Lease, RotationRun, RunStep, Trigger
 from contracts.state import GenerationState, RunStatus, Stage
 from contracts.tool import ToolAttempt, ToolAttemptStatus, ToolRequest, ToolResult
@@ -133,6 +133,7 @@ from contracts.walkthrough import (
     TimedText,
     VideoShot,
     WalkthroughAnalysis,
+    WalkthroughKind,
     WalkthroughSource,
     WalkthroughStatus,
 )
@@ -177,12 +178,9 @@ __all__ = [
     "CreateRunCommand",
     "CredentialGeneration",
     "DownstreamConfirmation",
-    "DryRun",
-    "DryRunStatus",
     "Environment",
     "EventKind",
     "Evidence",
-    "ExecutionMethod",
     "FailRunCommand",
     "Failure",
     "GenerationBinding",
@@ -213,12 +211,12 @@ __all__ = [
     "NotificationKind",
     "NotificationProvider",
     "NotificationState",
+    "OperationStep",
     "OutboxEvent",
     "OverviewSummary",
     "PageCheckpoint",
     "PauseRunCommand",
     "Playbook",
-    "PlaybookAssignment",
     "PlaybookDraft",
     "PlaybookState",
     "PlaybookStep",
@@ -250,6 +248,7 @@ __all__ = [
     "RunEvent",
     "RunStatus",
     "RunStep",
+    "RuntimeDeployment",
     "SecureCaptureResult",
     "SecureField",
     "Selector",
@@ -278,6 +277,7 @@ __all__ = [
     "VerificationStatus",
     "VideoShot",
     "WalkthroughAnalysis",
+    "WalkthroughKind",
     "WalkthroughSource",
     "WalkthroughStatus",
 ]

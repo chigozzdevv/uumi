@@ -67,17 +67,8 @@ def validate_create(run: RotationRun, command: CreateRunCommand) -> None:
         or run.policy_version != command.policy_version
         or run.trigger != command.trigger
         or run.id != (command.run_id or run.id)
-        or run.dry_run_id != (command.dry_run.id if command.dry_run is not None else None)
-        or run.dry_run_playbook_id
-        != (command.dry_run.playbook_id if command.dry_run is not None else None)
     ):
         raise StorageIntegrityError("created run does not match its command")
-    if command.dry_run is not None and (
-        command.dry_run.organisation_id != run.organisation_id
-        or command.dry_run.run_id != run.id
-        or command.dry_run.credential_id != run.credential_id
-    ):
-        raise StorageIntegrityError("created dry run does not match its rotation run")
 
 
 def validate_transition(

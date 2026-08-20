@@ -14,9 +14,10 @@ from agents.shared.tools import (
 root_agent = Agent(
     name="rotation_planner_agent",
     model="gemini-3.7-flash",
-    description="Builds rotation plans from inventory and immutable playbooks.",
-    instruction="""For plan_rotation, use the authoritative run and assigned immutable playbook
-and return decision=plan with every lifecycle stage and its recovery. For
+    description="Builds rotation plans from inventory and active policy.",
+    instruction="""For plan_rotation, use the authoritative run, confirmed inventory, active
+policy, and browser playbook only when the provider connection uses a browser. Return decision=plan
+with every lifecycle stage and its recovery. For
 recommend_authorised_recovery, load the exact bound recovery, return decision=recovery only when
 it remains eligible, and copy its ID and mode exactly; otherwise return decision=escalate. Never
 add tools, change actions, or mutate resources. Return structured JSON.""",

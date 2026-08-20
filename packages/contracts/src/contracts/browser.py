@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Any
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -89,12 +90,21 @@ class BrowserActionRecord(Contract):
 class BrowserPolicy(Contract):
     allowed_domains: tuple[str, ...] = Field(min_length=1)
     allowed_actions: frozenset[BrowserActionKind] = Field(min_length=1)
-    protected_operations: frozenset[str] = frozenset()
+    protected_tools: frozenset[str] = frozenset()
     max_steps: int = Field(default=40, ge=1, le=200)
     allow_downloads: bool = False
     allow_uploads: bool = False
     allow_clipboard: bool = False
     login_url_pattern: str | None = Field(default=None, max_length=1024)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_protected_operations(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "protected_operations" not in value:
+            return value
+        migrated = dict(value)
+        migrated.setdefault("protected_tools", migrated.pop("protected_operations"))
+        return migrated
 
 
 class BrowserSession(Contract):
@@ -104,6 +114,8 @@ class BrowserSession(Contract):
     playbook_id: Identifier
     playbook_version: Identifier
     provider_connection_id: Identifier
+    secret_store_connection_id: Identifier
+    secret_resource: str = Field(min_length=1, max_length=1024)
     worker_instance: str | None = Field(default=None, max_length=512)
     internal_address: str | None = Field(default=None, max_length=128)
     status: BrowserStatus

@@ -97,11 +97,12 @@ class RotationMachine:
 
     @staticmethod
     def _bindings(run: RotationRun, bindings: StageBindings) -> dict[str, object]:
-        values = bindings.model_dump(exclude_none=True)
+        values = bindings.model_dump(exclude_none=True, exclude_defaults=True)
         allowed: dict[Stage, frozenset[str]] = {
-            Stage.PREFLIGHT: frozenset({"playbook_version", "current_generation_id"}),
-            Stage.PLAYBOOK: frozenset({"plan_id", "plan_hash"}),
+            Stage.PREFLIGHT: frozenset({"browser_playbook_version", "current_generation_id"}),
+            Stage.PLAN: frozenset({"plan_id", "plan_hash"}),
             Stage.CREATE: frozenset({"target_generation_id"}),
+            Stage.DEPLOY: frozenset({"deployments"}),
         }
         unexpected = set(values).difference(allowed.get(run.stage, frozenset()))
         if unexpected:
@@ -109,16 +110,18 @@ class RotationMachine:
             raise TransitionRejectedError(
                 f"stage {run.stage.value} cannot bind run fields: {names}"
             )
-        if run.stage is Stage.PREFLIGHT and set(values) != allowed[Stage.PREFLIGHT]:
-            raise TransitionRejectedError("preflight must bind playbook and current generation")
-        if run.stage is Stage.PLAYBOOK and set(values) != allowed[Stage.PLAYBOOK]:
-            raise TransitionRejectedError("playbook stage must bind plan identity and digest")
+        if run.stage is Stage.PREFLIGHT and "current_generation_id" not in values:
+            raise TransitionRejectedError("preflight must bind the current generation")
+        if run.stage is Stage.PLAN and set(values) != allowed[Stage.PLAN]:
+            raise TransitionRejectedError("plan stage must bind plan identity and digest")
         if run.stage is Stage.CREATE and set(values) != allowed[Stage.CREATE]:
             raise TransitionRejectedError("create stage must bind the target generation")
+        if run.stage is Stage.DEPLOY and set(values) != allowed[Stage.DEPLOY]:
+            raise TransitionRejectedError("deploy stage must bind runtime deployment identities")
         immutable = {
             name: value
             for name, value in values.items()
-            if getattr(run, name) is not None and getattr(run, name) != value
+            if getattr(run, name) not in {None, ()} and getattr(run, name) != value
         }
         if immutable:
             raise TransitionRejectedError("run bindings cannot change after they are set")

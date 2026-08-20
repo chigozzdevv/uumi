@@ -90,8 +90,8 @@ server: MCPServer[BrokerRuntime] = MCPServer(
     "FireKey Tool Broker",
     description="Capability-scoped credential, secret-store, and runtime operations.",
     instructions=(
-        "All calls are bound to an immutable playbook, connection boundary, run lease, and "
-        "fencing token. Mutation capabilities are injected by Agent Gateway in an HTTP header."
+        "All calls are bound to credential inventory, active policy, connection boundaries, "
+        "the run lease, and fencing token. Mutation capabilities are injected by Agent Gateway."
     ),
     version="0.1.0",
     lifespan=lifespan,

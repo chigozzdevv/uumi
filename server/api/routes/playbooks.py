@@ -4,19 +4,17 @@ from contracts import (
     AgentKind,
     AgentResult,
     AgentTask,
+    Connection,
     Contract,
-    DryRun,
     Identifier,
     Playbook,
-    PlaybookAssignment,
     PlaybookDraft,
     PlaybookVersion,
-    RotationRun,
 )
 from core.auth import Permission
 from core.errors import PlaybookError
-from fastapi import APIRouter, Query, Request, Response, status
-from pydantic import AwareDatetime, Field
+from fastapi import APIRouter, Query, Request, status
+from pydantic import Field
 
 from api.deps import IdempotencyKey, Identity, command_id, required, services
 
@@ -47,33 +45,9 @@ class BuildVersionResponse(VersionResponse):
     agent: AgentResult
 
 
-class DryRunRequest(Contract):
-    id: Identifier
-    version_id: Identifier
-    environment_id: Identifier
-    credential_id: Identifier
-    policy_version: Identifier
-    reason: str = Field(min_length=1, max_length=1024)
-    urgency: str = Field(min_length=1, max_length=32)
-    received_at: AwareDatetime
-
-
-class DryRunResponse(Contract):
-    dryrun: DryRun
-    run: RotationRun
-    applied: bool
-
-
-class ActivateRequest(Contract):
-    dryrun_id: Identifier
-
-
-class AssignmentRequest(Contract):
-    credential_id: Identifier
-    version_id: Identifier
-    connection_ids: tuple[Identifier, ...]
-    dry_run_only: bool = False
-    environment_id: Identifier | None = None
+class AttachRequest(Contract):
+    connection_id: Identifier
+    expected_revision: int = Field(ge=0)
 
 
 @router.get("", response_model=tuple[Playbook, ...])
@@ -102,6 +76,12 @@ async def create_version(
 ) -> VersionResponse:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    if body.source_ids:
+        await required(api.walkthroughs, "walkthroughs").ready(
+            organisation_id,
+            playbook_id,
+            body.source_ids,
+        )
     root, version = await required(api.playbooks, "playbooks").create_version(
         organisation_id,
         playbook_id,
@@ -174,73 +154,39 @@ async def build_version(
     return BuildVersionResponse(playbook=root, version=version, agent=result)
 
 
-@router.post("/{playbook_id}/dryruns", response_model=DryRunResponse)
-async def start_dryrun(
-    organisation_id: Identifier,
-    playbook_id: Identifier,
-    body: DryRunRequest,
-    identity: Identity,
-    key: IdempotencyKey,
-    request: Request,
-    response: Response,
-) -> DryRunResponse:
-    api = services(request)
-    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
-    dryrun, run, applied = await required(api.playbooks, "playbooks").start_dryrun(
-        organisation_id,
-        playbook_id,
-        body.id,
-        body.version_id,
-        body.environment_id,
-        body.credential_id,
-        body.policy_version,
-        identity.actor_id,
-        command_id(identity, organisation_id, key),
-        body.reason,
-        body.urgency,
-        body.received_at,
-    )
-    response.status_code = status.HTTP_201_CREATED if applied else status.HTTP_200_OK
-    return DryRunResponse(dryrun=dryrun, run=run, applied=applied)
-
-
-@router.post("/{playbook_id}/versions/{version_id}/activate", response_model=PlaybookVersion)
-async def activate(
+@router.post("/{playbook_id}/versions/{version_id}/publish", response_model=PlaybookVersion)
+async def publish(
     organisation_id: Identifier,
     playbook_id: Identifier,
     version_id: Identifier,
-    body: ActivateRequest,
     identity: Identity,
     request: Request,
 ) -> PlaybookVersion:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.PLAYBOOK_APPROVE)
-    return await required(api.playbooks, "playbooks").activate(
+    return await required(api.playbooks, "playbooks").publish(
         organisation_id,
         playbook_id,
         version_id,
-        body.dryrun_id,
         identity.actor_id,
     )
 
 
-@router.post("/{playbook_id}/assignments", response_model=PlaybookAssignment)
-async def assign(
+@router.post("/{playbook_id}/versions/{version_id}/attach", response_model=Connection)
+async def attach(
     organisation_id: Identifier,
     playbook_id: Identifier,
-    body: AssignmentRequest,
+    version_id: Identifier,
+    body: AttachRequest,
     identity: Identity,
     request: Request,
-) -> PlaybookAssignment:
+) -> Connection:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.PLAYBOOK_APPROVE)
-    return await required(api.playbooks, "playbooks").assign(
+    return await required(api.playbooks, "playbooks").attach(
         organisation_id,
-        body.credential_id,
+        body.connection_id,
+        body.expected_revision,
         playbook_id,
-        body.version_id,
-        body.connection_ids,
-        identity.actor_id,
-        body.dry_run_only,
-        body.environment_id,
+        version_id,
     )

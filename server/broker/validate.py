@@ -4,8 +4,10 @@ from urllib.parse import urlparse
 
 from contracts import (
     Connection,
-    PlaybookAssignment,
-    PlaybookVersion,
+    ConnectionRole,
+    ConsumerBinding,
+    ManagedCredential,
+    PolicyVersion,
     RotationRun,
     Stage,
     ToolRequest,
@@ -34,7 +36,7 @@ STAGE_TOOLS: dict[Stage, frozenset[str]] = {
             "runtime.inspectSecretBindings",
         }
     ),
-    Stage.PLAYBOOK: frozenset({"provider.listCredentialMetadata", "runtime.inspectSecretBindings"}),
+    Stage.PLAN: frozenset({"provider.listCredentialMetadata", "runtime.inspectSecretBindings"}),
     Stage.CREATE: frozenset({"provider.createCredential", "provider.getCredentialStatus"}),
     Stage.STORE: frozenset({"secretStore.getVersion"}),
     Stage.DEPLOY: frozenset({"runtime.deployCandidate", "runtime.rollback"}),
@@ -68,8 +70,9 @@ def validate_request(
     request: ToolRequest,
     run: RotationRun,
     connection: Connection,
-    assignment: PlaybookAssignment,
-    version: PlaybookVersion,
+    credential: ManagedCredential,
+    bindings: tuple[ConsumerBinding, ...],
+    policy: PolicyVersion,
 ) -> None:
     if request.organisation_id != run.organisation_id or request.run_id != run.id:
         raise CapabilityError("tool request does not belong to its run")
@@ -77,27 +80,44 @@ def validate_request(
         raise CapabilityError("tool request does not hold the current run fence")
     if request.connection_id != connection.id or connection.organisation_id != run.organisation_id:
         raise CapabilityError("tool connection does not belong to the run organisation")
-    if request.connection_id not in assignment.connection_ids:
-        raise CapabilityError("tool connection is not assigned to the active playbook")
-    if version.id != assignment.version_id or run.playbook_version != version.id:
-        raise CapabilityError("tool request is not bound to the run playbook version")
-    if run.dry_run_id is not None:
-        if not assignment.dry_run_only or run.dry_run_playbook_id != assignment.playbook_id:
-            raise CapabilityError("dry-run tool request escaped its isolated assignment")
-    elif assignment.dry_run_only:
-        raise CapabilityError("production tool request cannot use a dry-run assignment")
-    if request.tool not in version.definition.allowed_tools:
-        raise CapabilityError("tool is not allowed by the immutable playbook")
+    role = _tool_role(request.tool)
+    if role is ConnectionRole.PROVIDER and connection.id != credential.connection_id:
+        raise CapabilityError("provider tool is not using the credential management connection")
+    if role is ConnectionRole.SECRET_STORE and (
+        connection.id != credential.secret_store_connection_id
+    ):
+        raise CapabilityError("secret-store tool is not using the credential secret store")
+    if role is ConnectionRole.RUNTIME and connection.id not in {
+        binding.runtime_connection_id for binding in bindings
+    }:
+        raise CapabilityError("runtime tool is not using a declared consumer binding")
+    if request.tool not in policy.definition.allowed_tools:
+        raise CapabilityError("tool is not allowed by the active policy")
     if request.tool not in connection.capabilities:
         raise CapabilityError("connection does not declare the requested capability")
     if request.tool not in STAGE_TOOLS[run.stage]:
         raise CapabilityError(f"tool {request.tool} is not eligible in stage {run.stage.value}")
-    resources = _resources(request.tool, request.payload)
+    resources = _resources(request.tool, request.payload, connection)
     within_boundary = all(
         _allowed(resource, connection.allowed_resources) for resource in resources
     )
     if resources and not within_boundary:
         raise CapabilityError("tool parameters escape the connection resource boundary")
+
+
+def _tool_role(tool: str) -> ConnectionRole:
+    namespace = tool.partition(".")[0]
+    roles = {
+        "provider": ConnectionRole.PROVIDER,
+        "runtime": ConnectionRole.RUNTIME,
+        "secretStore": ConnectionRole.SECRET_STORE,
+        "telemetry": ConnectionRole.TELEMETRY,
+        "incident": ConnectionRole.INCIDENT,
+    }
+    try:
+        return roles[namespace]
+    except KeyError as error:
+        raise CapabilityError(f"tool {tool} has no connection role") from error
 
 
 def validate_capability(
@@ -129,7 +149,14 @@ def validate_capability(
         raise CapabilityError("action capability does not bind the exact tool request")
 
 
-def _resources(tool: str, payload: dict[str, Any]) -> tuple[str, ...]:
+def _resources(tool: str, payload: dict[str, Any], connection: Connection) -> tuple[str, ...]:
+    if tool.startswith("provider."):
+        provider_id = payload.get("provider_id")
+        return (
+            (f"{connection.platform}:credentials:{provider_id}",)
+            if isinstance(provider_id, str)
+            else ()
+        )
     keys = {"provider_id", "service", "version", "target", "resource"}
     if tool.startswith("secretStore."):
         keys.add("secret_resource")
@@ -142,6 +169,7 @@ def _allowed(resource: str, patterns: Iterable[str]) -> bool:
     return any(
         comparable == pattern
         or comparable.startswith(pattern.rstrip("/") + "/")
+        or (len(pattern) > 1 and pattern.endswith("*") and comparable.startswith(pattern[:-1]))
         or (pattern.startswith("*.") and comparable.endswith(pattern[1:]))
         for pattern in patterns
     )
