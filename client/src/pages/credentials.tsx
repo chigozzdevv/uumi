@@ -115,8 +115,6 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
         value={search}
         onChange={setSearch}
         placeholder="Search credentials or providers"
-        resultCount={rows.length}
-        resultLabel="credentials"
         onClear={() => { setSearch(""); setProvider("all") }}
         filters={[{
           label: "Provider",

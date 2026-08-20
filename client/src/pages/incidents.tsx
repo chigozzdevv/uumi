@@ -53,7 +53,7 @@ export function IncidentsPage({ onNavigateRotation }: { onNavigateRotation: (run
   return (
     <div className="page">
       <PageHeader eyebrow="Operations" title="Incidents" />
-      <Toolbar value={search} onChange={setSearch} placeholder="Search incidents, repositories, or services" resultCount={rows.length} resultLabel="incidents" onClear={() => { setSearch(""); setStatus("open") }} filters={[{ label: "Status", value: status, defaultValue: "open", onChange: (event) => setStatus(event.target.value), children: <><option value="open">Open incidents</option><option value="all">All incidents</option><option value="action-required">Action required</option><option value="rotation-started">Rotation started</option><option value="resolved">Resolved</option></> }]} />
+      <Toolbar value={search} onChange={setSearch} placeholder="Search incidents, repositories, or services" onClear={() => { setSearch(""); setStatus("open") }} filters={[{ label: "Status", value: status, defaultValue: "open", onChange: (event) => setStatus(event.target.value), children: <><option value="open">Open incidents</option><option value="all">All incidents</option><option value="action-required">Action required</option><option value="rotation-started">Rotation started</option><option value="resolved">Resolved</option></> }]} />
 
       <div>
         <Table>

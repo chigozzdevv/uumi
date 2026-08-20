@@ -75,7 +75,7 @@ export function ApplicationsPage() {
 
   return <div className="page">
     <PageHeader eyebrow="Inventory" title="Applications" actions={<Button onClick={() => setCreating(true)}><Plus className="size-3.5" /> Add application</Button>} />
-    <Toolbar value={search} onChange={setSearch} placeholder="Search applications or repositories" resultCount={filtered.length} resultLabel="applications" onClear={() => { setSearch(""); setEnvironment("all") }} filters={[{ label: "Environment", value: environment, defaultValue: "all", onChange: (event) => setEnvironment(event.target.value), children: <><option value="all">All environments</option><option value="production">Production</option><option value="non-production">Non-production</option></> }]} />
+    <Toolbar value={search} onChange={setSearch} placeholder="Search applications or repositories" onClear={() => { setSearch(""); setEnvironment("all") }} filters={[{ label: "Environment", value: environment, defaultValue: "all", onChange: (event) => setEnvironment(event.target.value), children: <><option value="all">All environments</option><option value="production">Production</option><option value="non-production">Non-production</option></> }]} />
     <Table><TableHeader><TableRow><TableHead>Application</TableHead><TableHead>Environments</TableHead><TableHead>Services</TableHead><TableHead>Credentials</TableHead><TableHead className="w-36">Action</TableHead></TableRow></TableHeader><TableBody>{filtered.map((application) => {
       const appEnvironments = environments.data!.filter((item) => item.application_id === application.id)
       const appServices = graph.data!.services.filter((item) => item.application_id === application.id)

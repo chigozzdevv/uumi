@@ -3,7 +3,7 @@ import type { SelectHTMLAttributes } from "react"
 
 type ToolbarFilter = SelectHTMLAttributes<HTMLSelectElement> & { label: string; defaultValue?: string }
 
-export function Toolbar({ value, onChange, placeholder, filters, resultCount, resultLabel = "results", onClear }: { value: string; onChange: (value: string) => void; placeholder: string; filters?: ToolbarFilter[]; resultCount?: number; resultLabel?: string; onClear?: () => void }) {
+export function Toolbar({ value, onChange, placeholder, filters, onClear }: { value: string; onChange: (value: string) => void; placeholder: string; filters?: ToolbarFilter[]; onClear?: () => void }) {
   const active = Boolean(value.trim()) || Boolean(filters?.some((filter) => String(filter.value ?? "") !== String(filter.defaultValue ?? "all")))
 
   return (
@@ -33,7 +33,6 @@ export function Toolbar({ value, onChange, placeholder, filters, resultCount, re
                 </label>
       ))}
       {active && onClear && <button className="focus-ring inline-flex h-10 items-center gap-1.5 rounded-xl px-3 text-[10px] font-semibold text-[var(--ink-soft)] transition hover:bg-[var(--surface-soft)] hover:text-[var(--ink)]" onClick={onClear}><X className="size-3.5" /> Clear</button>}
-      {resultCount !== undefined && <span className="ml-auto px-2 text-[10px] text-[var(--ink-muted)]">{resultCount} {resultCount === 1 ? resultLabel.replace(/s$/, "") : resultLabel}</span>}
       </div>
     </div>
   )

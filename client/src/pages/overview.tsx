@@ -56,7 +56,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (nav: NavItem) => voi
       <div className="grid gap-8 xl:grid-cols-[1.55fr_1fr]">
         <section>
           <div className="mb-4 flex items-end justify-between">
-            <div><div className="eyebrow">Live operations</div><h2 className="mt-1 text-lg font-semibold tracking-[-0.035em]">Active rotations</h2></div>
+            <div><h2 className="text-lg font-semibold tracking-[-0.035em]">Active rotations</h2></div>
             <button className="focus-ring flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-semibold text-[var(--accent)] hover:bg-white/70" onClick={() => onNavigate("rotations")}>View all <ArrowUpRight className="size-3" /></button>
           </div>
           <div className="panel overflow-hidden divide-y divide-[var(--border-soft)]">
@@ -80,7 +80,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (nav: NavItem) => voi
         </section>
 
         <section>
-          <div className="mb-4"><div className="eyebrow">Decision queue</div><h2 className="mt-1 text-lg font-semibold tracking-[-0.035em]">Requires attention</h2></div>
+          <div className="mb-4"><h2 className="text-lg font-semibold tracking-[-0.035em]">Requires attention</h2></div>
           <div className="panel overflow-hidden divide-y divide-[var(--border-soft)]">
             {urgentIncidents.slice(0, 2).map((incident) => (
               <button key={incident.id} className="focus-ring flex w-full gap-3 px-5 py-4 text-left hover:bg-white/65" onClick={() => onNavigate("incidents")}>
