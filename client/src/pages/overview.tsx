@@ -8,7 +8,7 @@ import type { NavItem } from "../components/sidebar"
 import { api } from "../lib/api"
 import { titleCase } from "../lib/format"
 
-const stages = ["trigger", "preflight", "playbook", "create", "store", "deploy", "verify", "rollout", "observe", "approval", "revoke", "complete"]
+const stages = ["trigger", "preflight", "plan", "create", "store", "deploy", "verify", "rollout", "observe", "approval", "revoke", "complete"]
 
 export function OverviewPage({ onNavigate }: { onNavigate: (nav: NavItem) => void }) {
   const [summary, runs, incidents, approvals, graph] = useQueries({

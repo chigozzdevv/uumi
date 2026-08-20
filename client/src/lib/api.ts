@@ -9,6 +9,7 @@ import type {
   CredentialGeneration,
   Environment,
   Incident,
+  Identifier,
   InventoryGraph,
   ManagedCredential,
   OverviewSummary,
@@ -24,6 +25,60 @@ export interface ImportCredentialInput {
   credential: ManagedCredential
   generation: CredentialGeneration
   bindings: ConsumerBinding[]
+}
+
+export interface CreateConnectionInput {
+  connection: Connection
+  playbook_id?: Identifier
+  playbook_version_id?: Identifier
+}
+
+export interface CreateApplicationInput {
+  application: Application
+  environment: Environment
+  service: ConsumerService
+}
+
+export interface PlaybookDefinition {
+  name: string
+  platform: string
+  allowed_domains: string[]
+  login_url_pattern: string
+  steps: Array<{
+    id: Identifier
+    stage: "create" | "revoke"
+    tool: string
+    operation: string
+    objective: string
+    parameters: Record<string, string | number | boolean | string[]>
+    protected: boolean
+    evidence_checks: string[]
+    selectors: Array<{ kind: "role" | "label" | "text" | "test-id" | "css"; value: string; name: string | null; exact: boolean }>
+    checkpoint: { url_pattern: string; required_text: string[]; forbidden_text: string[] }
+    secure_field: { name: Identifier; selector: { kind: "role" | "label" | "text" | "test-id" | "css"; value: string; name: string | null; exact: boolean }; provider_id_selector: { kind: "role" | "label" | "text" | "test-id" | "css"; value: string; name: string | null; exact: boolean } } | null
+    outputs: never[]
+    timeout_seconds: number
+    retry_limit: number
+  }>
+}
+
+export interface CreatePlaybookInput {
+  playbook_id: Identifier
+  version_id: Identifier
+  definition: PlaybookDefinition
+  source: {
+    id: Identifier
+    kind: "text" | "link" | "video"
+    content: string
+    resource_url?: string
+  }
+}
+
+export interface BrowserSetupResponse {
+  session: { id: Identifier; revision: number; expires_at: string }
+  token: string
+  gateway_url: string
+  expires_at: string
 }
 
 class ApiClient {
@@ -56,6 +111,60 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify(input),
     })
+  }
+
+  async createConnection(input: CreateConnectionInput): Promise<Connection> {
+    const created = await this.request<Connection>(`${ROOT}/inventory/connections`, {
+      method: "POST",
+      body: JSON.stringify(input.connection),
+    })
+    if (!input.playbook_id || !input.playbook_version_id) return created
+    return this.attachPlaybook(created, input.playbook_id, input.playbook_version_id)
+  }
+
+  async attachPlaybook(connection: Connection, playbookId: Identifier, versionId: Identifier): Promise<Connection> {
+    return this.request(`${ROOT}/playbooks/${playbookId}/versions/${versionId}/attach`, {
+      method: "POST",
+      body: JSON.stringify({ connection_id: connection.id, expected_revision: connection.revision }),
+    })
+  }
+
+  async beginBrowserSetup(connectionId: Identifier, secretContainer: string): Promise<BrowserSetupResponse> {
+    return this.request(`${ROOT}/inventory/connections/${connectionId}/setup`, {
+      method: "POST",
+      body: JSON.stringify({ secret_container: secretContainer, extra_domains: [] }),
+    })
+  }
+
+  async completeBrowserSetup(setupId: Identifier, expectedRevision: number, token: string): Promise<{ connection: Connection }> {
+    return this.request(`${ROOT}/inventory/setups/${setupId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: expectedRevision, token }),
+    })
+  }
+
+  async createApplication(input: CreateApplicationInput): Promise<Application> {
+    const setup = await this.request<CreateApplicationInput>(`${ROOT}/inventory/application-setups`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+    return setup.application
+  }
+
+  async createPlaybook(input: CreatePlaybookInput): Promise<Playbook> {
+    const source = await this.request<{ id: Identifier }>(`${ROOT}/playbooks/${input.playbook_id}/walkthroughs/references`, {
+      method: "POST",
+      body: JSON.stringify({ source_id: input.source.id, kind: input.source.kind, content: input.source.content, resource_url: input.source.resource_url }),
+    })
+    const created = await this.request<{ playbook: Playbook }>(`${ROOT}/playbooks/${input.playbook_id}/versions`, {
+      method: "POST",
+      body: JSON.stringify({ version_id: input.version_id, definition: input.definition, source_ids: [source.id] }),
+    })
+    await this.request(`${ROOT}/playbooks/${input.playbook_id}/versions/${input.version_id}/publish`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    })
+    return { ...created.playbook, active_version_id: input.version_id }
   }
 
   async getApplications(): Promise<Application[]> {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { ArrowLeft, ArrowRight, FileInput, Settings2 } from "lucide-react"
+import { ArrowLeft, ArrowRight } from "lucide-react"
 import type { ImportCredentialInput } from "../lib/api"
-import type { Application, Connection, Environment, InventoryGraph, Playbook, Policy } from "../types"
+import type { Application, Connection, Environment, InventoryGraph, Policy } from "../types"
 import { titleCase } from "../lib/format"
 import { Detail, DetailList, Section } from "./detail"
 import { Journey } from "./journey"
@@ -10,10 +10,8 @@ import { Badge } from "./ui/badge"
 import { Button } from "./ui/button"
 import { Modal } from "./ui/modal"
 
-const steps = ["Method", "Credential", "Mapping", "Controls", "Review"]
+const steps = ["Management", "Storage", "Consumers", "Policy", "Review"]
 const field = "focus-ring h-11 w-full rounded-xl border border-[var(--border)] bg-white px-3.5 text-[11px] text-[var(--ink)] outline-none"
-
-type Method = "import" | "manual" | ""
 
 function identifier(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`
@@ -35,7 +33,6 @@ export function CredentialSetup({
   applications,
   environments,
   policies,
-  playbooks,
   onCreate,
 }: {
   isOpen: boolean
@@ -45,81 +42,65 @@ export function CredentialSetup({
   applications: Application[]
   environments: Environment[]
   policies: Policy[]
-  playbooks: Playbook[]
   onCreate: (input: ImportCredentialInput) => Promise<unknown>
 }) {
   const [step, setStep] = useState(0)
-  const [method, setMethod] = useState<Method>("")
   const [connectionId, setConnectionId] = useState("")
   const [name, setName] = useState("")
   const [providerId, setProviderId] = useState("")
   const [kind, setKind] = useState("api-key")
   const [scopes, setScopes] = useState("")
-  const [serviceId, setServiceId] = useState("")
+  const [serviceIds, setServiceIds] = useState<string[]>([])
   const [secretStoreId, setSecretStoreId] = useState("")
   const [secretReference, setSecretReference] = useState("")
   const [policyVersion, setPolicyVersion] = useState("")
-  const [playbookVersion, setPlaybookVersion] = useState("")
+  const [runtimeSecretNames, setRuntimeSecretNames] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
 
-  const managementConnections = useMemo(() => connections.filter((item) => method === "import" ? item.kind === "provider" : method === "manual" ? item.kind === "browser" : false), [connections, method])
-  const secretStores = useMemo(() => connections.filter((item) => item.kind === "secret-store"), [connections])
+  const managementConnections = useMemo(() => connections.filter((item) => item.roles.includes("provider")), [connections])
+  const secretStores = useMemo(() => connections.filter((item) => item.roles.includes("secret-store") && item.interface === "api"), [connections])
   const connection = connections.find((item) => item.id === connectionId)
-  const provider = connection?.provider ?? ""
-  const service = graph.services.find((item) => item.id === serviceId)
-  const environment = environments.find((item) => item.id === service?.environment_id)
-  const application = applications.find((item) => item.id === service?.application_id)
+  const provider = connection?.platform ?? ""
+  const selectedServices = graph.services.filter((item) => serviceIds.includes(item.id))
   const selectedPolicy = policies.find((item) => item.active_version_id === policyVersion)
-  const availablePlaybooks = playbooks.filter((item) => item.provider === provider && item.active_version_id)
-  const selectedPlaybook = playbooks.find((item) => item.active_version_id === playbookVersion)
 
   useEffect(() => {
     if (!isOpen) return
     setStep(0)
-    setMethod("")
-    setConnectionId("")
+    setConnectionId(managementConnections.find((item) => item.status === "ready")?.id ?? managementConnections[0]?.id ?? "")
     setName("")
     setProviderId("")
     setKind("api-key")
     setScopes("")
-    setServiceId(graph.services[0]?.id ?? "")
+    setServiceIds(graph.services[0] ? [graph.services[0].id] : [])
     setSecretStoreId(secretStores[0]?.id ?? "")
     setSecretReference("")
     setPolicyVersion(policies.find((item) => item.active_version_id)?.active_version_id ?? "")
-    setPlaybookVersion("")
+    setRuntimeSecretNames({})
     setSubmitting(false)
     setError("")
-  }, [graph.services, isOpen, policies, secretStores])
-
-  useEffect(() => {
-    if (!provider) return
-    const active = playbooks.find((item) => item.provider === provider && item.active_version_id)
-    setPlaybookVersion(active?.active_version_id ?? "")
-  }, [playbooks, provider])
-
-  function choose(nextMethod: Exclude<Method, "">) {
-    const choices = connections.filter((item) => nextMethod === "import" ? item.kind === "provider" : item.kind === "browser")
-    setMethod(nextMethod)
-    setConnectionId(choices[0]?.id ?? "")
-    setStep(1)
-  }
+  }, [graph.services, isOpen, managementConnections, policies, secretStores])
 
   function canContinue() {
-    if (step === 0) return false
-    if (step === 1) return Boolean(connectionId && name.trim() && kind.trim() && (method === "manual" || providerId.trim()))
-    if (step === 2) return Boolean(serviceId && secretStoreId && secretReference.trim())
-    if (step === 3) return Boolean(policyVersion && playbookVersion)
+    if (step === 0) return Boolean(connectionId && name.trim() && kind.trim() && connection?.status === "ready")
+    if (step === 1) return Boolean(secretStoreId && secretReference.trim())
+    if (step === 2) return Boolean(selectedServices.length && selectedServices.every((service) => runtimeSecretNames[service.id]?.trim()))
+    if (step === 3) return Boolean(policyVersion)
     return true
   }
 
   function next() {
-    if (step === 1 && !secretReference && name.trim()) setSecretReference(`projects/acme-prod/secrets/${slug(name)}`)
+    if (step === 0 && !secretReference && name.trim()) setSecretReference(`projects/acme-prod/secrets/${slug(name)}`)
+    if (step === 1 && name.trim()) {
+      const fallback = slug(name).replaceAll("-", "_").toUpperCase()
+      setRuntimeSecretNames((current) => Object.fromEntries(selectedServices.map((service) => [service.id, current[service.id] || fallback])))
+    }
     setStep((value) => Math.min(value + 1, steps.length - 1))
   }
 
   async function submit() {
-    if (!connection || !service || !policyVersion || !playbookVersion || !secretReference.trim()) return
+    if (!connection || !selectedServices.length || !policyVersion || !secretStoreId || !secretReference.trim() || selectedServices.some((service) => !runtimeSecretNames[service.id]?.trim())) return
     const credentialId = identifier("cred")
     const generationId = identifier("gen")
     const createdAt = new Date().toISOString()
@@ -129,15 +110,16 @@ export function CredentialSetup({
         id: credentialId,
         organisation_id: "org_acme",
         connection_id: connection.id,
-        provider: connection.provider,
+        secret_store_connection_id: secretStoreId,
+        secret_reference: secretReference.trim(),
+        provider: connection.platform,
         kind: kind.trim(),
         display_name: name.trim(),
-        provider_id: method === "import" ? providerId.trim() : null,
+        provider_id: providerId.trim() || null,
         scopes: parsedScopes,
-        consumer_ids: [service.id],
+        consumer_ids: selectedServices.map((service) => service.id),
         active_generation_id: generationId,
         policy_version: policyVersion,
-        playbook_version: playbookVersion,
         created_at: createdAt,
         updated_at: createdAt,
         revision: 0,
@@ -146,7 +128,7 @@ export function CredentialSetup({
         id: generationId,
         organisation_id: "org_acme",
         credential_id: credentialId,
-        provider_id: method === "import" ? providerId.trim() : null,
+        provider_id: providerId.trim() || null,
         fingerprint: null,
         scopes: parsedScopes,
         state: "active",
@@ -157,7 +139,7 @@ export function CredentialSetup({
         created_at: createdAt,
         revoked_at: null,
       },
-      bindings: [{
+      bindings: selectedServices.map((service) => ({
         id: identifier("binding"),
         organisation_id: "org_acme",
         credential_id: credentialId,
@@ -165,13 +147,14 @@ export function CredentialSetup({
         environment_id: service.environment_id,
         runtime_connection_id: service.runtime_connection_id,
         runtime_resource: service.runtime_resource,
+        runtime_secret_name: runtimeSecretNames[service.id].trim(),
         secret_reference: secretReference.trim(),
         current_generation_id: generationId,
         target_generation_id: null,
         verification_id: identifier("verify"),
         required: true,
         revision: 0,
-      }],
+      })),
     }
 
     setSubmitting(true)
@@ -193,40 +176,43 @@ export function CredentialSetup({
       title="Add credential"
       size="wide"
       footerStart={step > 0 && <Button variant="ghost" onClick={() => setStep((value) => Math.max(0, value - 1))} disabled={submitting}><ArrowLeft className="size-3.5" /> Back</Button>}
-      actions={step > 0 && (step < steps.length - 1 ? <Button onClick={next} disabled={!canContinue()}>Continue <ArrowRight className="size-3.5" /></Button> : <Button onClick={submit} disabled={submitting}>{submitting ? "Adding…" : "Add credential"}</Button>)}
+      actions={step < steps.length - 1 ? <Button onClick={next} disabled={!canContinue()}>Continue <ArrowRight className="size-3.5" /></Button> : <Button onClick={submit} disabled={submitting}>{submitting ? "Adding…" : "Add credential"}</Button>}
     >
       <Journey steps={steps} current={step} />
 
-      {step === 0 && <div className="grid gap-3 sm:grid-cols-2">
-        <button className="focus-ring flex min-h-24 items-center gap-4 rounded-2xl border border-[var(--border)] bg-white p-5 text-left hover:border-[#bdb9cf]" onClick={() => choose("import")}><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]"><FileInput className="size-4" /></span><span className="flex-1 text-[12px] font-semibold">Import from provider</span><ArrowRight className="size-4 text-[var(--ink-muted)]" /></button>
-        <button className="focus-ring flex min-h-24 items-center gap-4 rounded-2xl border border-[var(--border)] bg-white p-5 text-left hover:border-[#bdb9cf]" onClick={() => choose("manual")}><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#ececea] text-[var(--ink-soft)]"><Settings2 className="size-4" /></span><span className="flex-1 text-[12px] font-semibold">Configure manually</span><ArrowRight className="size-4 text-[var(--ink-muted)]" /></button>
+      {step === 0 && <div className="grid gap-4 sm:grid-cols-2">
+        <Label title="Management connection"><select className={field} value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>{managementConnections.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></Label>
+        <Label title="Credential name"><input className={field} value={name} onChange={(event) => setName(event.target.value)} placeholder="production-service-key" /></Label>
+        <Label title="Provider credential ID (optional)"><input className={field} value={providerId} onChange={(event) => setProviderId(event.target.value)} placeholder="Provider metadata ID" /></Label>
+        <Label title="Credential type"><input className={field} value={kind} onChange={(event) => setKind(event.target.value)} placeholder="api-key" /></Label>
+        <Label title="Scopes"><input className={field} value={scopes} onChange={(event) => setScopes(event.target.value)} placeholder="read, write" /></Label>
+        {connection?.interface === "browser" && <div className="sm:col-span-2 rounded-xl bg-[var(--accent-soft)] p-4 text-[10px] text-[var(--accent)]">Uses the published Playbook attached to this browser connection.</div>}
+        {connection?.status !== "ready" && <div className="sm:col-span-2 rounded-xl border border-[#ead6b8] bg-[var(--amber-soft)] p-4 text-[10px] text-[var(--amber)]">Finish this connection before importing a credential.</div>}
       </div>}
 
       {step === 1 && <div className="grid gap-4 sm:grid-cols-2">
-        <Label title="Management connection"><select className={field} value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>{managementConnections.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></Label>
-        <Label title="Credential name"><input className={field} value={name} onChange={(event) => setName(event.target.value)} placeholder="production-service-key" /></Label>
-        {method === "import" && <Label title="Provider credential ID"><input className={field} value={providerId} onChange={(event) => setProviderId(event.target.value)} placeholder="Provider metadata ID" /></Label>}
-        <Label title="Credential type"><input className={field} value={kind} onChange={(event) => setKind(event.target.value)} placeholder="api-key" /></Label>
-        <Label title="Scopes"><input className={field} value={scopes} onChange={(event) => setScopes(event.target.value)} placeholder="read, write" /></Label>
+        <Label title="Secret store"><select className={field} value={secretStoreId} onChange={(event) => setSecretStoreId(event.target.value)}>{secretStores.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></Label>
+        <div className="sm:col-span-2"><Label title="Secret reference"><input className={field} value={secretReference} onChange={(event) => setSecretReference(event.target.value)} placeholder="projects/acme-prod/secrets/service-key" /></Label></div>
       </div>}
 
       {step === 2 && <div className="grid gap-4 sm:grid-cols-2">
-        <Label title="Consumer service"><select className={field} value={serviceId} onChange={(event) => setServiceId(event.target.value)}>{graph.services.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></Label>
-        <Label title="Secret store"><select className={field} value={secretStoreId} onChange={(event) => setSecretStoreId(event.target.value)}>{secretStores.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></Label>
-        <div className="sm:col-span-2"><Label title="Secret reference"><input className={field} value={secretReference} onChange={(event) => setSecretReference(event.target.value)} placeholder="projects/acme-prod/secrets/service-key" /></Label></div>
-        <div className="sm:col-span-2 grid grid-cols-2 gap-3 rounded-xl bg-white/70 p-4 text-[10px]"><div><span className="text-[var(--ink-muted)]">Application</span><div className="mt-1 font-semibold">{application?.display_name ?? "—"}</div></div><div><span className="text-[var(--ink-muted)]">Environment</span><div className="mt-1 font-semibold">{environment?.display_name ?? "—"}</div></div></div>
+        <div className="sm:col-span-2 space-y-3">{graph.services.map((service) => {
+          const selected = serviceIds.includes(service.id)
+          const application = applications.find((item) => item.id === service.application_id)
+          const environment = environments.find((item) => item.id === service.environment_id)
+          return <div key={service.id} className="rounded-xl border border-[var(--border)] bg-white/70 p-4"><label className="flex items-start gap-3"><input className="mt-0.5" type="checkbox" checked={selected} onChange={(event) => { setServiceIds((current) => event.target.checked ? [...current, service.id] : current.filter((id) => id !== service.id)); if (event.target.checked) setRuntimeSecretNames((current) => ({ ...current, [service.id]: current[service.id] || slug(name).replaceAll("-", "_").toUpperCase() })) }} /><span className="min-w-0 flex-1"><span className="block text-[11px] font-semibold">{service.display_name}</span><span className="mt-1 block text-[9px] text-[var(--ink-muted)]">{application?.display_name} · {environment?.display_name}</span></span></label>{selected && <div className="mt-3"><Label title="Runtime secret name"><input className={field} value={runtimeSecretNames[service.id] ?? ""} onChange={(event) => setRuntimeSecretNames((current) => ({ ...current, [service.id]: event.target.value }))} placeholder="SERVICE_API_KEY" /></Label></div>}</div>
+        })}</div>
       </div>}
 
       {step === 3 && <div className="grid gap-4 sm:grid-cols-2">
         <Label title="Rotation policy"><select className={field} value={policyVersion} onChange={(event) => setPolicyVersion(event.target.value)}>{policies.filter((item) => item.active_version_id).map((item) => <option key={item.id} value={item.active_version_id!}>{item.name}</option>)}</select></Label>
-        <Label title="Playbook"><select className={field} value={playbookVersion} onChange={(event) => setPlaybookVersion(event.target.value)}><option value="">Select playbook</option>{availablePlaybooks.map((item) => <option key={item.id} value={item.active_version_id!}>{item.name}</option>)}</select></Label>
-        {connection?.status !== "ready" && <div className="sm:col-span-2 rounded-xl border border-[#ead6b8] bg-[var(--amber-soft)] p-4 text-[10px] text-[var(--amber)]">This management connection requires reauthentication.</div>}
+        <div className="sm:col-span-2 rounded-xl bg-white/70 p-4 text-[10px] text-[var(--ink-soft)]">The policy controls triggers, approvals, rollout, verification, and recovery.</div>
       </div>}
 
       {step === 4 && <div>
-        <Section title="Credential"><DetailList><Detail label="Name">{name}</Detail><Detail label="Provider"><Provider value={provider} /></Detail><Detail label="Type">{titleCase(kind)}</Detail><Detail label="Method">{method === "import" ? "Provider API" : "Computer Use"}</Detail></DetailList></Section>
-        <Section title="Mapping"><DetailList><Detail label="Consumer">{service?.display_name}</Detail><Detail label="Application">{application?.display_name}</Detail><Detail label="Environment">{environment?.display_name}</Detail><Detail label="Secret store">{connections.find((item) => item.id === secretStoreId)?.display_name}</Detail></DetailList></Section>
-        <Section title="Controls"><DetailList><Detail label="Policy">{selectedPolicy?.name}</Detail><Detail label="Playbook">{selectedPlaybook?.name}</Detail><Detail label="Connection"><Badge variant={connection?.status === "ready" ? "healthy" : "warning"}>{titleCase(connection?.status ?? "unknown")}</Badge></Detail></DetailList></Section>
+        <Section title="Credential"><DetailList><Detail label="Name">{name}</Detail><Detail label="Platform"><Provider value={provider} /></Detail><Detail label="Type">{titleCase(kind)}</Detail><Detail label="Interface">{titleCase(connection?.interface ?? "")}</Detail></DetailList></Section>
+        <Section title="Mapping"><DetailList><Detail label="Consumers">{selectedServices.map((service) => service.display_name).join(", ")}</Detail><Detail label="Applications">{[...new Set(selectedServices.map((service) => applications.find((item) => item.id === service.application_id)?.display_name).filter(Boolean))].join(", ")}</Detail><Detail label="Environments">{[...new Set(selectedServices.map((service) => environments.find((item) => item.id === service.environment_id)?.display_name).filter(Boolean))].join(", ")}</Detail><Detail label="Secret store">{connections.find((item) => item.id === secretStoreId)?.display_name}</Detail></DetailList></Section>
+        <Section title="Controls"><DetailList><Detail label="Policy">{selectedPolicy?.name}</Detail><Detail label="Browser Playbook">{connection?.interface === "browser" ? connection.playbook_version_id : "Not required"}</Detail><Detail label="Connection"><Badge variant={connection?.status === "ready" ? "healthy" : "warning"}>{titleCase(connection?.status ?? "unknown")}</Badge></Detail></DetailList></Section>
       </div>}
 
       {error && <div role="alert" className="mt-5 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{error}</div>}

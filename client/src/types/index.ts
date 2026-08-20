@@ -1,7 +1,9 @@
 export type Identifier = string
 
-export type ConnectionKind = "provider" | "secret-store" | "runtime" | "telemetry" | "incident" | "browser"
-export type ConnectionStatus = "ready" | "reauthentication-required" | "degraded" | "disabled"
+export type ConnectionRole = "provider" | "secret-store" | "runtime" | "telemetry" | "incident"
+export type ConnectionInterface = "api" | "browser"
+export type ConnectionAuthorization = "oauth" | "workload-identity" | "api-key" | "browser-session"
+export type ConnectionStatus = "setup-required" | "ready" | "reauthentication-required" | "degraded" | "disabled"
 
 export interface HttpOperation {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
@@ -30,14 +32,21 @@ export interface HttpProviderApi {
 export interface Connection {
   id: Identifier
   organisation_id: Identifier
-  kind: ConnectionKind
-  provider: string
+  platform: string
   display_name: string
-  auth_reference: string | null
+  roles: ConnectionRole[]
+  interface: ConnectionInterface
+  authorization: ConnectionAuthorization
+  authorization_reference: string | null
   capabilities: string[]
   allowed_resources: string[]
   http: HttpProviderApi | null
+  playbook_id: Identifier | null
+  playbook_version_id: Identifier | null
   status: ConnectionStatus
+  authenticated_at: string | null
+  authorization_expires_at: string | null
+  last_validated_at: string | null
   region: string
   created_at: string
   updated_at: string
@@ -72,6 +81,7 @@ export interface ConsumerService {
   application_id: Identifier
   environment_id: Identifier
   runtime_connection_id: Identifier
+  telemetry_connection_ids: Identifier[]
   runtime_resource: string
   display_name: string
   repository: string | null
@@ -85,6 +95,8 @@ export interface ManagedCredential {
   id: Identifier
   organisation_id: Identifier
   connection_id: Identifier
+  secret_store_connection_id: Identifier
+  secret_reference: string
   provider: string
   kind: string
   display_name: string
@@ -93,7 +105,6 @@ export interface ManagedCredential {
   consumer_ids: Identifier[]
   active_generation_id: Identifier | null
   policy_version: Identifier
-  playbook_version: Identifier
   created_at: string
   updated_at: string
   revision: number
@@ -125,6 +136,7 @@ export interface ConsumerBinding {
   environment_id: Identifier
   runtime_connection_id: Identifier
   runtime_resource: string
+  runtime_secret_name: string
   secret_reference: string
   current_generation_id: Identifier
   target_generation_id: Identifier | null
@@ -143,7 +155,7 @@ export interface Playbook {
   id: Identifier
   organisation_id: Identifier
   name: string
-  provider: string
+  platform: string
   latest_version: number
   active_version_id: Identifier | null
   created_at: string
@@ -160,6 +172,9 @@ export interface Policy {
   created_at: string
   updated_at: string
   revision: number
+  automatic_triggers?: string[]
+  protected_operations?: string[]
+  rollout?: number[]
 }
 
 export interface Incident {
@@ -197,7 +212,7 @@ export interface Incident {
 export type StageName =
   | "trigger"
   | "preflight"
-  | "playbook"
+  | "plan"
   | "create"
   | "store"
   | "deploy"
@@ -225,13 +240,11 @@ export interface RotationRun {
   credential_id: Identifier
   trigger: Trigger
   policy_version: Identifier
-  dry_run_id: Identifier | null
-  dry_run_playbook_id: Identifier | null
   stage: StageName
   status: RunStatus
   lease: { owner_id: Identifier; fencing_token: number; expires_at: string } | null
   fencing_token: number
-  playbook_version: Identifier | null
+  browser_playbook_version: Identifier | null
   plan_id: Identifier | null
   plan_hash: string | null
   current_generation_id: Identifier | null

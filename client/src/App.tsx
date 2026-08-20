@@ -13,6 +13,7 @@ import { AgentsPage } from "./pages/agents"
 import { ConnectionsPage } from "./pages/connections"
 import { AuditsPage } from "./pages/audits"
 import { SettingsPage } from "./pages/settings"
+import { BrowserSetupPage } from "./pages/browsersetup"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,6 +32,10 @@ export function App() {
   const handleNavigateRotation = (runId: string) => {
     setActiveRunId(runId)
     setCurrentNav("rotations")
+  }
+
+  if (window.location.pathname === "/browser/setup") {
+    return <QueryClientProvider client={queryClient}><BrowserSetupPage /></QueryClientProvider>
   }
 
   const renderContent = () => {

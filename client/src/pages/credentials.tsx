@@ -15,7 +15,7 @@ import type { ManagedCredential } from "../types"
 import { api } from "../lib/api"
 import { formatDate, providerName, titleCase } from "../lib/format"
 
-type CredentialTarget = "approvals" | "rotations" | "connections" | "incidents" | "playbooks"
+type CredentialTarget = "approvals" | "rotations" | "connections" | "incidents" | "applications"
 
 export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate: (target: CredentialTarget) => void; onNavigateRotation: (runId: string) => void }) {
   const queryClient = useQueryClient()
@@ -24,7 +24,7 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
   const [selected, setSelected] = useState<ManagedCredential | null>(null)
   const [creating, setCreating] = useState(false)
   const [tab, setTab] = useState("overview")
-  const [graph, runs, incidents, connections, applications, environments, policies, playbooks] = useQueries({
+  const [graph, runs, incidents, connections, applications, environments, policies] = useQueries({
     queries: [
       { queryKey: ["graph"], queryFn: () => api.getGraph() },
       { queryKey: ["rotations"], queryFn: () => api.getRotations() },
@@ -33,7 +33,6 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
       { queryKey: ["applications"], queryFn: () => api.getApplications() },
       { queryKey: ["environments"], queryFn: () => api.getEnvironments() },
       { queryKey: ["policies"], queryFn: () => api.getPolicies() },
-      { queryKey: ["playbooks"], queryFn: () => api.getPlaybooks() },
     ],
   })
   const createCredential = useMutation({
@@ -52,7 +51,7 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
     return credentials.filter((item) => (provider === "all" || item.provider === provider) && (!term || `${item.display_name} ${item.id} ${item.provider}`.toLowerCase().includes(term)))
   }, [graph.data, provider, search])
 
-  const queries = [graph, runs, incidents, connections, applications, environments, policies, playbooks]
+  const queries = [graph, runs, incidents, connections, applications, environments, policies]
   if (queries.some((query) => query.isLoading)) return <div className="page"><Loading /></div>
   const error = queries.find((query) => query.error)?.error
   if (error) return <div className="page"><Failure error={error} /></div>
@@ -74,11 +73,12 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
     if (connection?.status === "reauthentication-required" || connection?.status === "degraded") return { label: "Open connection", target: "connections" }
     if (run) return { label: "Open rotation", target: "rotations", runId: run.id }
     if (incident) return { label: "Open incident", target: "incidents" }
-    return { label: "Open playbook", target: "playbooks" }
+    return { label: "Open application", target: "applications" }
   }
 
   const selectedServices = selected ? graph.data!.services.filter((service) => selected.consumer_ids.includes(service.id)) : []
   const selectedConnection = selected ? connections.data!.find((item) => item.id === selected.connection_id) : undefined
+  const selectedSecretStore = selected ? connections.data!.find((item) => item.id === selected.secret_store_connection_id) : undefined
   const selectedState = selected ? operationalState(selected) : undefined
   const selectedAction = selected ? actionFor(selected) : undefined
 
@@ -141,7 +141,7 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
             </div>
             {tab === "overview" && <DetailList><Detail label="Type">{titleCase(selected.kind)}</Detail><Detail label="Scopes">{selected.scopes.join(", ") || "None"}</Detail><Detail label="Consumers">{selected.consumer_ids.length}</Detail><Detail label="Updated">{formatDate(selected.updated_at, true)}</Detail></DetailList>}
             {tab === "consumers" && <div className="grid gap-5 sm:grid-cols-2">{selectedServices.map((service) => <div key={service.id}><div className="text-[11px] font-semibold">{service.display_name}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{service.runtime_resource}</div></div>)}</div>}
-            {tab === "control" && <DetailList><Detail label="Connection">{selectedConnection?.display_name}</Detail><Detail label="Status"><Badge variant={selectedConnection?.status === "ready" ? "healthy" : "danger"}>{titleCase(selectedConnection?.status ?? "unknown")}</Badge></Detail></DetailList>}
+            {tab === "control" && <DetailList><Detail label="Provider connection">{selectedConnection?.display_name}</Detail><Detail label="Secret store">{selectedSecretStore?.display_name}</Detail><Detail label="Policy">{policies.data!.find((item) => item.active_version_id === selected.policy_version)?.name}</Detail><Detail label="Browser Playbook">{selectedConnection?.interface === "browser" ? selectedConnection.playbook_version_id : "Not required"}</Detail><Detail label="Status"><Badge variant={selectedConnection?.status === "ready" ? "healthy" : "danger"}>{titleCase(selectedConnection?.status ?? "unknown")}</Badge></Detail></DetailList>}
           </>
         )}
       </Modal>
@@ -154,7 +154,6 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
         applications={applications.data!}
         environments={environments.data!}
         policies={policies.data!}
-        playbooks={playbooks.data!}
         onCreate={(input) => createCredential.mutateAsync(input)}
       />
     </div>

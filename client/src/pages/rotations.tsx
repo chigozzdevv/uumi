@@ -14,7 +14,7 @@ import { formatDate, titleCase } from "../lib/format"
 const stages: Array<{ id: StageName; label: string }> = [
   { id: "trigger", label: "Trigger" },
   { id: "preflight", label: "Preflight" },
-  { id: "playbook", label: "Playbook" },
+  { id: "plan", label: "Plan" },
   { id: "create", label: "Create" },
   { id: "store", label: "Store" },
   { id: "deploy", label: "Deploy" },
