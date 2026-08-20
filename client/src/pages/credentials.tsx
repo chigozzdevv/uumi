@@ -92,7 +92,7 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
 
   if (selected) return (
     <div className="page">
-      <PageHeader eyebrow="Credentials" title={selected.display_name} description="Workload credential identity, consumer mappings, management access, and active rotation controls." onBack={() => setSelected(null)} actions={<>{(selectedAction?.target || selectedAction?.runId) && <Button onClick={() => performAction(selected)}>{selectedAction.label}<ArrowUpRight className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => onNavigate("applications")}>View applications</Button></>} />
+      <PageHeader eyebrow="Credentials" title={selected.display_name} onBack={() => setSelected(null)} actions={<>{(selectedAction?.target || selectedAction?.runId) && <Button onClick={() => performAction(selected)}>{selectedAction.label}<ArrowUpRight className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => onNavigate("applications")}>View applications</Button></>} />
       <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--border)] bg-white px-5 py-4"><Provider value={selected.provider} /><span className="text-[10px] text-[var(--ink-muted)]">{titleCase(selected.kind)}</span><Badge variant={selectedState!.variant}>{selectedState!.label}</Badge><span className="ml-auto text-[10px] text-[var(--ink-muted)]">Updated {formatDate(selected.updated_at, true)}</span></div>
       <div className="mb-6 flex gap-1 border-b border-[var(--border)]">{["overview", "consumers", "control"].map((item) => <button key={item} className={`focus-ring border-b-2 px-4 py-3 text-[11px] font-semibold capitalize ${tab === item ? "border-[var(--ink)] text-[var(--ink)]" : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]"}`} onClick={() => setTab(item)}>{item}</button>)}</div>
       <section className="rounded-2xl border border-[var(--border)] bg-white p-6">
@@ -108,7 +108,6 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
       <PageHeader
         eyebrow="Inventory"
         title="Credentials"
-        description="Workload credentials FireKey manages, where they are stored, and the services that consume them."
         actions={<Button onClick={() => setCreating(true)}><Plus className="size-3.5" /> Add credential</Button>}
       />
 

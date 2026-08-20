@@ -17,7 +17,7 @@ export function SetupPage({
 }: {
   eyebrow: string
   title: string
-  description: string
+  description?: string
   steps: string[]
   current: number
   onBack: () => void
@@ -43,7 +43,7 @@ export function SetupPage({
   )
 }
 
-export function SuccessPage({ eyebrow, title, description, onBack, actions, children }: { eyebrow: string; title: string; description: string; onBack: () => void; actions: ReactNode; children?: ReactNode }) {
+export function SuccessPage({ eyebrow, title, description, onBack, actions, children }: { eyebrow: string; title: string; description?: string; onBack: () => void; actions: ReactNode; children?: ReactNode }) {
   return <div className="page max-w-[920px]"><PageHeader eyebrow={eyebrow} title={title} description={description} onBack={onBack} actions={actions} />{children && <div className="rounded-2xl border border-[var(--border)] bg-white p-7">{children}</div>}</div>
 }
 

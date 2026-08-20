@@ -45,14 +45,14 @@ export function IncidentsPage({ onNavigateRotation }: { onNavigateRotation: (run
   const credentialName = (id: string | null) => graph.data!.credentials.find((item) => item.id === id)?.display_name ?? "Unconfirmed"
 
   if (selected) return <div className="page">
-    <PageHeader eyebrow="Incidents" title={titleCase(selected.source)} description="Exposure or reliability signal correlated to FireKey inventory metadata." onBack={() => setSelected(null)} actions={selected.run_id ? <Button onClick={() => onNavigateRotation(selected.run_id!)}>Open rotation <ArrowUpRight className="size-3.5" /></Button> : undefined} />
+    <PageHeader eyebrow="Incidents" title={titleCase(selected.source)} onBack={() => setSelected(null)} actions={selected.run_id ? <Button onClick={() => onNavigateRotation(selected.run_id!)}>Open rotation <ArrowUpRight className="size-3.5" /></Button> : undefined} />
     <div className="mb-5 flex flex-wrap items-center gap-2"><Badge variant={severityVariant(selected.severity)}>{selected.severity}</Badge><Badge variant={selected.confidence === "verified" ? "healthy" : "active"}>{selected.confidence} confidence</Badge><Badge variant={selected.status === "action-required" ? "warning" : selected.status === "resolved" ? "healthy" : "active"}>{titleCase(selected.status)}</Badge></div>
     <div className="grid gap-5 xl:grid-cols-2"><Section title="Source"><DetailList><Detail label="Repository">{selected.resource.repository ?? "—"}</Detail><Detail label="Project">{selected.resource.project ?? "—"}</Detail><Detail label="Service">{selected.resource.service ?? "—"}</Detail><Detail label="Observed">{formatDate(selected.created_at, true)}</Detail></DetailList></Section><Section title="Correlation"><DetailList><Detail label="Credential">{credentialName(selected.credential_id)}</Detail><Detail label="Provider">{selected.resource.provider ?? "—"}</Detail><Detail label="Candidates">{selected.candidates.length}</Detail><Detail label="Run">{selected.run_id ?? "Not started"}</Detail></DetailList></Section></div>
   </div>
 
   return (
     <div className="page">
-      <PageHeader title="Incidents" description="Signals FireKey has received and correlated to credential metadata." />
+      <PageHeader title="Incidents" />
       <Toolbar value={search} onChange={setSearch} placeholder="Search incidents, repositories, or services" resultCount={rows.length} resultLabel="incidents" onClear={() => { setSearch(""); setStatus("open") }} filters={[{ label: "Status", value: status, defaultValue: "open", onChange: (event) => setStatus(event.target.value), children: <><option value="open">Open incidents</option><option value="all">All incidents</option><option value="action-required">Action required</option><option value="rotation-started">Rotation started</option><option value="resolved">Resolved</option></> }]} />
 
       <div>

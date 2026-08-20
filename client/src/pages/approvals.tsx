@@ -45,7 +45,7 @@ export function ApprovalsPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Approvals" description="Review protected actions with current evidence before FireKey continues." />
+      <PageHeader title="Approvals" />
       {notice && <button className="mb-5 flex w-full items-center gap-3 rounded-[14px] border border-[#bad8c9] bg-[var(--green-soft)] px-4 py-3 text-left text-[11px] text-[var(--green)]" onClick={() => setNotice("")}><Check className="size-3.5" />{notice}<span className="ml-auto">Dismiss</span></button>}
       {decide.error && <div className="mb-5 rounded-[14px] border border-[#dfb8bd] bg-[var(--red-soft)] px-4 py-3 text-[11px] text-[var(--red)]">{decide.error.message}</div>}
 

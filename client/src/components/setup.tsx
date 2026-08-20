@@ -171,7 +171,6 @@ export function CredentialSetup({
     <SetupPage
       eyebrow="Inventory / Credentials"
       title="Add credential"
-      description="Map one workload credential to its management access, storage location, consumers, and control policy. FireKey never asks for the secret value."
       steps={steps}
       current={step}
       onBack={() => setStep((value) => Math.max(0, value - 1))}
