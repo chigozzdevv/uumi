@@ -80,7 +80,7 @@ export function RotationsPage({ activeRunId, onNavigateApproval }: { activeRunId
 
   return (
     <div className="page">
-      <PageHeader title="Rotations" actions={<Button onClick={openCreate} disabled={!availableCredentials.length}><Plus className="size-3.5" /> Start rotation</Button>} />
+      <PageHeader eyebrow="Operations" title="Rotations" actions={<Button onClick={openCreate} disabled={!availableCredentials.length}><Plus className="size-3.5" /> Start rotation</Button>} />
       <div className="mb-6 flex gap-1 border-b border-[var(--border)]">
         {["active", "scheduled", "completed", "failed"].map((item) => <button key={item} className={`focus-ring -mb-px border-b-2 px-4 pb-3 text-[10px] font-semibold capitalize ${filter === item ? "border-[var(--accent)] text-[var(--accent)]" : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]"}`} onClick={() => setFilter(item)}>{titleCase(item)}</button>)}
       </div>
