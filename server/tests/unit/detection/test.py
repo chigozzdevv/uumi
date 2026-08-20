@@ -4,7 +4,9 @@ from typing import Any
 import pytest
 from contracts import (
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     ConsumerBinding,
     CredentialGeneration,
@@ -92,10 +94,14 @@ async def test_detection_uses_stored_metadata_for_browser_managed_credentials() 
             Connection(
                 id="browser_one",
                 organisation_id=organisation_id,
-                kind=ConnectionKind.BROWSER,
-                provider="sendgrid",
+                platform="sendgrid",
                 display_name="SendGrid console",
-                auth_reference="projects/project-one/secrets/sendgrid-session/versions/1",
+                roles=frozenset({ConnectionRole.PROVIDER}),
+                interface=ConnectionInterface.BROWSER,
+                authorization=ConnectionAuthorization.BROWSER_SESSION,
+                authorization_reference=(
+                    "projects/project-one/secrets/sendgrid-session/versions/1"
+                ),
                 capabilities=frozenset({"browser.execute"}),
                 allowed_resources=("app.sendgrid.com",),
                 status=ConnectionStatus.READY,
@@ -161,10 +167,12 @@ class Inventory:
             Connection(
                 id="provider_one",
                 organisation_id="org_one",
-                kind=ConnectionKind.PROVIDER,
-                provider="sendgrid",
+                platform="sendgrid",
                 display_name="SendGrid",
-                auth_reference="projects/project-one/secrets/sendgrid/versions/1",
+                roles=frozenset({ConnectionRole.PROVIDER}),
+                interface=ConnectionInterface.API,
+                authorization=ConnectionAuthorization.API_KEY,
+                authorization_reference="projects/project-one/secrets/sendgrid/versions/1",
                 capabilities=frozenset({"provider.listCredentialMetadata"}),
                 allowed_resources=("provider-key-one",),
                 http=make_http_provider_api(),
@@ -179,10 +187,14 @@ class Inventory:
                 Connection(
                     id="runtime_one",
                     organisation_id="org_one",
-                    kind=ConnectionKind.RUNTIME,
-                    provider="google-cloud-run",
+                    platform="google-cloud-run",
                     display_name="Cloud Run",
-                    auth_reference="workload-identity://firekey",
+                    roles=frozenset({ConnectionRole.RUNTIME}),
+                    interface=ConnectionInterface.API,
+                    authorization=ConnectionAuthorization.WORKLOAD_IDENTITY,
+                    authorization_reference=(
+                        "workload-identity://firekey@project-one.iam.gserviceaccount.com"
+                    ),
                     capabilities=frozenset({"runtime.inspectSecretBindings"}),
                     allowed_resources=(
                         "projects/project-one/locations/us-central1/services/mailer",
@@ -236,7 +248,7 @@ class Runtime:
     def __init__(self, generation_id: str) -> None:
         self.generation_id = generation_id
 
-    async def inspect(self, service_name: str) -> dict[str, Any]:
+    async def inspect(self, connection: Connection, service_name: str) -> dict[str, Any]:
         return {
             "generation_id": self.generation_id,
             "reconciling": False,

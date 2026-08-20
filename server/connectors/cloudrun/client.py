@@ -1,6 +1,8 @@
 import copy
 from typing import Any
 
+from contracts import Connection
+
 from connectors.base import ConnectorContext, ConnectorResponse
 from connectors.base.errors import ConnectorError
 from connectors.google import GoogleRestClient
@@ -19,9 +21,11 @@ class CloudRunConnector:
     def __init__(self, client: GoogleRestClient) -> None:
         self._client = client
 
-    async def inspect(self, service_name: str) -> dict[str, Any]:
+    async def inspect(self, connection: Connection, service_name: str) -> dict[str, Any]:
         service = await self._client.request(
-            "GET", f"https://run.googleapis.com/v2/{_service_name(service_name)}"
+            "GET",
+            f"https://run.googleapis.com/v2/{_service_name(service_name)}",
+            connection=connection,
         )
         return _inspect(service)
 
@@ -31,22 +35,29 @@ class CloudRunConnector:
         payload: dict[str, Any],
         context: ConnectorContext,
     ) -> ConnectorResponse:
-        del context
         service_name = _service(payload)
-        service = await self._client.request("GET", f"https://run.googleapis.com/v2/{service_name}")
+        connection = context.connection
+        service = await self._client.request(
+            "GET",
+            f"https://run.googleapis.com/v2/{service_name}",
+            connection=connection,
+        )
         if tool == "runtime.inspectSecretBindings":
             return ConnectorResponse(result=_inspect(service))
         if tool == "runtime.deployCandidate":
-            return await self._deploy(service_name, service, payload)
+            return await self._deploy(connection, service_name, service, payload)
         if tool == "runtime.shiftTraffic":
-            return await self._traffic(service_name, service, payload)
+            return await self._traffic(connection, service_name, service, payload)
         if tool == "runtime.rollback":
             rollback = _string(payload, "rollback_revision")
-            return await self._patch_traffic(service_name, service, ((rollback, 100, None),))
+            return await self._patch_traffic(
+                connection, service_name, service, ((rollback, 100, None),)
+            )
         raise ConnectorError("unsupported-tool", f"Cloud Run does not support {tool}")
 
     async def _deploy(
         self,
+        connection: Connection,
         service_name: str,
         service: dict[str, Any],
         payload: dict[str, Any],
@@ -54,8 +65,12 @@ class CloudRunConnector:
         previous = service.get("latestReadyRevision")
         if not isinstance(previous, str):
             raise ConnectorError("runtime-not-ready", "Cloud Run service has no ready revision")
-        await self._pin_current(service_name, service, previous)
-        current = await self._client.request("GET", f"https://run.googleapis.com/v2/{service_name}")
+        await self._pin_current(connection, service_name, service, previous)
+        current = await self._client.request(
+            "GET",
+            f"https://run.googleapis.com/v2/{service_name}",
+            connection=connection,
+        )
         template = copy.deepcopy(current.get("template"))
         if not isinstance(template, dict):
             raise ConnectorError("runtime-invalid", "Cloud Run service has no revision template")
@@ -112,18 +127,26 @@ class CloudRunConnector:
             f"https://run.googleapis.com/v2/{service_name}",
             params={"updateMask": "template"},
             json=body,
+            connection=connection,
         )
-        result = await self._client.wait_operation(_operation(operation))
+        result = await self._client.wait_operation(_operation(operation), connection=connection)
         candidate = result.get("latestReadyRevision")
         if not isinstance(candidate, str) or candidate == previous:
             refreshed = await self._client.request(
-                "GET", f"https://run.googleapis.com/v2/{service_name}"
+                "GET",
+                f"https://run.googleapis.com/v2/{service_name}",
+                connection=connection,
             )
             candidate = refreshed.get("latestReadyRevision")
         if not isinstance(candidate, str) or candidate == previous:
             raise ConnectorError("candidate-not-ready", "Cloud Run created no candidate revision")
-        tagged = await self._client.request("GET", f"https://run.googleapis.com/v2/{service_name}")
+        tagged = await self._client.request(
+            "GET",
+            f"https://run.googleapis.com/v2/{service_name}",
+            connection=connection,
+        )
         await self._patch_traffic(
+            connection,
             service_name,
             tagged,
             ((previous, 100, None), (candidate, 0, _string(payload, "tag"))),
@@ -139,6 +162,7 @@ class CloudRunConnector:
 
     async def _traffic(
         self,
+        connection: Connection,
         service_name: str,
         service: dict[str, Any],
         payload: dict[str, Any],
@@ -149,6 +173,7 @@ class CloudRunConnector:
         if not isinstance(percent, int) or percent < 0 or percent > 100:
             raise ConnectorError("invalid-traffic", "traffic percent must be between 0 and 100")
         return await self._patch_traffic(
+            connection,
             service_name,
             service,
             ((rollback, 100 - percent, None), (candidate, percent, None)),
@@ -156,6 +181,7 @@ class CloudRunConnector:
 
     async def _pin_current(
         self,
+        connection: Connection,
         service_name: str,
         service: dict[str, Any],
         revision: str,
@@ -170,10 +196,11 @@ class CloudRunConnector:
                 and not target.get("type")
             ):
                 return
-        await self._patch_traffic(service_name, service, ((revision, 100, None),))
+        await self._patch_traffic(connection, service_name, service, ((revision, 100, None),))
 
     async def _patch_traffic(
         self,
+        connection: Connection,
         service_name: str,
         service: dict[str, Any],
         targets: tuple[tuple[str, int, str | None], ...],
@@ -191,8 +218,9 @@ class CloudRunConnector:
             f"https://run.googleapis.com/v2/{service_name}",
             params={"updateMask": "traffic"},
             json={"name": service_name, "traffic": traffic, "etag": service.get("etag")},
+            connection=connection,
         )
-        result = await self._client.wait_operation(_operation(operation))
+        result = await self._client.wait_operation(_operation(operation), connection=connection)
         return ConnectorResponse(
             result={"service": service_name, "traffic": traffic, **_ready(result)}
         )

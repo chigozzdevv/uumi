@@ -35,7 +35,7 @@ from contracts import (
 )
 from core.errors import CapabilityError, ResourceConflictError, ResourceNotFoundError
 from core.ids import new_id
-from core.storage import FirestoreCatalog
+from core.storage import FirestoreCatalog, FirestoreInventoryRepository
 from core.storage.paths import FirestorePaths
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -196,7 +196,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     driver = BrowserDriver(page, session.policy)
     await driver.enforce_egress()
     sessions = BrowserService(FirestoreBrowserRepository(firestore), _now)
-    capture = SecureCapture(page, driver, SecretManagerConnector(google), _now)
+    capture = SecureCapture(
+        page,
+        driver,
+        SecretManagerConnector(google),
+        FirestoreInventoryRepository(firestore),
+        _now,
+    )
     version = await catalog.get(
         FirestorePaths.playbook_version(
             session.organisation_id, session.playbook_id, session.playbook_version
@@ -435,7 +441,7 @@ async def execute(
         )
     paused_reason = None
     if step.secure_field is not None and capture is None:
-        paused_reason = "secure capture requires human-assisted transfer"
+        paused_reason = "secure capture requires authorised recovery"
     return ExecuteResponse(
         session=changed,
         capture=capture,

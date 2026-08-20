@@ -7,7 +7,9 @@ from connectors import ConnectorContext
 from connectors.google import GoogleRestClient
 from contracts import (
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     DownstreamConfirmation,
     Evidence,
@@ -201,6 +203,9 @@ async def test_telemetry_probe_binds_generation_and_thresholds() -> None:
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
+    google._connection_credentials["verifier@project-one.iam.gserviceaccount.com"] = Credentials(
+        token="token"
+    )  # type: ignore[no-untyped-call]
     executor = ProbeExecutor(sink, google, ConnectorRegistry())  # type: ignore[arg-type]
     definition = ProbeDefinition(
         id="probe_telemetry",
@@ -226,20 +231,28 @@ def _google() -> GoogleRestClient:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
 
-    return GoogleRestClient(
+    google = GoogleRestClient(
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
+    google._connection_credentials["verifier@project-one.iam.gserviceaccount.com"] = Credentials(
+        token="token"
+    )  # type: ignore[no-untyped-call]
+    return google
 
 
 def _connection() -> Connection:
     return Connection(
         id="telemetry_one",
         organisation_id="org_one",
-        kind=ConnectionKind.TELEMETRY,
-        provider="google-cloud-logging",
+        platform="google-cloud-logging",
         display_name="Logging",
-        auth_reference="projects/project-one/serviceAccounts/verifier",
+        roles=frozenset({ConnectionRole.TELEMETRY}),
+        interface=ConnectionInterface.API,
+        authorization=ConnectionAuthorization.WORKLOAD_IDENTITY,
+        authorization_reference=(
+            "workload-identity://verifier@project-one.iam.gserviceaccount.com"
+        ),
         capabilities=frozenset({"telemetry.queryHealth"}),
         allowed_resources=("service.example.com",),
         status=ConnectionStatus.READY,

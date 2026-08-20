@@ -11,7 +11,9 @@ from contracts import (
     ApprovalDecision,
     AuditEvent,
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     ConsumerBinding,
     ConsumerService,
@@ -313,10 +315,12 @@ class InventoryRepository:
             Connection(
                 id="connection_one",
                 organisation_id="org_one",
-                kind=ConnectionKind.PROVIDER,
-                provider="sendgrid",
+                platform="sendgrid",
                 display_name="SendGrid Admin",
-                auth_reference="projects/org-one/secrets/sendgrid-admin/versions/1",
+                roles=frozenset({ConnectionRole.PROVIDER}),
+                interface=ConnectionInterface.API,
+                authorization=ConnectionAuthorization.API_KEY,
+                authorization_reference=("projects/org-one/secrets/sendgrid-admin/versions/1"),
                 capabilities=frozenset({"create", "revoke"}),
                 allowed_resources=("sendgrid:*",),
                 http=make_http_provider_api(),
@@ -383,7 +387,7 @@ class InventoryRepository:
         organisation_id: str,
         connection_id: str,
         expected_revision: int,
-        auth_reference: str,
+        authorization_reference: str | None,
         status: ConnectionStatus,
         updated_at: datetime,
     ) -> Connection:
@@ -505,10 +509,12 @@ class BrowserSetup:
         connection = Connection(
             id=session.connection_id,
             organisation_id=organisation_id,
-            kind=ConnectionKind.BROWSER,
-            provider="vendor",
+            platform="vendor",
             display_name="Vendor console",
-            auth_reference=f"{session.secret_container}/versions/2",
+            roles=frozenset({ConnectionRole.PROVIDER}),
+            interface=ConnectionInterface.BROWSER,
+            authorization=ConnectionAuthorization.BROWSER_SESSION,
+            authorization_reference=f"{session.secret_container}/versions/2",
             capabilities=frozenset({"browser.execute"}),
             allowed_resources=("*.vendor.example.com",),
             status=ConnectionStatus.READY,
@@ -519,7 +525,7 @@ class BrowserSetup:
         self.session = session.model_copy(
             update={
                 "status": SetupStatus.COMPLETE,
-                "auth_reference": connection.auth_reference,
+                "auth_reference": connection.authorization_reference,
                 "revision": session.revision + 1,
             }
         )
@@ -875,7 +881,7 @@ async def test_list_inventory_collections() -> None:
 
     assert connections.status_code == 200
     assert [item["id"] for item in connections.json()] == ["connection_one"]
-    assert connections.json()[0]["auth_reference"] == (
+    assert connections.json()[0]["authorization_reference"] == (
         "projects/org-one/secrets/sendgrid-admin/versions/1"
     )
     assert applications.status_code == 200

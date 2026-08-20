@@ -3,7 +3,17 @@ from typing import Any
 
 import pytest
 from capture import CaptureError, SecureCapture
-from contracts import PageCheckpoint, SecureField, Selector, SelectorKind
+from contracts import (
+    Connection,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
+    ConnectionStatus,
+    PageCheckpoint,
+    SecureField,
+    Selector,
+    SelectorKind,
+)
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
@@ -71,12 +81,37 @@ class Secrets:
     def __init__(self) -> None:
         self.seen: bytes | None = None
 
-    async def add_version(self, secret: str, value: Any) -> dict[str, str]:
+    async def add_version_for(
+        self, connection: Connection, secret: str, value: Any
+    ) -> dict[str, str]:
+        assert connection.id == "sink_one"
         assert secret == "projects/project-one/secrets/key"
         self.seen = value.bytes()
         return {
             "secret_reference": "projects/project-one/secrets/key/versions/7",
         }
+
+
+class Connections:
+    async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
+        return Connection(
+            id=resource_id,
+            organisation_id=organisation_id,
+            platform="google-secret-manager",
+            display_name="Production secret store",
+            roles=frozenset({ConnectionRole.SECRET_STORE}),
+            interface=ConnectionInterface.API,
+            authorization=ConnectionAuthorization.WORKLOAD_IDENTITY,
+            authorization_reference=(
+                "workload-identity://capture@project-one.iam.gserviceaccount.com"
+            ),
+            capabilities=frozenset({"secretStore.createVersion"}),
+            allowed_resources=("projects/project-one/secrets/key",),
+            status=ConnectionStatus.READY,
+            region="us-east1",
+            created_at=NOW,
+            updated_at=NOW,
+        )
 
 
 @pytest.mark.anyio
@@ -88,6 +123,7 @@ async def test_capture_stores_masks_checks_and_only_returns_reference() -> None:
         page,  # type: ignore[arg-type]
         Driver(locator),  # type: ignore[arg-type]
         secrets,  # type: ignore[arg-type]
+        Connections(),
         lambda: NOW,
     )
 
@@ -114,6 +150,7 @@ async def test_capture_fails_closed_if_secret_remains_elsewhere_in_dom() -> None
         Page(locator, exposed=True),  # type: ignore[arg-type]
         Driver(locator),  # type: ignore[arg-type]
         Secrets(),  # type: ignore[arg-type]
+        Connections(),
         lambda: NOW,
     )
 

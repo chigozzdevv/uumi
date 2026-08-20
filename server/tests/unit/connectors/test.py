@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 from connectors.base import ConnectorContext
-from connectors.base.errors import AmbiguousMutationError
+from connectors.base.errors import AmbiguousMutationError, ConnectorError
 from connectors.github import GitHubWebhook
 from connectors.google import GoogleRestClient
 from connectors.http import HttpProviderConnector
@@ -16,7 +16,9 @@ from connectors.scc import SecurityCommandCenterFinding
 from connectors.secrets import SecretManagerConnector
 from contracts import (
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     HttpOperation,
     HttpProviderApi,
@@ -39,10 +41,12 @@ def _context() -> ConnectorContext:
     connection = Connection(
         id="connection_one",
         organisation_id="org_one",
-        kind=ConnectionKind.PROVIDER,
-        provider="sendgrid",
+        platform="sendgrid",
         display_name="SendGrid production",
-        auth_reference="projects/project-one/secrets/admin/versions/1",
+        roles=frozenset({ConnectionRole.PROVIDER}),
+        interface=ConnectionInterface.API,
+        authorization=ConnectionAuthorization.API_KEY,
+        authorization_reference="projects/project-one/secrets/admin/versions/1",
         capabilities=HttpProviderConnector.tools,
         allowed_resources=("sendgrid",),
         http=make_http_provider_api(),
@@ -70,6 +74,28 @@ def _context() -> ConnectorContext:
         run=run,
         now=NOW,
         idempotency_key="request_one",
+    )
+
+
+def _runtime_context() -> ConnectorContext:
+    context = _context()
+    return ConnectorContext(
+        request_id=context.request_id,
+        agent_id=context.agent_id,
+        connection=context.connection.model_copy(
+            update={
+                "platform": "cloud-run",
+                "roles": frozenset({ConnectionRole.RUNTIME}),
+                "authorization": ConnectionAuthorization.WORKLOAD_IDENTITY,
+                "authorization_reference": (
+                    "workload-identity://runtime@project-one.iam.gserviceaccount.com"
+                ),
+                "http": None,
+            }
+        ),
+        run=context.run,
+        now=context.now,
+        idempotency_key=context.idempotency_key,
     )
 
 
@@ -197,7 +223,7 @@ async def test_sendgrid_timeout_deletes_attributable_orphan_and_stops() -> None:
 
 
 @pytest.mark.anyio
-async def test_sendgrid_stale_reconcile_cleans_provider_and_secret_orphans() -> None:
+async def test_provider_stale_reconcile_cleans_provider_orphan() -> None:
     listed_keys = 0
     listed_versions = 0
     deleted: list[str] = []
@@ -268,7 +294,7 @@ async def test_sendgrid_stale_reconcile_cleans_provider_and_secret_orphans() -> 
     await connector.reconcile("provider.createCredential", payload, state, _context())
 
     assert deleted == ["/v3/api_keys/orphan-one"]
-    assert disabled == ["/v1/projects/project-one/secrets/key/versions/2:disable"]
+    assert disabled == []
     await google.close()
 
 
@@ -324,7 +350,7 @@ async def test_declared_header_auth_sends_the_configured_api_key() -> None:
         request_id=context.request_id,
         agent_id=context.agent_id,
         connection=context.connection.model_copy(
-            update={"provider": "internal-vendor", "http": api}
+            update={"platform": "internal-vendor", "http": api}
         ),
         run=context.run,
         now=context.now,
@@ -585,6 +611,9 @@ async def test_cloudrun_deploy_supports_multi_container_with_target() -> None:
         raise AssertionError(f"unexpected request {request.method} {request.url}")
 
     google = _google(run_handler)
+    google._connection_credentials["runtime@project-one.iam.gserviceaccount.com"] = Credentials(
+        token="token"
+    )  # type: ignore[no-untyped-call]
     connector = CloudRunConnector(google)
 
     response = await connector.execute(
@@ -598,12 +627,26 @@ async def test_cloudrun_deploy_supports_multi_container_with_target() -> None:
             "generation_id": "gen_2",
             "tag": "candidate",
         },
-        _context(),
+        _runtime_context(),
     )
 
     assert response.result["candidate_revision"] == "rev-2"
     assert response.result["rollback_revision"] == "rev-1"
     assert response.result["generation_id"] == "gen_2"
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_google_customer_calls_reject_process_identity_fallback() -> None:
+    google = _google(lambda request: httpx.Response(200, json={}))
+
+    with pytest.raises(ConnectorError, match="workload-identity"):
+        await google.request(
+            "GET",
+            "https://run.googleapis.com/v2/projects/p/locations/r/services/s",
+            connection=_context().connection,
+        )
+
     await google.close()
 
 

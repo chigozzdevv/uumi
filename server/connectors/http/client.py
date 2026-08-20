@@ -1,10 +1,20 @@
 import base64
 import re
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
-from contracts import Connection, HttpAuth, HttpAuthScheme, HttpOperation, HttpProviderApi
+from contracts import (
+    Connection,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
+    HttpAuth,
+    HttpAuthScheme,
+    HttpOperation,
+    HttpProviderApi,
+)
 
 from connectors.base import ConnectorContext, ConnectorResponse, SecretValue
 from connectors.base.errors import AmbiguousMutationError, ConnectorError
@@ -31,7 +41,7 @@ class HttpProviderConnector:
 
     async def metadata(self, connection: Connection) -> tuple[dict[str, Any], ...]:
         api = _api(connection)
-        headers = await self._headers(connection.auth_reference, api.auth)
+        headers = await self._headers(connection.authorization_reference, api.auth)
         return tuple(
             self._metadata(api.list_credentials, item) for item in await self._list(api, headers)
         )
@@ -46,7 +56,7 @@ class HttpProviderConnector:
         if tool == "provider.listCredentialMetadata":
             metadata = await self.metadata(context.connection)
             return ConnectorResponse(result={"credentials": list(metadata)})
-        headers = await self._headers(context.connection.auth_reference, api.auth)
+        headers = await self._headers(context.connection.authorization_reference, api.auth)
         if tool == "provider.getCredentialStatus":
             key_id = _string(payload, "provider_id")
             keys = await self._list(api, headers)
@@ -80,7 +90,7 @@ class HttpProviderConnector:
         if tool != "provider.createCredential":
             return {}
         api = _api(context.connection)
-        headers = await self._headers(context.connection.auth_reference, api.auth)
+        headers = await self._headers(context.connection.authorization_reference, api.auth)
         field = api.list_credentials.provider_id_field
         before = tuple(
             sorted(
@@ -89,19 +99,9 @@ class HttpProviderConnector:
                 if field and isinstance(key_id := key.get(field), str)
             )
         )
-        secret_resource = _string(payload, "secret_resource")
-        secret_versions = tuple(
-            sorted(
-                name
-                for item in await self._secrets.versions(secret_resource)
-                if isinstance(name := item.get("name"), str)
-            )
-        )
         return {
             "name": _string(payload, "name"),
             "before_ids": before,
-            "secret_resource": secret_resource,
-            "before_secret_versions": secret_versions,
         }
 
     async def reconcile(
@@ -116,16 +116,9 @@ class HttpProviderConnector:
         api = _api(context.connection)
         name = _string(payload, "name")
         before = state.get("before_ids")
-        secret_resource = state.get("secret_resource")
-        before_versions = state.get("before_secret_versions")
-        if (
-            state.get("name") != name
-            or not isinstance(before, tuple)
-            or not isinstance(secret_resource, str)
-            or not isinstance(before_versions, tuple)
-        ):
+        if state.get("name") != name or not isinstance(before, tuple):
             raise AmbiguousMutationError("provider reconciliation checkpoint is invalid")
-        headers = await self._headers(context.connection.auth_reference, api.auth)
+        headers = await self._headers(context.connection.authorization_reference, api.auth)
         after = await self._list(api, headers)
         id_field = api.list_credentials.provider_id_field
         name_field = api.list_credentials.name_field or api.create_credential.name_field
@@ -138,15 +131,7 @@ class HttpProviderConnector:
             and isinstance(key.get(id_field), str)
             and key.get(id_field) not in before
         ]
-        versions = await self._secrets.versions(secret_resource)
-        version_candidates = [
-            item
-            for item in versions
-            if isinstance(item.get("name"), str)
-            and item.get("name") not in before_versions
-            and item.get("state") == "ENABLED"
-        ]
-        if len(candidates) > 1 or len(version_candidates) > 1:
+        if len(candidates) > 1:
             raise AmbiguousMutationError(
                 "stale provider create has multiple attributable cleanup candidates"
             )
@@ -157,10 +142,6 @@ class HttpProviderConnector:
                 api, api.revoke_credential, headers, {"provider_id": key_id}
             )
             _expected(response, set(api.revoke_credential.success_statuses) | {404})
-        if version_candidates:
-            version = version_candidates[0]["name"]
-            assert isinstance(version, str)
-            await self._secrets.disable(version)
         return None
 
     async def _create(
@@ -310,8 +291,31 @@ class HttpProviderConnector:
 
 
 def _api(connection: Connection) -> HttpProviderApi:
+    if (
+        connection.interface is not ConnectionInterface.API
+        or ConnectionRole.PROVIDER not in connection.roles
+        or connection.authorization
+        not in {ConnectionAuthorization.API_KEY, ConnectionAuthorization.OAUTH}
+    ):
+        raise ConnectorError(
+            "invalid-provider-connection",
+            "HTTP provider operations require an API provider connection",
+        )
+    if (
+        connection.authorization_expires_at is not None
+        and connection.authorization_expires_at <= datetime.now(UTC)
+    ):
+        raise ConnectorError("provider-reauthentication", "provider authorization has expired")
     if connection.http is None:
         raise ConnectorError("missing-provider-api", "provider connection has no HTTP API")
+    if (
+        connection.authorization is ConnectionAuthorization.OAUTH
+        and connection.http.auth.scheme is not HttpAuthScheme.BEARER
+    ):
+        raise ConnectorError(
+            "invalid-provider-authorization",
+            "OAuth provider connections require bearer transport",
+        )
     return connection.http
 
 

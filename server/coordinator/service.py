@@ -16,7 +16,8 @@ from contracts import (
     ApprovalDecision,
     AuditEvent,
     Connection,
-    ConnectionKind,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     ConnectionWaiter,
     ConsumerBinding,
@@ -447,13 +448,31 @@ class StageCoordinator:
             )
             for item in assignment.connection_ids
         ]
-        if any(item.status is not ConnectionStatus.READY for item in connections):
+        now = self._clock()
+        if any(
+            item.status is not ConnectionStatus.READY
+            or (item.authorization_expires_at is not None and item.authorization_expires_at <= now)
+            for item in connections
+        ):
             raise ValueError("one or more playbook connections are not ready")
-        kinds = {item.kind for item in connections}
-        required = required_connection_kinds(version.definition.execution)
-        if not required.issubset(kinds):
+        roles = frozenset(role for item in connections for role in item.roles)
+        required = required_connection_roles(version.definition.execution)
+        if not required.issubset(roles):
             names = ", ".join(sorted(item.value for item in required))
             raise ValueError(f"{names} connections are required")
+        provider_connections = tuple(
+            item for item in connections if ConnectionRole.PROVIDER in item.roles
+        )
+        if version.definition.execution is ExecutionMethod.COMPUTER:
+            if (
+                len(provider_connections) != 1
+                or provider_connections[0].interface is not ConnectionInterface.BROWSER
+            ):
+                raise ValueError("computer execution requires exactly one browser provider")
+        elif not any(
+            item.interface is ConnectionInterface.API for item in provider_connections
+        ) or any(item.interface is ConnectionInterface.BROWSER for item in connections):
+            raise ValueError("API execution requires an API provider connection")
         bindings = await self._bindings(run, credential)
         if {item.service_id for item in bindings} != set(credential.consumer_ids):
             raise ValueError("consumer bindings do not cover credential inventory")
@@ -1380,11 +1399,8 @@ def _execution_id(request: StageExecutionRequest) -> str:
     return _id("stage", request.run_id, request.stage.value, str(request.expected_revision))
 
 
-def required_connection_kinds(execution: ExecutionMethod) -> frozenset[ConnectionKind]:
-    core = {ConnectionKind.SECRET, ConnectionKind.RUNTIME}
-    if execution is ExecutionMethod.COMPUTER:
-        return frozenset({ConnectionKind.BROWSER, *core})
-    return frozenset({ConnectionKind.PROVIDER, *core})
+def required_connection_roles(_: ExecutionMethod) -> frozenset[ConnectionRole]:
+    return frozenset({ConnectionRole.PROVIDER, ConnectionRole.SECRET_STORE, ConnectionRole.RUNTIME})
 
 
 def _id(prefix: str, *values: str) -> str:

@@ -21,7 +21,9 @@ from contracts import (
     Approval,
     AuditEvent,
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     ExecutionMethod,
     PlaybookAssignment,
@@ -81,7 +83,7 @@ class Provider:
         context: ConnectorContext,
     ) -> ConnectorResponse | None:
         del tool, payload, context
-        assert state == {"baseline": ()}
+        assert state.get("baseline") == ()
         return None
 
 
@@ -102,11 +104,11 @@ class Repository:
             }
         )
         self.provider = _connection(
-            "provider_one", ConnectionKind.PROVIDER, "provider", Provider.tools
+            "provider_one", ConnectionRole.PROVIDER, "provider", Provider.tools
         )
         self.sink = _connection(
             "sink_one",
-            ConnectionKind.SECRET,
+            ConnectionRole.SECRET_STORE,
             "google-secret-manager",
             SecretManagerConnector.tools,
         )
@@ -307,6 +309,8 @@ async def test_broker_stores_one_time_secret_and_deduplicates_provider_call() ->
     stored: dict[str, Any] = {}
 
     def google_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"versions": []})
         stored.update(__import__("json").loads(request.content))
         return httpx.Response(
             200,
@@ -320,11 +324,15 @@ async def test_broker_stores_one_time_secret_and_deduplicates_provider_call() ->
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
         client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
     )
+    google._connection_credentials["firekey@project-one.iam.gserviceaccount.com"] = Credentials(
+        token="token"
+    )  # type: ignore[no-untyped-call]
     provider = Provider()
     registry = ConnectorRegistry()
-    registry.register(ConnectionKind.PROVIDER, "provider", provider)
+    registry.register(ConnectionRole.PROVIDER, ConnectionInterface.API, "provider", provider)
     registry.register(
-        ConnectionKind.SECRET,
+        ConnectionRole.SECRET_STORE,
+        ConnectionInterface.API,
         "google-secret-manager",
         SecretManagerConnector(google),
     )
@@ -388,6 +396,8 @@ async def test_broker_recovers_expired_create_before_retrying() -> None:
     stored: dict[str, Any] = {}
 
     def google_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"versions": []})
         stored.update(__import__("json").loads(request.content))
         return httpx.Response(
             200,
@@ -401,11 +411,15 @@ async def test_broker_recovers_expired_create_before_retrying() -> None:
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
         client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
     )
+    google._connection_credentials["firekey@project-one.iam.gserviceaccount.com"] = Credentials(
+        token="token"
+    )  # type: ignore[no-untyped-call]
     provider = Provider()
     registry = ConnectorRegistry()
-    registry.register(ConnectionKind.PROVIDER, "provider", provider)
+    registry.register(ConnectionRole.PROVIDER, ConnectionInterface.API, "provider", provider)
     registry.register(
-        ConnectionKind.SECRET,
+        ConnectionRole.SECRET_STORE,
+        ConnectionInterface.API,
         "google-secret-manager",
         SecretManagerConnector(google),
     )
@@ -444,7 +458,11 @@ async def test_broker_recovers_expired_create_before_retrying() -> None:
     await repository.begin(
         request,
         request_hash,
-        {"baseline": ()},
+        {
+            "baseline": (),
+            "secret_resource": "projects/project-one/secrets/credential",
+            "before_secret_versions": (),
+        },
         NOW - timedelta(minutes=5),
         NOW - timedelta(minutes=1),
     )
@@ -468,11 +486,36 @@ async def test_broker_recovers_expired_create_before_retrying() -> None:
 @pytest.mark.anyio
 async def test_broker_leaves_ambiguous_secret_write_reconcilable() -> None:
     writes = 0
+    orphan_exists = False
+    disabled: list[str] = []
 
     def google_handler(request: httpx.Request) -> httpx.Response:
-        nonlocal writes
+        nonlocal orphan_exists, writes
+        if request.method == "GET":
+            versions = (
+                [
+                    {
+                        "name": "projects/project-one/secrets/credential/versions/6",
+                        "state": "ENABLED",
+                    }
+                ]
+                if orphan_exists
+                else []
+            )
+            return httpx.Response(200, json={"versions": versions})
+        if request.url.path.endswith(":disable"):
+            disabled.append(request.url.path)
+            orphan_exists = False
+            return httpx.Response(
+                200,
+                json={
+                    "name": "projects/project-one/secrets/credential/versions/6",
+                    "state": "DISABLED",
+                },
+            )
         writes += 1
         if writes == 1:
+            orphan_exists = True
             raise httpx.ReadTimeout("addVersion response was lost", request=request)
         return httpx.Response(
             200,
@@ -486,11 +529,15 @@ async def test_broker_leaves_ambiguous_secret_write_reconcilable() -> None:
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
         client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
     )
+    google._connection_credentials["firekey@project-one.iam.gserviceaccount.com"] = Credentials(
+        token="token"
+    )  # type: ignore[no-untyped-call]
     provider = Provider()
     registry = ConnectorRegistry()
-    registry.register(ConnectionKind.PROVIDER, "provider", provider)
+    registry.register(ConnectionRole.PROVIDER, ConnectionInterface.API, "provider", provider)
     registry.register(
-        ConnectionKind.SECRET,
+        ConnectionRole.SECRET_STORE,
+        ConnectionInterface.API,
         "google-secret-manager",
         SecretManagerConnector(google),
     )
@@ -560,18 +607,19 @@ async def test_broker_leaves_ambiguous_secret_write_reconcilable() -> None:
     assert result.succeeded
     assert provider.creations == 2
     assert writes == 2
+    assert disabled == ["/v1/projects/project-one/secrets/credential/versions/6:disable"]
     await google.close()
 
 
 def _connection(
     connection_id: str,
-    kind: ConnectionKind,
-    provider: str,
+    role: ConnectionRole,
+    platform: str,
     tools: frozenset[str],
 ) -> Connection:
     resources = (
         "projects/project-one/secrets/credential"
-        if kind is ConnectionKind.SECRET
+        if role is ConnectionRole.SECRET_STORE
         else "provider-key-one"
     )
     from testkit import make_http_provider_api
@@ -579,13 +627,23 @@ def _connection(
     return Connection(
         id=connection_id,
         organisation_id="org_one",
-        kind=kind,
-        provider=provider,
-        display_name=provider,
-        auth_reference="projects/project-one/secrets/auth/versions/1",
+        platform=platform,
+        display_name=platform,
+        roles=frozenset({role}),
+        interface=ConnectionInterface.API,
+        authorization=(
+            ConnectionAuthorization.WORKLOAD_IDENTITY
+            if role is ConnectionRole.SECRET_STORE
+            else ConnectionAuthorization.API_KEY
+        ),
+        authorization_reference=(
+            "workload-identity://firekey@project-one.iam.gserviceaccount.com"
+            if role is ConnectionRole.SECRET_STORE
+            else "projects/project-one/secrets/auth/versions/1"
+        ),
         capabilities=tools,
         allowed_resources=(resources,),
-        http=make_http_provider_api() if kind is ConnectionKind.PROVIDER else None,
+        http=make_http_provider_api() if role is ConnectionRole.PROVIDER else None,
         status=ConnectionStatus.READY,
         region="us-east1",
         created_at=NOW,

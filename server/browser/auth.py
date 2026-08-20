@@ -1,9 +1,15 @@
 import json
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from connectors.base import SecretValue
-from contracts import Connection, ConnectionKind, ConnectionStatus
+from contracts import (
+    Connection,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionStatus,
+)
 from core.errors import ResourceConflictError
 
 
@@ -20,13 +26,24 @@ class BrowserAuthBroker:
         connection: Connection,
         allowed_domains: tuple[str, ...],
     ) -> dict[str, Any]:
-        if connection.kind is not ConnectionKind.BROWSER:
+        if (
+            connection.interface is not ConnectionInterface.BROWSER
+            or connection.authorization is not ConnectionAuthorization.BROWSER_SESSION
+        ):
             raise ResourceConflictError("browser authentication requires a browser connection")
-        if connection.status is not ConnectionStatus.READY or connection.auth_reference is None:
+        expired = (
+            connection.authorization_expires_at is not None
+            and connection.authorization_expires_at <= datetime.now(UTC)
+        )
+        if (
+            connection.status is not ConnectionStatus.READY
+            or connection.authorization_reference is None
+            or expired
+        ):
             raise ResourceConflictError(
                 "provider browser authentication requires a ready connection"
             )
-        secret = await self._secrets.access(connection.auth_reference)
+        secret = await self._secrets.access(connection.authorization_reference)
         try:
             try:
                 state = json.loads(secret.bytes())

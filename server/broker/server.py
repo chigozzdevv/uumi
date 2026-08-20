@@ -8,7 +8,7 @@ from connectors.cloudrun import CloudRunConnector
 from connectors.google import GoogleRestClient
 from connectors.http import HttpProviderConnector
 from connectors.secrets import SecretManagerConnector
-from contracts import ConnectionKind, ToolRequest, ToolResult
+from contracts import ConnectionInterface, ConnectionRole, ToolRequest, ToolResult
 from core.audit import AuditWriter
 from core.storage import FirestoreAuditRepository
 from google.cloud.firestore_v1 import AsyncClient
@@ -51,9 +51,24 @@ async def lifespan(_: MCPServer[Any]) -> Any:
     secrets = SecretManagerConnector(google)
     signer = CapabilityVerifier.decode(settings.capability_public_key)
     connectors = ConnectorRegistry()
-    connectors.register(ConnectionKind.SECRET, "google-secret-manager", secrets)
-    connectors.register(ConnectionKind.PROVIDER, "*", HttpProviderConnector(secrets))
-    connectors.register(ConnectionKind.RUNTIME, "cloud-run", CloudRunConnector(google))
+    connectors.register(
+        ConnectionRole.SECRET_STORE,
+        ConnectionInterface.API,
+        "google-secret-manager",
+        secrets,
+    )
+    connectors.register(
+        ConnectionRole.PROVIDER,
+        ConnectionInterface.API,
+        "*",
+        HttpProviderConnector(secrets),
+    )
+    connectors.register(
+        ConnectionRole.RUNTIME,
+        ConnectionInterface.API,
+        "cloud-run",
+        CloudRunConnector(google),
+    )
     service = BrokerService(
         FirestoreBrokerRepository(firestore),
         connectors,

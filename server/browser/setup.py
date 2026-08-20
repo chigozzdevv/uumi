@@ -10,7 +10,8 @@ from typing import Any, Protocol, TypeVar
 import httpx
 from contracts import (
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
     ConnectionStatus,
     ConnectionWaiter,
     Contract,
@@ -61,7 +62,7 @@ class SetupConnections(Protocol):
         organisation_id: str,
         connection_id: str,
         expected_revision: int,
-        auth_reference: str | None,
+        authorization_reference: str | None,
         status: ConnectionStatus,
         updated_at: datetime,
     ) -> Connection: ...
@@ -165,7 +166,10 @@ class BrowserSetupService:
         extra_domains: tuple[str, ...] = (),
     ) -> tuple[SetupSession, str]:
         connection = await self._connections.get_connection(organisation_id, connection_id)
-        if connection.kind is not ConnectionKind.BROWSER:
+        if (
+            connection.interface is not ConnectionInterface.BROWSER
+            or connection.authorization is not ConnectionAuthorization.BROWSER_SESSION
+        ):
             raise ResourceConflictError("browser setup requires a browser connection")
         await self._require_secret(secret_container)
         domains = connection.allowed_resources
@@ -300,8 +304,10 @@ class BrowserSetupService:
             completed_at = self._clock()
             expected_connection = previous_connection.model_copy(
                 update={
-                    "auth_reference": auth_reference,
+                    "authorization_reference": auth_reference,
                     "status": ConnectionStatus.READY,
+                    "authenticated_at": completed_at,
+                    "last_validated_at": completed_at,
                     "updated_at": completed_at,
                     "revision": previous_connection.revision + 1,
                 }

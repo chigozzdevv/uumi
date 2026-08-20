@@ -12,7 +12,8 @@ from contracts import (
     Approval,
     ApprovalDecision,
     Connection,
-    ConnectionKind,
+    ConnectionInterface,
+    ConnectionRole,
     Evidence,
     PlaybookAssignment,
     PlaybookVersion,
@@ -96,21 +97,36 @@ class EvidenceSink(Protocol):
 
 class ConnectorRegistry:
     def __init__(self) -> None:
-        self._connectors: dict[tuple[ConnectionKind, str], Connector] = {}
+        self._connectors: dict[tuple[ConnectionRole, ConnectionInterface, str], Connector] = {}
 
-    def register(self, kind: ConnectionKind, provider: str, connector: Connector) -> None:
-        key = (kind, provider)
+    def register(
+        self,
+        role: ConnectionRole,
+        interface: ConnectionInterface,
+        platform: str,
+        connector: Connector,
+    ) -> None:
+        key = (role, interface, platform)
         if key in self._connectors:
-            raise ValueError(f"connector {kind.value}/{provider} is already registered")
+            raise ValueError(
+                f"connector {role.value}/{interface.value}/{platform} is already registered"
+            )
         self._connectors[key] = connector
 
     def resolve(self, connection: Connection, tool: str) -> Connector:
-        connector = self._connectors.get((connection.kind, connection.provider))
-        if connector is None and connection.kind is ConnectionKind.PROVIDER:
-            connector = self._connectors.get((connection.kind, "*"))
+        role = _tool_role(tool)
+        if role not in connection.roles:
+            raise CapabilityError(
+                f"connection {connection.id} does not provide the {role.value} role"
+            )
+        key = (role, connection.interface, connection.platform)
+        connector = self._connectors.get(key)
+        if connector is None and role is ConnectionRole.PROVIDER:
+            connector = self._connectors.get((role, connection.interface, "*"))
         if connector is None or tool not in connector.tools:
             raise CapabilityError(
-                f"no connector provides {tool} for {connection.kind.value}/{connection.provider}"
+                f"no connector provides {tool} for "
+                f"{role.value}/{connection.interface.value}/{connection.platform}"
             )
         return connector
 
@@ -165,7 +181,7 @@ class BrokerService:
         )
         connector = self._connectors.resolve(connection, request.tool)
         if previous is None:
-            reconciliation = await self._prepare(connector, request, context)
+            reconciliation = await self._prepare(connector, request, context, assignment)
             await self._repository.begin(
                 request,
                 request_hash,
@@ -188,7 +204,13 @@ class BrokerService:
                 now,
                 now + self._attempt_lease,
             )
-            reconciled = await self._reconcile(connector, request, context, previous.reconciliation)
+            reconciled = await self._reconcile(
+                connector,
+                request,
+                context,
+                assignment,
+                previous.reconciliation,
+            )
             if reconciled is not None:
                 reconciled = await self._store_provider_secret(
                     request, assignment, reconciled, context
@@ -257,10 +279,25 @@ class BrokerService:
         connector: Connector,
         request: ToolRequest,
         context: ConnectorContext,
+        assignment: PlaybookAssignment,
     ) -> dict[str, str | int | bool | tuple[str, ...]]:
         if not isinstance(connector, ReconcilesMutations):
             return {}
         value = await connector.prepare(request.tool, request.payload, context)
+        if request.tool == "provider.createCredential":
+            sink, secrets, secret_resource = await self._secret_sink(request, assignment)
+            versions = tuple(
+                sorted(
+                    name
+                    for item in await secrets.versions_for(sink, secret_resource)
+                    if isinstance(name := item.get("name"), str)
+                )
+            )
+            value = {
+                **value,
+                "secret_resource": secret_resource,
+                "before_secret_versions": versions,
+            }
         if not isinstance(value, dict) or _contains_sensitive(value):
             raise ConnectorError(
                 "invalid-reconciliation-state",
@@ -273,6 +310,7 @@ class BrokerService:
         connector: Connector,
         request: ToolRequest,
         context: ConnectorContext,
+        assignment: PlaybookAssignment,
         state: dict[str, str | int | bool | tuple[str, ...]],
     ) -> ConnectorResponse | None:
         if not isinstance(connector, ReconcilesMutations):
@@ -281,6 +319,8 @@ class BrokerService:
                 "connector cannot reconcile an expired mutation attempt",
             )
         value = await connector.reconcile(request.tool, request.payload, state, context)
+        if request.tool == "provider.createCredential":
+            await self._reconcile_secret_sink(request, assignment, state)
         if value is not None and not isinstance(value, ConnectorResponse):
             raise ConnectorError(
                 "invalid-reconciliation-result",
@@ -338,17 +378,9 @@ class BrokerService:
                 "provider-secret-missing", "provider returned no one-time credential secret"
             )
         try:
-            sink_id = _string(request.payload, "sink_connection_id")
-            secret_resource = _string(request.payload, "secret_resource")
-            sink = await self._repository.connection(request.organisation_id, sink_id)
-            self._validate_secret_sink(sink, assignment, secret_resource)
-            connector = self._connectors.resolve(sink, "secretStore.getVersion")
-            if not isinstance(connector, SecretManagerConnector):
-                raise ConnectorError(
-                    "unsupported-secret-sink", "secret sink cannot accept direct secret transfer"
-                )
+            sink, connector, secret_resource = await self._secret_sink(request, assignment)
             try:
-                stored = await connector.add_version(secret_resource, response.secret)
+                stored = await connector.add_version_for(sink, secret_resource, response.secret)
             except Exception as store_error:
                 with suppress(Exception):
                     await self._compensate_created_credential(response, context)
@@ -370,13 +402,57 @@ class BrokerService:
         finally:
             response.secret.clear()
 
+    async def _secret_sink(
+        self,
+        request: ToolRequest,
+        assignment: PlaybookAssignment,
+    ) -> tuple[Connection, SecretManagerConnector, str]:
+        sink_id = _string(request.payload, "sink_connection_id")
+        secret_resource = _string(request.payload, "secret_resource")
+        sink = await self._repository.connection(request.organisation_id, sink_id)
+        self._validate_secret_sink(sink, assignment, secret_resource)
+        connector = self._connectors.resolve(sink, "secretStore.getVersion")
+        if not isinstance(connector, SecretManagerConnector):
+            raise ConnectorError(
+                "unsupported-secret-sink", "secret sink cannot accept direct secret transfer"
+            )
+        return sink, connector, secret_resource
+
+    async def _reconcile_secret_sink(
+        self,
+        request: ToolRequest,
+        assignment: PlaybookAssignment,
+        state: dict[str, str | int | bool | tuple[str, ...]],
+    ) -> None:
+        sink, connector, secret_resource = await self._secret_sink(request, assignment)
+        before = state.get("before_secret_versions")
+        if state.get("secret_resource") != secret_resource or not isinstance(before, tuple):
+            raise AmbiguousMutationError("secret sink reconciliation checkpoint is invalid")
+        candidates = [
+            item["name"]
+            for item in await connector.versions_for(sink, secret_resource)
+            if isinstance(item.get("name"), str)
+            and item["name"] not in before
+            and item.get("state") == "ENABLED"
+        ]
+        if len(candidates) > 1:
+            raise AmbiguousMutationError(
+                "stale secret write has multiple attributable cleanup candidates"
+            )
+        if candidates:
+            await connector.disable_for(sink, candidates[0])
+
     def _validate_secret_sink(
         self,
         sink: Connection,
         assignment: PlaybookAssignment,
         secret_resource: str,
     ) -> None:
-        if sink.id not in assignment.connection_ids or sink.kind is not ConnectionKind.SECRET:
+        if (
+            sink.id not in assignment.connection_ids
+            or ConnectionRole.SECRET_STORE not in sink.roles
+            or sink.interface is not ConnectionInterface.API
+        ):
             raise ConnectorError(
                 "secret-sink-not-assigned", "secret sink is not assigned to the playbook"
             )
@@ -428,6 +504,21 @@ class BrokerService:
             )
             values.append(stored.id)
         return tuple(values)
+
+
+def _tool_role(tool: str) -> ConnectionRole:
+    namespace = tool.partition(".")[0]
+    roles = {
+        "provider": ConnectionRole.PROVIDER,
+        "runtime": ConnectionRole.RUNTIME,
+        "secretStore": ConnectionRole.SECRET_STORE,
+        "telemetry": ConnectionRole.TELEMETRY,
+        "incident": ConnectionRole.INCIDENT,
+    }
+    try:
+        return roles[namespace]
+    except KeyError as error:
+        raise CapabilityError(f"tool {tool} has no connection role") from error
 
 
 def _string(payload: dict[str, Any], key: str) -> str:

@@ -15,12 +15,22 @@ from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
 from contracts import (
     Connection,
+    ConnectionRole,
+    ConnectionStatus,
     ProbeDefinition,
     ProbeKind,
     ProbeResult,
     VerificationStatus,
 )
 from core.errors import ResourceConflictError
+
+_PROBE_ROLES = {
+    ProbeKind.SECRET: ConnectionRole.SECRET_STORE,
+    ProbeKind.RUNTIME: ConnectionRole.RUNTIME,
+    ProbeKind.GENERATION: ConnectionRole.RUNTIME,
+    ProbeKind.TELEMETRY: ConnectionRole.TELEMETRY,
+    ProbeKind.PROVIDER: ConnectionRole.PROVIDER,
+}
 
 
 class ProbeExecutor:
@@ -45,21 +55,46 @@ class ProbeExecutor:
     ) -> ProbeResult:
         started_at = clock()
         try:
+            if (
+                connection.id != definition.connection_id
+                or connection.organisation_id != definition.organisation_id
+                or connection.status is not ConnectionStatus.READY
+                or (
+                    connection.authorization_expires_at is not None
+                    and connection.authorization_expires_at <= started_at
+                )
+            ):
+                raise ResourceConflictError(
+                    "verification connection is not the declared ready connection"
+                )
+            required_role = _PROBE_ROLES.get(definition.kind)
+            if required_role is not None and required_role not in connection.roles:
+                raise ResourceConflictError(
+                    f"verification connection does not provide the {required_role.value} role"
+                )
+            scoped_context = ConnectorContext(
+                request_id=context.request_id,
+                agent_id=context.agent_id,
+                connection=connection,
+                run=context.run,
+                now=context.now,
+                idempotency_key=context.idempotency_key,
+            )
             if definition.kind is ProbeKind.HTTP:
                 observations, checks, raw = await self._http_probe(definition)
             elif definition.kind is ProbeKind.EMAIL:
                 observations, checks, raw = await self._email_probe(definition)
             elif definition.kind is ProbeKind.SECRET:
-                observations, checks, raw = await self._secret_probe(definition)
+                observations, checks, raw = await self._secret_probe(definition, connection)
             elif definition.kind in {ProbeKind.RUNTIME, ProbeKind.GENERATION}:
                 observations, checks, raw = await self._runtime_probe(
-                    definition, connection, context
+                    definition, connection, scoped_context
                 )
             elif definition.kind is ProbeKind.TELEMETRY:
-                observations, checks, raw = await self._telemetry_probe(definition)
+                observations, checks, raw = await self._telemetry_probe(definition, connection)
             elif definition.kind is ProbeKind.PROVIDER:
                 observations, checks, raw = await self._provider_probe(
-                    definition, connection, context
+                    definition, connection, scoped_context
                 )
             else:
                 raise ResourceConflictError(f"unsupported probe kind {definition.kind.value}")
@@ -256,16 +291,19 @@ class ProbeExecutor:
         )
 
     async def _secret_probe(
-        self, definition: ProbeDefinition
+        self,
+        definition: ProbeDefinition,
+        connection: Connection,
     ) -> tuple[dict[str, str | int | float | bool | None], set[str], bytes]:
-        connector = SecretManagerConnector(self._google)
         version = definition.target
         if not version.startswith("projects/") or "/versions/" not in version:
             raise ConnectorError(
                 "verification-secret-target", "secret probe requires a full version resource"
             )
         metadata = await self._google.request(
-            "GET", f"https://secretmanager.googleapis.com/v1/{version}"
+            "GET",
+            f"https://secretmanager.googleapis.com/v1/{version}",
+            connection=connection,
         )
         expected = "DISABLED" if definition.negative else "ENABLED"
         if metadata.get("state") != expected:
@@ -273,13 +311,6 @@ class ProbeExecutor:
                 "verification-secret-state", f"secret version is not {expected.lower()}"
             )
         checks = {"secret-version-exists", f"secret-version-{expected.lower()}"}
-        if not definition.negative:
-            with await connector.access(version) as value:
-                if not value.bytes():
-                    raise ConnectorError(
-                        "verification-secret-empty", "secret version contains no bytes"
-                    )
-                checks.add("secret-payload-accessible")
         observations: dict[str, str | int | float | bool | None] = {
             "secret_state": expected,
             "secret_version": version,
@@ -307,7 +338,9 @@ class ProbeExecutor:
                     "verification-runtime-revision", "runtime has no ready revision"
                 )
             revision_data = await self._google.request(
-                "GET", f"https://run.googleapis.com/v2/{revision}"
+                "GET",
+                f"https://run.googleapis.com/v2/{revision}",
+                connection=connection,
             )
             labels = revision_data.get("labels")
             if not isinstance(labels, dict) or labels.get("firekey-generation") != expected:
@@ -326,7 +359,9 @@ class ProbeExecutor:
         return observations, checks, _json(result)
 
     async def _telemetry_probe(
-        self, definition: ProbeDefinition
+        self,
+        definition: ProbeDefinition,
+        connection: Connection,
     ) -> tuple[dict[str, str | int | float | bool | None], set[str], bytes]:
         project = _project(definition.target)
         thresholds = definition.telemetry
@@ -356,6 +391,7 @@ class ProbeExecutor:
                 "orderBy": "timestamp desc",
                 "pageSize": 100,
             },
+            connection=connection,
         )
         entries = response.get("entries", [])
         if not isinstance(entries, list):

@@ -8,9 +8,7 @@ from contracts.state import Stage
 
 class ExecutionMethod(StrEnum):
     API = "provider-api"
-    CLI = "cli"
     COMPUTER = "computer-use"
-    HUMAN = "human-assisted"
 
 
 class PlaybookState(StrEnum):

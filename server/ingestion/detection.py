@@ -7,7 +7,8 @@ from typing import Any, Protocol
 from contracts import (
     Confidence,
     Connection,
-    ConnectionKind,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     ConsumerBinding,
     CredentialGeneration,
@@ -51,7 +52,7 @@ class ProviderMetadata(Protocol):
 
 
 class RuntimeMetadata(Protocol):
-    async def inspect(self, service_name: str) -> dict[str, Any]: ...
+    async def inspect(self, connection: Connection, service_name: str) -> dict[str, Any]: ...
 
 
 class DetectionService:
@@ -95,8 +96,8 @@ class DetectionService:
                 )
                 continue
             if (
-                connection.kind not in {ConnectionKind.PROVIDER, ConnectionKind.BROWSER}
-                or connection.provider != credential.provider
+                ConnectionRole.PROVIDER not in connection.roles
+                or connection.platform != credential.provider
                 or generation.organisation_id != credential.organisation_id
                 or generation.credential_id != credential.id
                 or generation.state is not GenerationState.ACTIVE
@@ -114,19 +115,27 @@ class DetectionService:
                     )
                 )
                 continue
-            if connection.status is not ConnectionStatus.READY:
+            if connection.status is not ConnectionStatus.READY or (
+                connection.authorization_expires_at is not None
+                and connection.authorization_expires_at <= observed_at
+            ):
+                state = (
+                    "authorization-expired"
+                    if connection.status is ConnectionStatus.READY
+                    else f"connection-{connection.status.value}"
+                )
                 events.append(
                     _event(
                         credential,
                         "credential-disabled",
-                        f"connection-{connection.status.value}",
+                        state,
                         Severity.HIGH,
                         observed_at,
                     )
                 )
                 continue
             policy = await self._policies.get_version(organisation_id, credential.policy_version)
-            if connection.kind is ConnectionKind.PROVIDER:
+            if connection.interface is ConnectionInterface.API:
                 if connection.id not in provider_cache:
                     indexed: dict[str, dict[str, Any]] = {}
                     for metadata in await self._provider.metadata(connection):
@@ -155,9 +164,10 @@ class DetectionService:
                 for binding in bindings.get(credential.id, []):
                     runtime_connection = connections.get(binding.runtime_connection_id)
                     inspector = (
-                        self._runtimes.get(runtime_connection.provider)
+                        self._runtimes.get(runtime_connection.platform)
                         if runtime_connection is not None
-                        and runtime_connection.kind is ConnectionKind.RUNTIME
+                        and ConnectionRole.RUNTIME in runtime_connection.roles
+                        and runtime_connection.interface is ConnectionInterface.API
                         and runtime_connection.status is ConnectionStatus.READY
                         else None
                     )
@@ -172,7 +182,8 @@ class DetectionService:
                             )
                         )
                         continue
-                    runtime = await inspector.inspect(binding.runtime_resource)
+                    assert runtime_connection is not None
+                    runtime = await inspector.inspect(runtime_connection, binding.runtime_resource)
                     if not _runtime_aligned(runtime, binding, generation):
                         events.append(
                             _event(

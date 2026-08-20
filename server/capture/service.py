@@ -2,10 +2,18 @@ import fnmatch
 import hashlib
 from collections.abc import Callable
 from datetime import datetime
+from typing import Protocol
 
 from browser.driver import BrowserDriver
 from connectors.secrets import SecretManagerConnector
-from contracts import PageCheckpoint, SecureCaptureResult, SecureField
+from contracts import (
+    Connection,
+    ConnectionInterface,
+    ConnectionRole,
+    PageCheckpoint,
+    SecureCaptureResult,
+    SecureField,
+)
 from playwright.async_api import Locator, Page
 
 MASK = "••••••••"
@@ -17,17 +25,23 @@ class CaptureError(Exception):
         self.secret_reference = secret_reference
 
 
+class CaptureConnections(Protocol):
+    async def get_connection(self, organisation_id: str, resource_id: str) -> Connection: ...
+
+
 class SecureCapture:
     def __init__(
         self,
         page: Page,
         driver: BrowserDriver,
         secrets: SecretManagerConnector,
+        connections: CaptureConnections,
         clock: Callable[[], datetime],
     ) -> None:
         self._page = page
         self._driver = driver
         self._secrets = secrets
+        self._connections = connections
         self._clock = clock
 
     async def transfer(
@@ -93,7 +107,21 @@ class SecureCapture:
 
             value = SecretValue(secret_bytes)
             try:
-                stored = await self._secrets.add_version(field.secret_resource, value)
+                connection = await self._connections.get_connection(
+                    organisation_id, field.sink_connection_id
+                )
+                if (
+                    connection.platform != "google-secret-manager"
+                    or ConnectionRole.SECRET_STORE not in connection.roles
+                    or connection.interface is not ConnectionInterface.API
+                    or not _resource_allowed(field.secret_resource, connection.allowed_resources)
+                ):
+                    raise CaptureError(
+                        "secure capture sink is not an assigned Secret Manager connection"
+                    )
+                stored = await self._secrets.add_version_for(
+                    connection, field.secret_resource, value
+                )
             finally:
                 value.clear()
             secret_reference = _string(stored.get("secret_reference"), "secret reference")
@@ -143,6 +171,13 @@ class SecureCapture:
               try { await navigator.clipboard.writeText(''); } catch (_) {}
             }"""
         )
+
+
+def _resource_allowed(resource: str, allowed: tuple[str, ...]) -> bool:
+    return any(
+        resource == boundary or resource.startswith(boundary.rstrip("/") + "/")
+        for boundary in allowed
+    )
 
 
 async def _read(locator: Locator) -> str:

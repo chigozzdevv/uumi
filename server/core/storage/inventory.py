@@ -73,7 +73,7 @@ class FirestoreInventoryRepository:
         organisation_id: str,
         connection_id: str,
         expected_revision: int,
-        auth_reference: str | None,
+        authorization_reference: str | None,
         status: ConnectionStatus,
         updated_at: datetime,
     ) -> Connection:
@@ -96,7 +96,7 @@ class FirestoreInventoryRepository:
                 )
             changed = current.model_copy(
                 update={
-                    "auth_reference": auth_reference,
+                    "authorization_reference": authorization_reference,
                     "status": status,
                     "updated_at": updated_at,
                     "revision": current.revision + 1,
@@ -123,7 +123,7 @@ class FirestoreInventoryRepository:
         if (
             changed_session.status is not SetupStatus.COMPLETE
             or changed_session.auth_reference is None
-            or changed_session.auth_reference != changed_connection.auth_reference
+            or changed_session.auth_reference != changed_connection.authorization_reference
             or changed_connection.status is not ConnectionStatus.READY
             or changed_session.revision != current_session.revision + 1
             or changed_connection.revision != current_connection.revision + 1

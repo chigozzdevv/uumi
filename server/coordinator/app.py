@@ -18,7 +18,8 @@ from connectors.google import GoogleRestClient
 from connectors.http import HttpProviderConnector
 from connectors.secrets import SecretManagerConnector
 from contracts import (
-    ConnectionKind,
+    ConnectionInterface,
+    ConnectionRole,
     StageExecutionRequest,
     StageExecutionResult,
     StageExecutionStatus,
@@ -84,9 +85,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         signer = CapabilitySigner(secret.bytes())
     evidence = GcsEvidenceSink(google, firestore, settings.evidence_bucket, settings.region)
     connectors = ConnectorRegistry()
-    connectors.register(ConnectionKind.SECRET, "google-secret-manager", secrets)
-    connectors.register(ConnectionKind.PROVIDER, "*", HttpProviderConnector(secrets))
-    connectors.register(ConnectionKind.RUNTIME, "cloud-run", CloudRunConnector(google))
+    connectors.register(
+        ConnectionRole.SECRET_STORE,
+        ConnectionInterface.API,
+        "google-secret-manager",
+        secrets,
+    )
+    connectors.register(
+        ConnectionRole.PROVIDER,
+        ConnectionInterface.API,
+        "*",
+        HttpProviderConnector(secrets),
+    )
+    connectors.register(
+        ConnectionRole.RUNTIME,
+        ConnectionInterface.API,
+        "cloud-run",
+        CloudRunConnector(google),
+    )
     agent_repository = AgentRepository(firestore)
     fleet = AgentFleetService(agent_repository)
     continuity = AgentContinuityService(

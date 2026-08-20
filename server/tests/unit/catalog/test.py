@@ -3,7 +3,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from contracts import (
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     ConsumerBinding,
     CredentialGeneration,
@@ -26,6 +28,7 @@ from core.audit import GENESIS, event_hash
 from core.errors import PlaybookError, ResourceConflictError
 from core.inventory import InventoryService
 from core.playbook import PlaybookService, validate_assignment_connections
+from testkit import make_http_provider_api
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
@@ -141,7 +144,25 @@ class Inventory:
     async def get_environment(self, organisation_id: str, resource_id: str) -> object:
         raise NotImplementedError
 
-    async def get_connection(self, organisation_id: str, resource_id: str) -> object:
+    async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
+        if resource_id == "connection_one":
+            return Connection(
+                id=resource_id,
+                organisation_id=organisation_id,
+                platform="provider",
+                display_name="Provider API",
+                roles=frozenset({ConnectionRole.PROVIDER}),
+                interface=ConnectionInterface.API,
+                authorization=ConnectionAuthorization.API_KEY,
+                authorization_reference="projects/p/secrets/admin/versions/1",
+                capabilities=frozenset({"provider.createCredential"}),
+                allowed_resources=("account-one",),
+                http=make_http_provider_api(),
+                status=ConnectionStatus.READY,
+                region="us-east1",
+                created_at=NOW,
+                updated_at=NOW,
+            )
         raise NotImplementedError
 
     async def update_authentication(
@@ -336,9 +357,11 @@ async def test_browser_connection_requires_domains_and_capability() -> None:
     invalid_resources = Connection(
         id="connection_browser",
         organisation_id="org_one",
-        kind=ConnectionKind.BROWSER,
-        provider="vendor",
+        platform="vendor",
         display_name="Vendor console",
+        roles=frozenset({ConnectionRole.PROVIDER}),
+        interface=ConnectionInterface.BROWSER,
+        authorization=ConnectionAuthorization.BROWSER_SESSION,
         capabilities=frozenset({"browser.execute"}),
         allowed_resources=("sendgrid:*",),
         status=ConnectionStatus.DISABLED,
@@ -359,16 +382,18 @@ async def test_browser_connection_requires_domains_and_capability() -> None:
     with pytest.raises(ResourceConflictError, match="browser capability"):
         await service.add_connection(invalid_capability)
     stored = await service.add_connection(valid)
-    assert stored.kind is ConnectionKind.BROWSER
+    assert stored.interface is ConnectionInterface.BROWSER
 
 
 def test_computer_use_assignment_requires_a_ready_browser_connection() -> None:
     browser = Connection(
         id="connection_browser",
         organisation_id="org_one",
-        kind=ConnectionKind.BROWSER,
-        provider="vendor",
+        platform="vendor",
         display_name="Vendor console",
+        roles=frozenset({ConnectionRole.PROVIDER}),
+        interface=ConnectionInterface.BROWSER,
+        authorization=ConnectionAuthorization.BROWSER_SESSION,
         capabilities=frozenset({"browser.execute"}),
         allowed_resources=("*.vendor.example.com",),
         status=ConnectionStatus.DISABLED,
@@ -379,9 +404,14 @@ def test_computer_use_assignment_requires_a_ready_browser_connection() -> None:
     secret = browser.model_copy(
         update={
             "id": "secret_one",
-            "kind": ConnectionKind.SECRET,
+            "platform": "google-secret-manager",
+            "roles": frozenset({ConnectionRole.SECRET_STORE}),
+            "interface": ConnectionInterface.API,
+            "authorization": ConnectionAuthorization.WORKLOAD_IDENTITY,
             "status": ConnectionStatus.READY,
-            "auth_reference": "projects/p/secrets/s/versions/1",
+            "authorization_reference": (
+                "workload-identity://firekey@project.iam.gserviceaccount.com"
+            ),
             "allowed_resources": ("projects/p/secrets/s",),
             "capabilities": frozenset({"store"}),
         }
@@ -394,15 +424,50 @@ def test_computer_use_assignment_requires_a_ready_browser_connection() -> None:
     ready = browser.model_copy(
         update={
             "status": ConnectionStatus.READY,
-            "auth_reference": "projects/p/secrets/session/versions/1",
+            "authorization_reference": "projects/p/secrets/session/versions/1",
+        }
+    )
+    runtime = secret.model_copy(
+        update={
+            "id": "runtime_one",
+            "platform": "cloud-run",
+            "roles": frozenset({ConnectionRole.RUNTIME}),
+            "capabilities": frozenset({"runtime.deployCandidate"}),
+            "allowed_resources": ("projects/p/locations/r/services/s",),
         }
     )
     validate_assignment_connections(
-        ExecutionMethod.COMPUTER, (ready, secret), ("*.vendor.example.com",)
+        ExecutionMethod.COMPUTER, (ready, secret, runtime), ("*.vendor.example.com",)
     )
     with pytest.raises(PlaybookError, match="not covered"):
         validate_assignment_connections(
-            ExecutionMethod.COMPUTER, (ready, secret), ("other.example.com",)
+            ExecutionMethod.COMPUTER, (ready, secret, runtime), ("other.example.com",)
         )
     with pytest.raises(PlaybookError, match="cannot include a browser connection"):
         validate_assignment_connections(ExecutionMethod.API, (ready, secret))
+
+
+def test_legacy_connections_migrate_to_the_explicit_connection_model() -> None:
+    connection = Connection.model_validate(
+        {
+            "id": "connection_provider",
+            "organisation_id": "org_one",
+            "kind": "provider",
+            "provider": "vendor",
+            "display_name": "Vendor API",
+            "auth_reference": "projects/p/secrets/admin/versions/1",
+            "capabilities": ["provider.listCredentialMetadata"],
+            "allowed_resources": ["account-one"],
+            "http": make_http_provider_api().model_dump(mode="json"),
+            "status": "ready",
+            "region": "us-east1",
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    assert connection.platform == "vendor"
+    assert connection.roles == frozenset({ConnectionRole.PROVIDER})
+    assert connection.interface is ConnectionInterface.API
+    assert connection.authorization is ConnectionAuthorization.API_KEY
+    assert connection.authorization_reference == "projects/p/secrets/admin/versions/1"

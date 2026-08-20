@@ -20,7 +20,7 @@ from google.cloud.firestore_v1.base_document import DocumentSnapshot
 from pydantic import TypeAdapter
 
 from core.errors import PlaybookError, ResourceConflictError, ResourceNotFoundError
-from core.playbook.service import validate_assignment_connections
+from core.playbook.validate import validate_assignment_connections
 from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 
@@ -263,6 +263,9 @@ class FirestorePlaybookRepository:
         lock_ref = self._client.document(
             FirestorePaths.lock(assignment.organisation_id, assignment.credential_id)
         )
+        credential_ref = self._client.document(
+            FirestorePaths.credential(assignment.organisation_id, assignment.credential_id)
+        )
         if assignment.dry_run_only:
             environment = await self._catalog_value(
                 FirestorePaths.environment(
@@ -300,6 +303,7 @@ class FirestorePlaybookRepository:
         @async_transactional
         async def apply(transaction: AsyncTransaction) -> PlaybookAssignment:
             version_snapshot = await version_ref.get(transaction=transaction)
+            credential_snapshot = await credential_ref.get(transaction=transaction)
             current = await assignment_ref.get(transaction=transaction)
             lock = await lock_ref.get(transaction=transaction)
             if not version_snapshot.exists:
@@ -307,14 +311,24 @@ class FirestorePlaybookRepository:
                     f"playbook version {assignment.version_id} was not found"
                 )
             version = PlaybookVersion.model_validate(_data(version_snapshot))
+            if not credential_snapshot.exists:
+                raise ResourceNotFoundError(f"credential {assignment.credential_id} was not found")
+            credential = ManagedCredential.model_validate(_data(credential_snapshot))
+            if credential.provider != version.definition.provider or (
+                not assignment.dry_run_only and credential.playbook_version != version.id
+            ):
+                raise PlaybookError("credential and playbook version are incompatible")
             expected_state = PlaybookState.TEST if assignment.dry_run_only else PlaybookState.ACTIVE
             if version.state is not expected_state:
                 raise PlaybookError(
                     f"assignment requires a playbook version in {expected_state.value}"
                 )
             required = set(version.definition.required_connections)
-            if not required.issubset(assignment.connection_ids):
-                raise PlaybookError("assignment is missing required connections")
+            assigned = set(assignment.connection_ids)
+            if len(assigned) != len(assignment.connection_ids) or required != assigned:
+                raise PlaybookError(
+                    "assignment connections must match the immutable playbook version"
+                )
             loaded: list[Connection] = []
             for reference in connection_refs:
                 snapshot = await reference.get(transaction=transaction)
@@ -325,6 +339,7 @@ class FirestorePlaybookRepository:
                 version.definition.execution,
                 tuple(loaded),
                 version.definition.allowed_domains,
+                version.definition.provider,
             )
             if current.exists:
                 stored = PlaybookAssignment.model_validate(_data(current))

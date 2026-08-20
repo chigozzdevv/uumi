@@ -5,8 +5,6 @@ from typing import Protocol
 
 from contracts import (
     Connection,
-    ConnectionKind,
-    ConnectionStatus,
     CreateRunCommand,
     DryRun,
     DryRunStatus,
@@ -22,7 +20,8 @@ from contracts import (
 )
 from policy import digest
 
-from core.errors import PlaybookError, ResourceConflictError
+from core.errors import PlaybookError
+from core.playbook.validate import validate_assignment_connections
 from core.storage.repository import MutationResult
 
 _LIST_SCAN_LIMIT = 500
@@ -265,6 +264,10 @@ class PlaybookService:
         environment_id: str | None = None,
     ) -> PlaybookAssignment:
         version = await self._repository.get_version(organisation_id, playbook_id, version_id)
+        if len(set(connection_ids)) != len(connection_ids) or set(connection_ids) != set(
+            version.definition.required_connections
+        ):
+            raise PlaybookError("assignment connections must match the immutable playbook version")
         if self._inventory is not None:
             connections = tuple(
                 [
@@ -276,6 +279,7 @@ class PlaybookService:
                 version.definition.execution,
                 connections,
                 version.definition.allowed_domains,
+                version.definition.provider,
             )
         assignment = PlaybookAssignment(
             id=f"assignment_{credential_id}",
@@ -297,70 +301,9 @@ class PlaybookService:
         return await self._repository.get_assignment(organisation_id, credential_id)
 
 
-def require_ready_browser_connections(connections: tuple[Connection, ...]) -> None:
-    for item in connections:
-        if item.kind is ConnectionKind.BROWSER and (
-            item.status is not ConnectionStatus.READY or item.auth_reference is None
-        ):
-            raise ResourceConflictError("connection still needs login")
-
-
-def validate_assignment_connections(
-    execution: ExecutionMethod,
-    connections: tuple[Connection, ...],
-    allowed_domains: tuple[str, ...] = (),
-) -> None:
-    browsers = tuple(item for item in connections if item.kind is ConnectionKind.BROWSER)
-    if execution is ExecutionMethod.COMPUTER:
-        if len(browsers) != 1:
-            raise PlaybookError("computer-use assignment requires exactly one browser connection")
-        if browsers[0].status is not ConnectionStatus.READY or browsers[0].auth_reference is None:
-            raise PlaybookError("computer-use assignment requires a ready browser session")
-        if allowed_domains and any(
-            not _domain_covered(domain, browsers[0].allowed_resources) for domain in allowed_domains
-        ):
-            raise PlaybookError(
-                "computer-use playbook domains are not covered by the browser connection"
-            )
-        return
-    if browsers:
-        raise PlaybookError("provider-api assignment cannot include a browser connection")
-
-
-def _domain_covered(need: str, allowed: tuple[str, ...]) -> bool:
-    needed = need.lower().rstrip(".")
-    allowed_norm = tuple(item.lower().rstrip(".") for item in allowed)
-    if needed in allowed_norm:
-        return True
-    host = needed[2:] if needed.startswith("*.") else needed
-    if _host_allowed(host, allowed):
-        return True
-    if not needed.startswith("*."):
-        return False
-    suffix = needed[2:]
-    for pattern in allowed_norm:
-        if pattern.startswith("*."):
-            parent = pattern[2:]
-            if suffix == parent or suffix.endswith("." + parent):
-                return True
-        elif suffix == pattern or suffix.endswith("." + pattern):
-            return True
-    return False
-
-
-def _host_allowed(hostname: str, allowed: tuple[str, ...]) -> bool:
-    for pattern in allowed:
-        expected = pattern.lower().rstrip(".")
-        if expected.startswith("*."):
-            suffix = expected[2:]
-            if hostname.endswith("." + suffix) and hostname != suffix:
-                return True
-        elif hostname == expected:
-            return True
-    return False
-
-
 def validate_definition(definition: PlaybookDraft) -> None:
+    if len(set(definition.required_connections)) != len(definition.required_connections):
+        raise PlaybookError("playbook required connections must be unique")
     used_tools = {step.tool for step in definition.steps}
     undeclared = used_tools.difference(definition.allowed_tools)
     if undeclared:

@@ -4,7 +4,9 @@ from typing import Protocol
 from contracts import (
     Application,
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     ConsumerBinding,
     ConsumerService,
@@ -38,7 +40,7 @@ class InventoryRepository(Protocol):
         organisation_id: str,
         connection_id: str,
         expected_revision: int,
-        auth_reference: str,
+        authorization_reference: str | None,
         status: ConnectionStatus,
         updated_at: datetime,
     ) -> Connection: ...
@@ -68,14 +70,22 @@ class InventoryService:
         self._repository = repository
 
     async def add_connection(self, connection: Connection) -> Connection:
-        if connection.kind is ConnectionKind.BROWSER:
+        if connection.interface is ConnectionInterface.BROWSER:
             if not connection.allowed_resources or any(
                 not _domain_pattern(value) for value in connection.allowed_resources
             ):
                 raise ResourceConflictError("browser connection must declare allowed domains")
             if not connection.capabilities.intersection(_BROWSER_CAPABILITIES):
                 raise ResourceConflictError("browser connection must declare a browser capability")
-        if connection.kind is ConnectionKind.PROVIDER and connection.http is None:
+            if connection.authorization is not ConnectionAuthorization.BROWSER_SESSION:
+                raise ResourceConflictError(
+                    "browser connection requires browser-session authorization"
+                )
+        if (
+            ConnectionRole.PROVIDER in connection.roles
+            and connection.interface is ConnectionInterface.API
+            and connection.http is None
+        ):
             raise ResourceConflictError("provider connection requires an HTTP API declaration")
         return await self._repository.add_connection(connection)
 
@@ -97,10 +107,15 @@ class InventoryService:
         )
         if environment.application_id != service.application_id:
             raise ResourceConflictError("service application does not match its environment")
-        await self._repository.get_connection(
+        runtime = await self._repository.get_connection(
             service.organisation_id,
             service.runtime_connection_id,
         )
+        if (
+            ConnectionRole.RUNTIME not in runtime.roles
+            or runtime.interface is not ConnectionInterface.API
+        ):
+            raise ResourceConflictError("service requires an API runtime connection")
         return await self._repository.add_service(service)
 
     async def import_credential(
@@ -109,6 +124,17 @@ class InventoryService:
         generation: CredentialGeneration,
         bindings: tuple[ConsumerBinding, ...],
     ) -> ManagedCredential:
+        management = await self._repository.get_connection(
+            credential.organisation_id,
+            credential.connection_id,
+        )
+        if (
+            ConnectionRole.PROVIDER not in management.roles
+            or management.platform != credential.provider
+        ):
+            raise ResourceConflictError(
+                "credential requires a provider connection for the same platform"
+            )
         if generation.credential_id != credential.id:
             raise ResourceConflictError("generation does not belong to the credential")
         if credential.active_generation_id != generation.id:
@@ -122,6 +148,16 @@ class InventoryService:
             for binding in bindings
         ):
             raise ResourceConflictError("credential binding lineage is inconsistent")
+        for binding in bindings:
+            runtime = await self._repository.get_connection(
+                credential.organisation_id,
+                binding.runtime_connection_id,
+            )
+            if (
+                ConnectionRole.RUNTIME not in runtime.roles
+                or runtime.interface is not ConnectionInterface.API
+            ):
+                raise ResourceConflictError("credential binding requires an API runtime connection")
         return await self._repository.import_credential(credential, generation, bindings)
 
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:

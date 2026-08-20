@@ -1,8 +1,11 @@
 import asyncio
+import re
 from typing import Any, cast
 
 import google.auth
 import httpx
+from contracts import Connection, ConnectionAuthorization, ConnectionInterface
+from google.auth import impersonated_credentials
 from google.auth.credentials import Credentials
 from google.auth.transport.requests import Request
 
@@ -21,6 +24,8 @@ class GoogleRestClient:
             resolved, _ = google.auth.default(scopes=scopes)
             credentials = resolved
         self._credentials = credentials
+        self._scopes = scopes
+        self._connection_credentials: dict[str, Credentials] = {}
         self._request = Request()
         self._client = client or httpx.AsyncClient(timeout=timeout)
 
@@ -34,6 +39,7 @@ class GoogleRestClient:
         headers: dict[str, str] | None = None,
         params: dict[str, str] | None = None,
         expected: frozenset[int] = frozenset({200}),
+        connection: Connection | None = None,
     ) -> dict[str, Any]:
         response = await self.response(
             method,
@@ -43,6 +49,7 @@ class GoogleRestClient:
             headers=headers,
             params=params,
             expected=expected,
+            connection=connection,
         )
         if not response.content:
             return {}
@@ -61,8 +68,9 @@ class GoogleRestClient:
         headers: dict[str, str] | None = None,
         params: dict[str, str] | None = None,
         expected: frozenset[int] = frozenset({200}),
+        connection: Connection | None = None,
     ) -> httpx.Response:
-        token = await self._token()
+        token = await self._token(self._credentials_for(connection))
         request_headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
@@ -90,9 +98,14 @@ class GoogleRestClient:
         name: str,
         attempts: int = 60,
         base_url: str = "https://run.googleapis.com/v2",
+        connection: Connection | None = None,
     ) -> dict[str, Any]:
         for _ in range(attempts):
-            operation = await self.request("GET", f"{base_url.rstrip('/')}/{name}")
+            operation = await self.request(
+                "GET",
+                f"{base_url.rstrip('/')}/{name}",
+                connection=connection,
+            )
             if operation.get("done") is True or operation.get("status") == "DONE":
                 if "error" in operation:
                     raise ConnectorError(
@@ -108,9 +121,58 @@ class GoogleRestClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def _token(self) -> str:
-        if not self._credentials.valid or not self._credentials.token:
-            await asyncio.to_thread(self._credentials.refresh, self._request)
-        if not self._credentials.token:
+    def _credentials_for(self, connection: Connection | None) -> Credentials:
+        if connection is None:
+            return self._credentials
+        if (
+            connection.interface is not ConnectionInterface.API
+            or connection.authorization is not ConnectionAuthorization.WORKLOAD_IDENTITY
+            or connection.authorization_reference is None
+        ):
+            raise ConnectorError(
+                "google-authorization",
+                "Google connections require workload-identity authorization",
+            )
+        principal = _target_principal(connection.authorization_reference)
+        current = self._connection_credentials.get(principal)
+        if current is None:
+            current = impersonated_credentials.Credentials(  # type: ignore[no-untyped-call]
+                source_credentials=self._credentials,
+                target_principal=principal,
+                target_scopes=self._scopes,
+                lifetime=3600,
+            )
+            self._connection_credentials[principal] = current
+        return current
+
+    async def _token(self, credentials: Credentials) -> str:
+        if not credentials.valid or not credentials.token:
+            await asyncio.to_thread(credentials.refresh, self._request)
+        if not credentials.token:
             raise ConnectorError("google-authentication", "Google credentials returned no token")
-        return cast(str, self._credentials.token)
+        return cast(str, credentials.token)
+
+
+def _target_principal(reference: str) -> str:
+    if reference.startswith("workload-identity://"):
+        principal = reference.removeprefix("workload-identity://")
+    elif "/serviceAccounts/" in reference:
+        principal = reference.rsplit("/serviceAccounts/", 1)[1]
+    else:
+        raise ConnectorError(
+            "google-authorization-reference",
+            "workload identity must reference a service account",
+        )
+    if (
+        re.fullmatch(
+            r"[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]"
+            r"\.iam\.gserviceaccount\.com",
+            principal,
+        )
+        is None
+    ):
+        raise ConnectorError(
+            "google-authorization-reference",
+            "workload identity service account is invalid",
+        )
+    return principal

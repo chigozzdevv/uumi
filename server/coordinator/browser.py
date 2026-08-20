@@ -15,7 +15,9 @@ from contracts import (
     BrowserSession,
     BrowserStatus,
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     PlaybookAssignment,
     PlaybookStep,
@@ -179,14 +181,22 @@ class BrowserStepExecutor:
                     FirestorePaths.connection(run.organisation_id, connection_id),
                     Connection,
                 )
-                if connection.kind is ConnectionKind.BROWSER:
+                if (
+                    connection.interface is ConnectionInterface.BROWSER
+                    and ConnectionRole.PROVIDER in connection.roles
+                    and connection.authorization is ConnectionAuthorization.BROWSER_SESSION
+                ):
                     browser_connections.append(connection)
             if len(browser_connections) != 1:
                 raise RuntimeError("browser run requires exactly one browser connection") from None
             browser_connection = browser_connections[0]
             if (
                 browser_connection.status is not ConnectionStatus.READY
-                or browser_connection.auth_reference is None
+                or browser_connection.authorization_reference is None
+                or (
+                    browser_connection.authorization_expires_at is not None
+                    and browser_connection.authorization_expires_at <= now
+                )
             ):
                 raise BrowserPauseError(
                     "connection still needs login",

@@ -27,7 +27,9 @@ from contracts import (
     BrowserSession,
     BrowserStatus,
     Connection,
-    ConnectionKind,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
     ConnectionStatus,
     ConnectionWaiter,
     ExecutionMethod,
@@ -445,10 +447,12 @@ async def test_auth_broker_accepts_only_allowlisted_playwright_state() -> None:
     connection = Connection(
         id="provider_one",
         organisation_id="org_one",
-        kind=ConnectionKind.BROWSER,
-        provider="vendor",
+        platform="vendor",
         display_name="Vendor console",
-        auth_reference="projects/project/secrets/session/versions/1",
+        roles=frozenset({ConnectionRole.PROVIDER}),
+        interface=ConnectionInterface.BROWSER,
+        authorization=ConnectionAuthorization.BROWSER_SESSION,
+        authorization_reference="projects/project/secrets/session/versions/1",
         capabilities=frozenset({"browser.authenticate"}),
         allowed_resources=("console.vendor.example.com",),
         status=ConnectionStatus.READY,
@@ -468,10 +472,12 @@ async def test_auth_broker_rejects_cross_domain_cookie() -> None:
     connection = Connection(
         id="provider_one",
         organisation_id="org_one",
-        kind=ConnectionKind.BROWSER,
-        provider="vendor",
+        platform="vendor",
         display_name="Vendor console",
-        auth_reference="projects/project/secrets/session/versions/1",
+        roles=frozenset({ConnectionRole.PROVIDER}),
+        interface=ConnectionInterface.BROWSER,
+        authorization=ConnectionAuthorization.BROWSER_SESSION,
+        authorization_reference="projects/project/secrets/session/versions/1",
         capabilities=frozenset({"browser.authenticate"}),
         allowed_resources=("console.vendor.example.com",),
         status=ConnectionStatus.READY,
@@ -490,10 +496,12 @@ async def test_auth_broker_rejects_api_provider_connections() -> None:
     connection = Connection(
         id="provider_one",
         organisation_id="org_one",
-        kind=ConnectionKind.PROVIDER,
-        provider="sendgrid",
+        platform="sendgrid",
         display_name="SendGrid Admin",
-        auth_reference="projects/project/secrets/admin/versions/1",
+        roles=frozenset({ConnectionRole.PROVIDER}),
+        interface=ConnectionInterface.API,
+        authorization=ConnectionAuthorization.API_KEY,
+        authorization_reference="projects/project/secrets/admin/versions/1",
         capabilities=frozenset({"create", "revoke"}),
         allowed_resources=("sendgrid:*",),
         http=make_http_provider_api(),
@@ -664,14 +672,14 @@ class SetupConnections:
         organisation_id: str,
         connection_id: str,
         expected_revision: int,
-        auth_reference: str | None,
+        authorization_reference: str | None,
         status: ConnectionStatus,
         updated_at: datetime,
     ) -> Connection:
         assert self.connection.revision == expected_revision
         self.connection = self.connection.model_copy(
             update={
-                "auth_reference": auth_reference,
+                "authorization_reference": authorization_reference,
                 "status": status,
                 "updated_at": updated_at,
                 "revision": expected_revision + 1,
@@ -747,9 +755,11 @@ def _browser_connection() -> Connection:
     return Connection(
         id="connection_browser",
         organisation_id="org_one",
-        kind=ConnectionKind.BROWSER,
-        provider="internal-vendor",
+        platform="internal-vendor",
         display_name="Vendor console",
+        roles=frozenset({ConnectionRole.PROVIDER}),
+        interface=ConnectionInterface.BROWSER,
+        authorization=ConnectionAuthorization.BROWSER_SESSION,
         capabilities=frozenset({"browser.execute"}),
         allowed_resources=("*.vendor.example.com",),
         status=ConnectionStatus.DISABLED,
@@ -853,7 +863,12 @@ async def test_setup_begin_boots_isolated_worker_with_setup_token() -> None:
 @pytest.mark.anyio
 async def test_setup_begin_rejects_api_connections() -> None:
     catalog = SetupCatalog()
-    connection = _browser_connection().model_copy(update={"kind": ConnectionKind.PROVIDER})
+    connection = _browser_connection().model_copy(
+        update={
+            "interface": ConnectionInterface.API,
+            "authorization": ConnectionAuthorization.API_KEY,
+        }
+    )
     service, _, _, _ = _setup_service(catalog, connection)
 
     with pytest.raises(ResourceConflictError, match="browser connection"):
@@ -883,7 +898,7 @@ async def test_setup_complete_captures_only_the_provider_session() -> None:
     assert completed.status is SetupStatus.COMPLETE
     assert completed.auth_reference == "projects/project-one/secrets/vendor-session/versions/2"
     assert connection.status is ConnectionStatus.READY
-    assert connection.auth_reference == completed.auth_reference
+    assert connection.authorization_reference == completed.auth_reference
     assert vms.deleted == [completed.worker_instance]
     assert secrets.store_calls == 1
 
@@ -1316,7 +1331,7 @@ async def test_reauthentication_flags_the_connection_and_notifies() -> None:
     connection = _browser_connection().model_copy(
         update={
             "status": ConnectionStatus.READY,
-            "auth_reference": "projects/p/secrets/s/versions/1",
+            "authorization_reference": "projects/p/secrets/s/versions/1",
         }
     )
     catalog = FlagCatalog(connection)
@@ -1695,10 +1710,13 @@ def test_ready_browser_connections_are_required_before_resume() -> None:
     ready = waiting.model_copy(
         update={
             "status": ConnectionStatus.READY,
-            "auth_reference": "projects/p/secrets/s/versions/1",
+            "authorization_reference": "projects/p/secrets/s/versions/1",
         }
     )
     require_ready_browser_connections((ready,))
+    expired = ready.model_copy(update={"authorization_expires_at": NOW})
+    with pytest.raises(ResourceConflictError, match="still needs login"):
+        require_ready_browser_connections((expired,))
 
 
 @pytest.mark.anyio
@@ -1770,7 +1788,7 @@ async def test_executor_binds_the_browser_connection() -> None:
     connection = _browser_connection().model_copy(
         update={
             "status": ConnectionStatus.READY,
-            "auth_reference": "projects/p/secrets/s/versions/1",
+            "authorization_reference": "projects/p/secrets/s/versions/1",
         }
     )
     version = _computer_version()
@@ -1808,12 +1826,13 @@ async def test_executor_binds_the_browser_connection() -> None:
 
 
 def test_computer_use_preflight_requires_a_browser_connection() -> None:
-    from coordinator.service import required_connection_kinds
+    from coordinator.service import required_connection_roles
 
-    assert ConnectionKind.BROWSER in required_connection_kinds(ExecutionMethod.COMPUTER)
-    assert ConnectionKind.PROVIDER not in required_connection_kinds(ExecutionMethod.COMPUTER)
-    assert ConnectionKind.PROVIDER in required_connection_kinds(ExecutionMethod.API)
-    assert ConnectionKind.BROWSER not in required_connection_kinds(ExecutionMethod.API)
+    expected = frozenset(
+        {ConnectionRole.PROVIDER, ConnectionRole.SECRET_STORE, ConnectionRole.RUNTIME}
+    )
+    assert required_connection_roles(ExecutionMethod.COMPUTER) == expected
+    assert required_connection_roles(ExecutionMethod.API) == expected
 
 
 class SessionCatalog:
