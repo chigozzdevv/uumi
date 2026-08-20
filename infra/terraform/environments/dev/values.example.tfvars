@@ -3,13 +3,16 @@ region                    = "us-east1"
 enable_gateway            = true
 access_policy_id          = "123456789012"
 operator_access_level     = "accessPolicies/123456789012/accessLevels/firekeyOperators"
-browser_allowed_domains   = ["app.sendgrid.com"]
-runtime_connector_domains = ["api.sendgrid.com"]
+browser_allowed_domains   = ["console.vendor.example"]
+runtime_connector_domains = ["api.vendor.example"]
 gateway_users             = ["group:firekey-operators@example.com"]
 
 identity_platform_domains = ["app.example.com"]
 
 workflow_organisations        = ["org_replace"]
+workload_identity_service_accounts = [
+  "projects/customer-project/serviceAccounts/firekey-connection@customer-project.iam.gserviceaccount.com"
+]
 api_image                     = null
 publisher_image               = null
 ingestion_image               = null
@@ -46,14 +49,14 @@ scc_sources = {
 secret_sources = ["org_replace"]
 
 provider_sources = {
-  sendgrid = {
+  vendor = {
     organisation_id = "org_replace"
-    provider        = "sendgrid"
+    provider        = "vendor"
   }
 }
 
 rotation_schedules = {
-  production_mailer = {
+  production_service = {
     organisation_id = "org_replace"
     credential_id   = "credential_replace"
     schedule        = "0 2 * * 0"

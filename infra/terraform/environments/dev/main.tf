@@ -90,6 +90,26 @@ resource "google_service_account_iam_member" "coordinator_token" {
   member             = module.identity.members["firekey-coordinator"]
 }
 
+locals {
+  workload_identity_grants = {
+    for grant in setproduct(
+      var.workload_identity_service_accounts,
+      ["firekey-broker", "firekey-browser", "firekey-coordinator"],
+    ) : "${grant[1]}:${grant[0]}" => {
+      service_account = grant[0]
+      caller          = grant[1]
+    }
+  }
+}
+
+resource "google_service_account_iam_member" "connection_workload_identity" {
+  for_each = local.workload_identity_grants
+
+  service_account_id = each.value.service_account
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = module.identity.members[each.value.caller]
+}
+
 module "storage" {
   source = "../../modules/storage"
 

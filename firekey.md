@@ -584,24 +584,37 @@ These are four separately deployed and registered agents, not four labels inside
 
 Connections are the authorised integrations FireKey uses to observe and act.
 
-A connected system can provide more than one capability:
+A connection has one platform, one interface, one authorisation method, and one or more roles:
 
 ```text
-SendGrid
-  Roles: Credential provider
-
-Google Cloud
-  Roles: Secret store, runtime, telemetry, incident source
-
-GitHub
-  Roles: Incident source, repository context, pipeline runtime
+platform: cloud-platform
+roles:
+  - runtime
+  - secret-store
+  - telemetry
+interface: api
+authorization: workload-identity
+capabilities:
+  - runtime.deployCandidate
+  - secretStore.createVersion
+  - telemetry.queryHealth
+allowed_resources:
+  - projects/production
+status: ready
 ```
+
+Roles describe what FireKey uses the system for: `provider`, `runtime`, `secret-store`,
+`telemetry`, or `incident`. The interface describes how the deterministic connector operates it:
+`api` or `browser`. Authorisation describes how FireKey is permitted to use that interface:
+`oauth`, `workload-identity`, `api-key`, or `browser-session`. HTTP bearer, header, and Basic
+schemes are connector transport details, not connection types. Human involvement is never an
+interface or executor type.
 
 Connections use the safest supported authorisation method:
 
 1. Workload identity or short-lived federation.
 2. OAuth with limited scopes.
-3. A dedicated, least-privilege management credential.
+3. A dedicated, least-privilege API key.
 4. A controlled browser session when no adequate programmatic interface exists.
 
 The credential being rotated is the **workload credential**. The connection used to create and revoke it is a separate **management connection**. A `mail.send` SendGrid key, for example, cannot create its own replacement unless it has inappropriate management permissions. FireKey uses a separate, restricted provider-management connection for that operation.
@@ -613,7 +626,7 @@ Every connection records:
 - Last successful health check.
 - Token or session expiry.
 - Allowed resources and environments.
-- Whether API execution, Computer Use, or both are available.
+- The single configured interface: API or browser.
 - The FireKey service identity authorised to use it.
 
 #### Auth Broker
@@ -627,7 +640,7 @@ FireKey authentication
   Organisation SSO, user MFA, session management, roles, approvals
 
 Provider authentication
-  OAuth grants, workload identity, management credentials,
+  OAuth grants, workload identity, API keys,
   browser sessions, expiry, reauthentication, and human takeover
 ```
 
@@ -946,12 +959,10 @@ FireKey creates one dependency plan and tracks every consumer separately. The ol
 
 ### Playbook execution paths
 
-Every credential uses an active playbook. The playbook chooses the safest available execution path in this order:
+Every credential uses an active playbook. The playbook chooses the safest available execution interface in this order:
 
 1. Official provider API.
-2. Supported CLI or infrastructure provider interface.
-3. Gemini Computer Use in a one-run isolated Compute Engine browser VM.
-4. Human-assisted step when automation cannot be made safe.
+2. Gemini Computer Use in a one-run isolated Compute Engine browser VM.
 
 Computer Use is not a shortcut around provider controls. MFA, confirmation requirements, and safety blocks remain in force.
 
@@ -971,7 +982,7 @@ Auth Broker attaches authenticated session
 
 Provider pages can contain untrusted or adversarial text. Browser workers use domain allowlists, prompt-injection detection, restricted actions, isolated profiles, step budgets, and explicit confirmation for destructive operations.
 
-If a newly generated secret appears in the browser, Secure Capture transfers it directly to the configured secret store and masks it from subsequent screenshots. Secure Capture is a FireKey component, not a Gemini or Google Cloud product. If FireKey cannot prove that the field was captured and masked before another screenshot, the model loop and recording freeze and the run switches to an authorised human-assisted secure transfer.
+If a newly generated secret appears in the browser, Secure Capture transfers it directly to the configured secret store and masks it from subsequent screenshots. Secure Capture is a FireKey component, not a Gemini or Google Cloud product. If FireKey cannot prove that the field was captured and masked before another screenshot, the model loop and recording freeze and the run pauses for authorised exceptional recovery. The agent remains the coordinator; the recovery does not become a separate execution method.
 
 ## Rotation lifecycle
 
@@ -1063,7 +1074,7 @@ The deterministic policy engine validates the bound plan. An inactive playbook, 
 
 ### Stage 4: Create replacement credential
 
-Cloud Workflows dispatches the approved creation operation to the FireKey MCP Tool Broker. An API or CLI connector performs deterministic mutations. Only a console-only operation is delegated to the Console Operator Agent in an isolated Computer Use VM. The operation creates a new credential with the intended name, scope, resource boundary, expiry, and network restrictions.
+Cloud Workflows dispatches the approved creation operation to the FireKey MCP Tool Broker. An API connector performs deterministic mutations. Only a console-only operation is delegated to the Console Operator Agent in an isolated Computer Use VM. The operation creates a new credential with the intended name, scope, resource boundary, expiry, and network restrictions.
 
 Each connector declares one mutation mode:
 
@@ -1231,7 +1242,7 @@ The Rotation Planning and Recovery Agent reasons across the assigned playbook, p
 
 - Selects parallel, dual-slot, immediate-invalidation, or manual strategy.
 - Determines whether zero-downtime rotation is feasible.
-- Binds the playbook's API, CLI, Computer Use, or human-assisted path to the current connections and consumers.
+- Binds the playbook's API or Computer Use interface to the current connections and consumers.
 - Builds the candidate test, rollout, observation, rollback, and revocation plan.
 - Adapts the plan to routine or emergency conditions.
 - Diagnoses ambiguous failures from redacted evidence.
@@ -1517,7 +1528,7 @@ The stream is brokered by a Browser Session Gateway on Cloud Run. It authenticat
 
 Production replay is a sanitised operational record, not raw continuous video. It contains redacted checkpoint screenshots, executed action metadata, URLs, timestamps, safety decisions, and human-takeover markers. Raw secret-bearing frames are never persisted. Teaching walkthroughs use disposable non-production credentials and may be recorded for Playbook Builder only after the same redaction pipeline; the sanitised recording is stored in protected regional Cloud Storage under access and retention policy.
 
-Gemini Computer Use is Preview and is not FireKey's authority for critical decisions or irreversible actions. In production console runs it operates human-on-the-loop: an authorised operator can watch continuously, and the model must stop at authentication, secret-transfer, scope changes, credential creation, revocation, deletion, unexpected security prompts, and interface drift. The policy engine and action-bound approval decide whether the step is allowed; for the final protected commit, the deterministic client validates the declared control and executes only after the required real-time human confirmation. Organisations can disable Computer Use entirely and require API, CLI, or human execution for a playbook.
+Gemini Computer Use is Preview and is not FireKey's authority for critical decisions or irreversible actions. In production console runs it operates human-on-the-loop: an authorised operator can watch continuously, and the model must stop at authentication, secret-transfer, scope changes, credential creation, revocation, deletion, unexpected security prompts, and interface drift. The policy engine and action-bound approval decide whether the step is allowed; for the final protected commit, the deterministic client validates the declared control and executes only after the required real-time human confirmation. Organisations can disable Computer Use entirely and require an API connector for an automated playbook.
 
 ### Observability
 
@@ -1639,7 +1650,7 @@ For browser-generated credentials, Secure Capture masks the provider field befor
 
 ### Authentication isolation
 
-The Auth Broker keeps passwords, OAuth grants, refresh tokens, API-management credentials, browser cookies, and MFA values outside model context. Agents receive an opaque connection handle and capability result, such as `authenticated` or `reauthentication_required`.
+The Auth Broker keeps passwords, OAuth grants, refresh tokens, API keys, browser cookies, and MFA values outside model context. Agents receive an opaque connection handle and capability result, such as `authenticated` or `reauthentication_required`.
 
 Browser takeover occurs inside the isolated session. Authentication material is not copied into FireKey chat, a playbook, an agent prompt, or Audit.
 
@@ -1823,7 +1834,7 @@ When rotation starts:
 
 If the provider interface differs materially from the playbook's checkpoints, FireKey does not improvise a new credential-management flow in production. It pauses the rotation, marks the playbook `Review required`, and requests an authorised update and dry run.
 
-If the provider cannot separate model-assisted navigation from authentication, secret handling, and the final protected commit, the Computer Use playbook is ineligible for production activation. FireKey requires an API, CLI, or fully human execution path instead.
+If the provider cannot separate model-assisted navigation from authentication, secret handling, and the final protected commit, the Computer Use playbook is ineligible for production activation. FireKey requires an adequate API connector; otherwise that credential cannot have an automated production playbook.
 
 ## Data model
 

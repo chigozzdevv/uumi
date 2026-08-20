@@ -97,6 +97,20 @@ variable "workflow_organisations" {
   }
 }
 
+variable "workload_identity_service_accounts" {
+  description = "Customer-managed service accounts that FireKey broker, browser capture, and coordinator may impersonate for connection-scoped Google operations."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for service_account in var.workload_identity_service_accounts :
+      can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/serviceAccounts/[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", service_account))
+    ])
+    error_message = "Workload identity targets must be full Google service account resource names."
+  }
+}
+
 variable "api_image" {
   description = "Immutable FireKey API image reference; null bootstraps the registry only."
   type        = string

@@ -54,6 +54,16 @@ a distinct random HMAC secret per configured source. Provider signatures cover
 rejects timestamps outside the configured replay window. Do not
 place private or HMAC values in Terraform variables, plans, state, commands, or shell history.
 
+For each Google API connection, create a customer-managed service account with only the roles
+needed on that connection's declared resources. Add its full resource name to
+`workload_identity_service_accounts`. Terraform grants only the FireKey broker, isolated browser
+capture worker, and coordinator permission to impersonate that identity. Store
+`workload-identity://SERVICE_ACCOUNT_EMAIL` as the connection's authorisation reference; it is
+identity metadata, not a credential. FireKey uses that selected identity for runtime,
+secret-store, telemetry, detection, and verification calls and rejects fallback to its own process
+identity. The Terraform operator must already be authorised to update the target service account's
+IAM policy; FireKey cannot grant itself access to a customer account.
+
 Register the customer-facing GitHub App with the FireKey ingestion URL ending in `/v1/github`,
 the configured HTTPS callback URL, read access to secret scanning alerts, and the
 `secret_scanning_alert` event. Add the App OAuth client secret and webhook HMAC as Secret Manager
@@ -170,6 +180,8 @@ Before enabling schedules or webhooks, verify:
 - Model Armor blocks a seeded prompt-injection probe and IAP rejects an unregistered endpoint;
 - capability, GitHub, and provider webhook secret versions exist and IAM grants are limited to
   their workloads;
+- every workload-identity connection can impersonate only its selected customer service account,
+  and a connection-scoped read fails when its required resource role is removed;
 - a customer GitHub App installation completes PKCE user verification, receives a signed
 installation delivery, reports secret scanning enabled for every selected repository, and maps
 each repository to exactly one managed credential;
@@ -187,8 +199,9 @@ each repository to exactly one managed credential;
 - the final negative provider and secret probes pass and the exported audit manifest validates
   from the genesis hash.
 
-No credential value is an infrastructure input. Provider and runtime connection secrets are
-created and governed in Secret Manager after the platform foundation exists.
+No credential value is an infrastructure input. API-key and OAuth connection material is created
+and governed in Secret Manager after the platform foundation exists; workload-identity
+connections store only the selected service-account reference.
 
 For browser connection setup, grant the FireKey API service account version-list access and the
 isolated browser worker service account `roles/secretmanager.secretVersionAdder` only on the
