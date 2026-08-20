@@ -74,6 +74,40 @@ export interface CreatePlaybookInput {
   }
 }
 
+export interface PolicyDefinition {
+  required_checks: Record<string, string[]>
+  allowed_tools: string[]
+  protected_tools: string[]
+  allowed_recovery_modes: Array<"retry" | "rollback" | "rollforward" | "cleanup" | "escalate">
+  maximum_observation_seconds: number
+  preserve_old_generation: boolean
+  require_functional_probe: boolean
+  require_generation_telemetry: boolean
+  rotate_before_expiry_seconds: number
+  maximum_metadata_age_seconds: number
+  require_runtime_alignment: boolean
+  automatic_triggers: string[]
+  emergency_triggers: string[]
+  minimum_automatic_confidence: "verified" | "high" | "medium" | "low"
+  probe_versions: Record<string, string[]>
+  recovery: Record<string, unknown>
+}
+
+export interface CreatePolicyInput {
+  policy_id: Identifier
+  version_id: Identifier
+  name: string
+  definition: PolicyDefinition
+  activate: boolean
+}
+
+export interface StartRotationInput {
+  credential_id: Identifier
+  policy_version: Identifier
+  reason: string
+  urgency: "routine" | "urgent" | "emergency"
+}
+
 export interface BrowserSetupResponse {
   session: { id: Identifier; revision: number; expires_at: string }
   token: string
@@ -151,20 +185,43 @@ class ApiClient {
     return setup.application
   }
 
+  async createService(service: ConsumerService): Promise<ConsumerService> {
+    return this.request(`${ROOT}/inventory/services`, {
+      method: "POST",
+      body: JSON.stringify(service),
+    })
+  }
+
   async createPlaybook(input: CreatePlaybookInput): Promise<Playbook> {
     const source = await this.request<{ id: Identifier }>(`${ROOT}/playbooks/${input.playbook_id}/walkthroughs/references`, {
       method: "POST",
       body: JSON.stringify({ source_id: input.source.id, kind: input.source.kind, content: input.source.content, resource_url: input.source.resource_url }),
     })
-    const created = await this.request<{ playbook: Playbook }>(`${ROOT}/playbooks/${input.playbook_id}/versions`, {
+    const created = await this.request<{ playbook: Playbook }>(`${ROOT}/playbooks/${input.playbook_id}/build`, {
       method: "POST",
-      body: JSON.stringify({ version_id: input.version_id, definition: input.definition, source_ids: [source.id] }),
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ version_id: input.version_id, objective: JSON.stringify(input.definition), source_ids: [source.id] }),
     })
     await this.request(`${ROOT}/playbooks/${input.playbook_id}/versions/${input.version_id}/publish`, {
       method: "POST",
       body: JSON.stringify({}),
     })
     return { ...created.playbook, active_version_id: input.version_id }
+  }
+
+  async createPolicy(input: CreatePolicyInput): Promise<Policy> {
+    const policy = await this.request<Policy>(`${ROOT}/policies`, {
+      method: "POST",
+      body: JSON.stringify({ id: input.policy_id, name: input.name }),
+    })
+    await this.request(`${ROOT}/policies/${input.policy_id}/versions`, {
+      method: "POST",
+      body: JSON.stringify({ id: input.version_id, definition: input.definition }),
+    })
+    if (input.activate) {
+      await this.request(`${ROOT}/policies/${input.policy_id}/versions/${input.version_id}/activate`, { method: "POST", body: JSON.stringify({}) })
+    }
+    return { ...policy, latest_version: 1, active_version_id: input.activate ? input.version_id : null }
   }
 
   async getApplications(): Promise<Application[]> {
@@ -181,6 +238,15 @@ class ApiClient {
 
   async getRotations(): Promise<RotationRun[]> {
     return this.request(`${ROOT}/runs`)
+  }
+
+  async startRotation(input: StartRotationInput): Promise<RotationRun> {
+    const response = await this.request<{ run: RotationRun }>(`${ROOT}/runs`, {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ ...input, source: "manual", event_id: `manual-${crypto.randomUUID()}`, received_at: new Date().toISOString() }),
+    })
+    return response.run
   }
 
   async getRotation(runId: string): Promise<RotationRun> {

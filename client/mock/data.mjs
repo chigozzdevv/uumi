@@ -339,6 +339,8 @@ export const policies = [
   rollout: [5, 25, 50, 100],
 }))
 
+export const policyVersions = []
+
 export const playbooks = [
   { id: "play_vendor", organisation_id: "org_acme", name: "Vendor console credential rotation", platform: "internal-vendor", latest_version: 1, active_version_id: "play_vendor_v1", created_at: earlier, updated_at: "2026-08-10T11:00:00Z", revision: 1 },
   { id: "play_partner", organisation_id: "org_acme", name: "Partner portal credential rotation", platform: "partner-portal", latest_version: 1, active_version_id: null, created_at: earlier, updated_at: now, revision: 1 },
@@ -392,5 +394,5 @@ export const notifications = [
 ]
 
 export function createStore() {
-  return structuredClone({ overview, connections, applications, environments, services, credentials, generations, bindings, runs, incidents, approvals, policies, playbooks, playbookVersions, playbookSources, agents, audits, notifications, setups: [] })
+  return structuredClone({ overview, connections, applications, environments, services, credentials, generations, bindings, runs, incidents, approvals, policies, policyVersions, playbooks, playbookVersions, playbookSources, agents, audits, notifications, setups: [] })
 }

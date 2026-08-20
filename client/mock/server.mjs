@@ -72,6 +72,50 @@ createServer(async (request, response) => {
   }
   if (request.method === "GET" && listRoutes.has(path)) return json(response, 200, listRoutes.get(path))
 
+  if (request.method === "POST" && path === "/policies") {
+    const input = await body(request)
+    if (!input?.id || !String(input.name ?? "").trim()) return json(response, 422, { code: "validation-error", message: "Policy identity and name are required" })
+    if (item(store.policies, input.id)) return json(response, 409, { code: "conflict", message: `Policy ${input.id} already exists` })
+    const timestamp = new Date().toISOString()
+    const policy = { id: input.id, organisation_id: "org_acme", name: input.name.trim(), latest_version: 0, active_version_id: null, created_at: timestamp, updated_at: timestamp, revision: 0 }
+    store.policies.push(policy)
+    return json(response, 201, policy)
+  }
+
+  const policyVersionMatch = path.match(/^\/policies\/([a-z0-9_-]+)\/versions$/)
+  if (request.method === "POST" && policyVersionMatch) {
+    const input = await body(request)
+    const policy = item(store.policies, policyVersionMatch[1])
+    const definition = input.definition
+    const stages = ["trigger", "preflight", "plan", "create", "store", "deploy", "verify", "rollout", "observe", "approval", "revoke", "complete"]
+    if (!policy) return json(response, 404, { code: "not-found", message: "Policy not found" })
+    if (!input.id || !definition || stages.some((stage) => !Array.isArray(definition.required_checks?.[stage])) || !definition.allowed_tools?.length || !definition.allowed_recovery_modes?.length) return json(response, 422, { code: "validation-error", message: "Policy definition must cover every rotation stage" })
+    if (definition.require_generation_telemetry && !definition.allowed_tools.includes("verification.run")) return json(response, 422, { code: "validation-error", message: "Generation telemetry requires verification.run" })
+    if ((definition.protected_tools ?? []).some((tool) => !definition.allowed_tools.includes(tool))) return json(response, 422, { code: "validation-error", message: "Protected tools must also be allowed" })
+    policy.latest_version += 1
+    policy.updated_at = new Date().toISOString()
+    policy.revision += 1
+    const version = { id: input.id, organisation_id: "org_acme", policy_id: policy.id, number: policy.latest_version, definition, state: "draft", created_by: "actor_chigozie", created_at: policy.updated_at, approved_by: null, approved_at: null }
+    store.policyVersions.push(version)
+    return json(response, 201, version)
+  }
+
+  const policyActivateMatch = path.match(/^\/policies\/([a-z0-9_-]+)\/versions\/([a-z0-9_-]+)\/activate$/)
+  if (request.method === "POST" && policyActivateMatch) {
+    const policy = item(store.policies, policyActivateMatch[1])
+    const version = item(store.policyVersions, policyActivateMatch[2])
+    if (!policy || !version || version.policy_id !== policy.id) return json(response, 404, { code: "not-found", message: "Policy version not found" })
+    const timestamp = new Date().toISOString()
+    version.state = "active"
+    version.approved_by = "actor_chigozie"
+    version.approved_at = timestamp
+    policy.active_version_id = version.id
+    policy.updated_at = timestamp
+    policy.automatic_triggers = version.definition.automatic_triggers
+    policy.protected_operations = version.definition.protected_tools
+    return json(response, 200, version)
+  }
+
   if (request.method === "POST" && path === "/inventory/connections") {
     const connection = await body(request)
     if (!connection?.id || connection.organisation_id !== "org_acme" || !Array.isArray(connection.roles) || !connection.roles.length) return json(response, 422, { code: "validation-error", message: "Connection identity, organization, and role are required" })
@@ -143,6 +187,28 @@ createServer(async (request, response) => {
     const source = { id: input.source_id, organisation_id: "org_acme", playbook_id: sourceMatch[1], kind: input.kind, resource, content_type: input.kind === "text" ? "text/plain" : "text/uri-list", size: Buffer.byteLength(input.content), status: "ready", analysis: { source_id: input.source_id, transcript: [{ start_seconds: 0, end_seconds: 0, text: sanitised.text }], screen_text: [], shots: [], redaction_count: sanitised.redactions, processor: "firekey-source-sanitizer", created_at: timestamp }, created_by: "actor_chigozie", created_at: timestamp, updated_at: timestamp, revision: 0 }
     store.playbookSources.push(source)
     return json(response, 201, source)
+  }
+
+  const playbookBuildMatch = path.match(/^\/playbooks\/([a-z0-9_-]+)\/build$/)
+  if (request.method === "POST" && playbookBuildMatch) {
+    const input = await body(request)
+    if (!input.version_id || !Array.isArray(input.source_ids) || !input.source_ids.length || input.source_ids.some((id) => item(store.playbookSources, id)?.playbook_id !== playbookBuildMatch[1])) return json(response, 409, { code: "conflict", message: "Playbook build requires ready source evidence" })
+    let definition
+    try { definition = JSON.parse(input.objective) } catch { return json(response, 422, { code: "validation-error", message: "Playbook build objective is invalid" }) }
+    if (!definition?.name || !definition.platform || !definition.login_url_pattern || !Array.isArray(definition.allowed_domains) || !definition.allowed_domains.length || !Array.isArray(definition.steps) || !definition.steps.some((step) => step.stage === "create" && step.secure_field) || !definition.steps.some((step) => step.stage === "revoke")) return json(response, 422, { code: "validation-error", message: "Playbook Builder Agent returned an invalid definition" })
+    const timestamp = new Date().toISOString()
+    let playbook = item(store.playbooks, playbookBuildMatch[1])
+    if (!playbook) {
+      playbook = { id: playbookBuildMatch[1], organisation_id: "org_acme", name: definition.name, platform: definition.platform, latest_version: 1, active_version_id: null, created_at: timestamp, updated_at: timestamp, revision: 0 }
+      store.playbooks.push(playbook)
+    } else {
+      playbook.latest_version += 1
+      playbook.updated_at = timestamp
+      playbook.revision += 1
+    }
+    const version = { id: input.version_id, organisation_id: "org_acme", playbook_id: playbook.id, number: playbook.latest_version, definition, source_ids: input.source_ids, state: "draft", created_at: timestamp }
+    store.playbookVersions.push(version)
+    return json(response, 201, { playbook, version, agent: { succeeded: true, output: { playbook_draft: definition }, evidence_ids: input.source_ids } })
   }
 
   const playbookVersionMatch = path.match(/^\/playbooks\/([a-z0-9_-]+)\/versions$/)
@@ -273,6 +339,19 @@ createServer(async (request, response) => {
     store.bindings.push(...bindings)
     store.overview.credentials = store.credentials.length
     return json(response, 201, credential)
+  }
+
+  if (request.method === "POST" && path === "/runs") {
+    const input = await body(request)
+    const credential = item(store.credentials, input.credential_id)
+    if (!credential || credential.policy_version !== input.policy_version) return json(response, 409, { code: "conflict", message: "Credential and active policy version do not match" })
+    if (store.runs.some((run) => run.credential_id === credential.id && !["completed", "compensated", "failed", "cleanup-required"].includes(run.status))) return json(response, 409, { code: "conflict", message: "This credential already has an active rotation" })
+    if (!String(input.reason ?? "").trim() || !["routine", "urgent", "emergency"].includes(input.urgency)) return json(response, 422, { code: "validation-error", message: "Rotation reason and urgency are required" })
+    const timestamp = new Date().toISOString()
+    const run = { id: `run_manual_${randomBytes(8).toString("hex")}`, organisation_id: "org_acme", credential_id: credential.id, trigger: { source: "manual", event_id: input.event_id, actor_id: "actor_chigozie", reason: input.reason.trim(), urgency: input.urgency, received_at: input.received_at ?? timestamp }, policy_version: input.policy_version, stage: "trigger", status: "pending", lease: null, fencing_token: 0, browser_playbook_version: null, plan_id: null, plan_hash: null, current_generation_id: credential.active_generation_id, target_generation_id: null, deployments: [], failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: timestamp, updated_at: timestamp, revision: 0 }
+    store.runs.unshift(run)
+    store.overview.rotations_in_progress += 1
+    return json(response, 201, { run, step: { id: `step_${run.id}`, organisation_id: "org_acme", run_id: run.id, operation: "create", command_hash: createHash("sha256").update(run.id).digest("hex"), actor_id: "actor_chigozie", before_stage: null, after_stage: "trigger", before_status: null, after_status: "pending", revision: 0, proof: null, recorded_at: timestamp }, applied: true })
   }
 
   const runMatch = path.match(/^\/runs\/([a-z0-9_-]+)$/)
