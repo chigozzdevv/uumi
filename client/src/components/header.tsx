@@ -5,12 +5,13 @@ type PageHeaderProps = {
   section?: string
   eyebrow?: string
   title?: string
+  titlePrefix?: ReactNode
   description?: string
   actions?: ReactNode
   onBack?: () => void
 }
 
-export function PageHeader({ section, eyebrow, title, description, actions, onBack }: PageHeaderProps) {
+export function PageHeader({ section, eyebrow, title, titlePrefix, description, actions, onBack }: PageHeaderProps) {
   const [organisationsOpen, setOrganisationsOpen] = useState(false)
   const organisationMenu = useRef<HTMLDivElement>(null)
   const parts = section?.split(" · ") ?? []
@@ -26,7 +27,7 @@ export function PageHeader({ section, eyebrow, title, description, actions, onBa
   }, [])
 
   return (
-    <header className="mb-8 flex items-start justify-between gap-6">
+    <header className="mb-8 flex flex-col items-start justify-between gap-6 sm:flex-row">
       <div className="min-w-0">
         <div className="mb-4 flex items-center gap-2 text-[10px] font-medium text-[var(--ink-muted)]">
           {onBack && <button className="focus-ring -ml-2 grid size-7 place-items-center rounded-lg transition hover:bg-white hover:text-[var(--ink)]" aria-label="Back" onClick={onBack}><ArrowLeft className="size-3.5" /></button>}
@@ -52,10 +53,10 @@ export function PageHeader({ section, eyebrow, title, description, actions, onBa
           </div>
           {resolvedEyebrow && <><span>/</span><span>{resolvedEyebrow}</span></>}
         </div>
-        <h1 className="m-0 text-[28px] font-semibold tracking-[-0.045em] text-[var(--ink)]">{resolvedTitle}</h1>
+        <h1 className="m-0 flex items-center gap-3 text-[28px] font-semibold tracking-[-0.045em] text-[var(--ink)]">{titlePrefix && <span className="shrink-0">{titlePrefix}</span>}{resolvedTitle}</h1>
         {description && <p className="mt-2 max-w-2xl text-[12px] leading-5 text-[var(--ink-soft)]">{description}</p>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2 pt-9">{actions}</div>}
+      {actions && <div className="flex shrink-0 items-center gap-2 pt-0 sm:pt-9">{actions}</div>}
     </header>
   )
 }

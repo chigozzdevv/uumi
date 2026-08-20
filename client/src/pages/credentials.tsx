@@ -85,15 +85,13 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
   const selectedServices = selected ? graph.data!.services.filter((service) => selected.consumer_ids.includes(service.id)) : []
   const selectedConnection = selected ? connections.data!.find((item) => item.id === selected.connection_id) : undefined
   const selectedSecretStore = selected ? connections.data!.find((item) => item.id === selected.secret_store_connection_id) : undefined
-  const selectedState = selected ? operationalState(selected) : undefined
   const selectedAction = selected ? actionFor(selected) : undefined
 
   if (creating) return <CredentialSetup isOpen onClose={() => setCreating(false)} graph={graph.data!} connections={connections.data!} applications={applications.data!} environments={environments.data!} policies={policies.data!} onCreate={(input) => createCredential.mutateAsync(input)} />
 
   if (selected) return (
     <div className="page">
-      <PageHeader eyebrow="Inventory / Credentials" title={selected.display_name} onBack={() => setSelected(null)} actions={<>{(selectedAction?.target || selectedAction?.runId) && <Button onClick={() => performAction(selected)}>{selectedAction.label}<ArrowUpRight className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => onNavigate("applications")}>View applications</Button></>} />
-      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--border)] bg-white px-5 py-4"><Provider value={selected.provider} /><span className="text-[10px] text-[var(--ink-muted)]">{titleCase(selected.kind)}</span><Badge variant={selectedState!.variant}>{selectedState!.label}</Badge></div>
+      <PageHeader eyebrow="Inventory / Credentials" title={selected.display_name} titlePrefix={<Provider value={selected.provider} label={false} />} onBack={() => setSelected(null)} actions={<>{(selectedAction?.target || selectedAction?.runId) && <Button onClick={() => performAction(selected)}>{selectedAction.label}<ArrowUpRight className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => onNavigate("applications")}>View applications</Button></>} />
       <div className="mb-6 flex gap-1">{["overview", "consumers", "control"].map((item) => <button key={item} className={`focus-ring border-b-2 px-4 py-3 text-[11px] font-semibold capitalize ${tab === item ? "border-[var(--ink)] text-[var(--ink)]" : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]"}`} onClick={() => setTab(item)}>{item}</button>)}</div>
       <section className="rounded-2xl border border-[var(--border)] bg-white p-6">
         {tab === "overview" && <DetailList><Detail label="Type">{titleCase(selected.kind)}</Detail><Detail label="Scopes">{selected.scopes.join(", ") || "None"}</Detail><Detail label="Provider ID">{selected.provider_id ?? "Not recorded"}</Detail><Detail label="Consumers">{selected.consumer_ids.length}</Detail><Detail label="Secret reference"><span className="mono-code break-all">{selected.secret_reference}</span></Detail><Detail label="Updated">{formatDate(selected.updated_at, true)}</Detail></DetailList>}
