@@ -43,7 +43,6 @@ class GitHubWebhook:
             raise ValueError("GitHub webhook is missing alert or repository metadata")
         repository_name = repository.get("full_name")
         alert_url = alert.get("html_url")
-        secret_type = alert.get("secret_type_display_name") or alert.get("secret_type")
         alert_number = alert.get("number")
         if (
             not isinstance(repository_name, str)
@@ -51,7 +50,6 @@ class GitHubWebhook:
             or not isinstance(alert_number, int)
         ):
             raise ValueError("GitHub webhook metadata is incomplete")
-        provider = _provider(secret_type)
         observed = _datetime(alert.get("created_at"), received_at)
         occurrence = alert.get("updated_at") or alert.get("created_at")
         if not isinstance(occurrence, str) or not occurrence:
@@ -70,25 +68,10 @@ class GitHubWebhook:
             resource=SourceResource(
                 credential_id=credential_id,
                 repository=repository_name,
-                provider=provider,
             ),
             source_reference=alert_url,
             received_at=received_at,
         )
-
-
-def _provider(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    lowered = value.lower()
-    providers = {
-        "sendgrid": "sendgrid",
-        "github": "github",
-        "stripe": "stripe",
-        "google": "google-cloud",
-        "cloudflare": "cloudflare",
-    }
-    return next((provider for name, provider in providers.items() if name in lowered), None)
 
 
 def _datetime(value: Any, fallback: datetime) -> datetime:

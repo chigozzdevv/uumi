@@ -24,8 +24,8 @@ run, and successful compensation ends as `compensated`, never as a completed cre
 - `packages/testkit` contains test-only fakes that are not imported by runtime images.
 - `server/core` is the provider-independent state, storage, audit, identity, inventory,
   incident, playbook, approval, and generation kernel.
-- `server/connectors` contains the Google Cloud, SendGrid, GitHub, SCC, Secret Manager, and
-  Cloud Run adapters.
+- `server/connectors` contains the provider adapter plus the Google Cloud, GitHub, SCC,
+  Secret Manager, and Cloud Run adapters.
 - `server/ingestion` authenticates signed webhooks and Google push identities, normalises stable
   events, rejects changed replays, correlates exact inventory identifiers, and starts runs only
   when an active policy explicitly authorises that event type.
@@ -33,7 +33,7 @@ run, and successful compensation ends as `compensated`, never as a completed cre
   managed sessions, approved Memory Bank context, and the per-tenant routing registry.
 - `server/broker` exposes capability-scoped MCP tools. The model never receives provider or
   secret-store credentials. Mutations use leased attempts, pre-mutation reconciliation baselines,
-  and post-transfer result checkpoints; an expired SendGrid create cleans exactly attributable
+  and post-transfer result checkpoints; an expired provider create cleans exactly attributable
   provider and Secret Manager orphans before a new attempt.
 - `server/coordinator` executes exact immutable playbook steps and independently verifies each
   stage before Workflows can advance it.

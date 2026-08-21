@@ -176,7 +176,7 @@ def test_secret_scanning_event_uses_confirmed_repository_credential_mapping() ->
             "alert": {
                 "number": 7,
                 "html_url": "https://github.com/customer/api/security/secret-scanning/7",
-                "secret_type": "sendgrid_api_key",
+                "secret_type": "customer_platform_token",
                 "secret": "must-never-enter-firekey-metadata",
                 "created_at": NOW.isoformat(),
                 "updated_at": NOW.isoformat(),
@@ -194,6 +194,7 @@ def test_secret_scanning_event_uses_confirmed_repository_credential_mapping() ->
 
     assert event.resource.credential_id == "credential_one"
     assert event.resource.repository == "customer/api"
+    assert event.resource.provider is None
     assert "must-never-enter-firekey-metadata" not in event.model_dump_json()
 
 
@@ -205,7 +206,7 @@ def test_public_leak_event_is_an_exposure_trigger() -> None:
             "alert": {
                 "number": 8,
                 "html_url": "https://github.com/customer/api/security/secret-scanning/8",
-                "secret_type": "sendgrid_api_key",
+                "secret_type": "another_customer_secret",
                 "created_at": NOW.isoformat(),
                 "updated_at": NOW.isoformat(),
             },

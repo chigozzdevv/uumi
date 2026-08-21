@@ -17,7 +17,7 @@ from policy import REQUIRED_CHECKS, GatePolicy, digest
 
 
 def make_http_provider_api(
-    base_url: str = "https://api.sendgrid.com/v3",
+    base_url: str = "https://provider.example/v3",
     scheme: HttpAuthScheme = HttpAuthScheme.BEARER,
 ) -> HttpProviderApi:
     return HttpProviderApi(

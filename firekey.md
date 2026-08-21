@@ -1731,6 +1731,9 @@ Recovery itself is visible in the run timeline and Audit. A run is not labelled 
 
 ## End-to-end example: SendGrid password-reset email
 
+This is one example configuration of FireKey's provider adapter. SendGrid is not a built-in
+connection or a provider-specific execution path.
+
 ### Managed configuration
 
 ```text
@@ -1770,7 +1773,7 @@ The `notification-worker` is the credential consumer because it makes the SendGr
 3. Preflight confirms the SendGrid, Google Secret Manager, and Cloud Run connections and obtains scoped provider authorisation from the Auth Broker.
 4. The Inventory and Exposure Agent confirms that `notification-worker` is the only required consumer.
 5. The Rotation Planning and Recovery Agent selects the typed provider strategy from the SendGrid API connection and confirms that a second key can coexist with the old key.
-6. Cloud Workflows asks the FireKey MCP Tool Broker to execute the typed SendGrid connector operation. It creates `production-password-emailer-rot-0042-a1` with `mail.send` only.
+6. Cloud Workflows asks the FireKey MCP Tool Broker to execute the typed provider-adapter operation configured by this connection. It creates `production-password-emailer-rot-0042-a1` with `mail.send` only.
 7. The secure connector writes the value to Secret Manager as version 8.
 8. FireKey deploys `notification-worker-r18` with version 8 and 0% production traffic.
 9. FireKey invokes the tagged candidate with a synthetic password-reset task addressed to a controlled inbox.
@@ -1782,7 +1785,7 @@ The `notification-worker` is the credential consumer because it makes the SendGr
 15. The deterministic Verification Service confirms the new key can send the controlled test and the old key is rejected, zeroises the old-key test buffer, and then FireKey disables Secret Manager version 7.
 16. The run completes and Audit records the full history; version 7 is destroyed only after the retention period.
 
-The SendGrid connector declares key creation as `compensatable non-idempotent`. SendGrid does not return the secret again, and FireKey does not assume that a name or run tag is unique. Before creation the connector snapshots visible key IDs. If the create response is lost, it does not repeat the request. It compares the post-attempt inventory with that snapshot; an attributable orphan is deleted before a new attempt, while multiple or uncertain candidates move the run to `Cleanup required` for authorised resolution. This preserves safe retry without pretending that SendGrid provides an operation ID it does not document.
+This example's provider-adapter configuration declares key creation as `compensatable non-idempotent`. SendGrid does not return the secret again, and FireKey does not assume that a name or run tag is unique. Before creation the adapter snapshots visible key IDs. If the create response is lost, it does not repeat the request. It compares the post-attempt inventory with that snapshot; an attributable orphan is deleted before a new attempt, while multiple or uncertain candidates move the run to `Cleanup required` for authorised resolution. This preserves safe retry without pretending that the configured provider supplies an operation ID it does not document.
 
 ### Incident-triggered rotation
 
@@ -1898,11 +1901,11 @@ FireKey enters **The Fortified Enterprise Fleet**. The submission should make th
 
 | Judging area | What the continuous demo proves | Repository or cloud evidence |
 | --- | --- | --- |
-| Innovation and operational utility — 40% | A GitHub leak or schedule triggers a background run; FireKey identifies the credential and consumers, plans, creates, stores, deploys, functionally tests, promotes, obtains protected approval, revokes, and proves the old key is dead | Runnable SendGrid, Secret Manager, Cloud Run, GitHub, and verification integrations; persisted run timeline |
+| Innovation and operational utility — 40% | A GitHub leak or schedule triggers a background run; FireKey identifies the credential and consumers, plans, creates, stores, deploys, functionally tests, promotes, obtains protected approval, revokes, and proves the old key is dead | Runnable provider adapter, Secret Manager, Cloud Run, GitHub, and verification integrations; persisted run timeline |
 | Architectural discipline and tech stack — 30% | Four separately catalogued agents, durable pause and resume, safe cross-run context, generation-aware state, governed tools, human-on-the-loop Computer Use, compensation, and immutable audit | Agent Registry, Agent Runtime, Sessions, Memory Bank, Agent Identity, Agent Gateway, Model Armor, Workflows, Firestore, Pub/Sub, IAM, regional resources, and OpenTelemetry traces |
 | Demo and production readiness — 30% | One continuous, understandable dashboard flow shows Google Cloud execution, real external effects, rollback state, exact approval evidence, positive and negative verification, and a sanitised browser replay or live takeover | Hosted URL, Google Cloud project proof, public or shared repository, architecture diagram, and complete spin-up instructions |
 
-The approximately four-minute video uses credential controls with a short observation window and controlled inbox, while exercising the same 12-stage workflow and security boundaries used by longer production settings. It should show the incident queue first, then one uninterrupted incident-triggered SendGrid rotation, and finish on generation-aware verification and the locked audit evidence. A short browser-console segment can demonstrate the separate Computer Use safety path without replacing the primary API-driven E2E run.
+The approximately four-minute video uses credential controls with a short observation window and controlled inbox, while exercising the same 12-stage workflow and security boundaries used by longer production settings. It should show the incident queue first, then one uninterrupted incident-triggered rotation through a configured provider, and finish on generation-aware verification and the locked audit evidence. A short browser-console segment can demonstrate the separate Computer Use safety path without replacing the primary API-driven E2E run.
 
 ## End-to-end acceptance criteria
 
