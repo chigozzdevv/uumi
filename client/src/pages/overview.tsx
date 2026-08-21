@@ -1,5 +1,5 @@
 import { useQueries } from "@tanstack/react-query"
-import { ArrowUpRight, CircleAlert, Clock3 } from "lucide-react"
+import { ArrowUpRight, CircleAlert, Clock3, LoaderCircle } from "lucide-react"
 import { PageHeader } from "../components/header"
 import { Failure, Loading } from "../components/state"
 import { Badge } from "../components/ui/badge"
@@ -68,7 +68,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (nav: NavItem) => voi
                   <div className="flex items-start gap-4">
                     <Provider value={item?.provider ?? "firekey"} label={false} />
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2"><span className="truncate text-[12px] font-semibold">{item?.display_name ?? "Credential"}</span><Badge variant={run.status === "paused" ? "warning" : "active"}>{titleCase(run.status)}</Badge></div>
+                      <div className="flex flex-wrap items-center gap-2"><span className="truncate text-[12px] font-semibold">{item?.display_name ?? "Credential"}</span><Badge variant={run.status === "paused" ? "warning" : "active"} className="gap-1.5">{["running", "recovering"].includes(run.status) && <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />}{titleCase(run.status)}</Badge></div>
                       <div className="mt-4 h-1 overflow-hidden rounded-full bg-[#e3e3e0]"><div className="h-full rounded-full bg-[var(--accent)] transition-all" style={{ width: `${progress}%` }} /></div>
                       <div className="mt-2 flex justify-between text-[9px] font-medium uppercase tracking-[0.06em] text-[var(--ink-muted)]"><span>{titleCase(run.stage)}</span><span>{Math.round(progress)}%</span></div>
                     </div>

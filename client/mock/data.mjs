@@ -79,7 +79,7 @@ export const connections = [
     interface: "api",
     authorization: "workload-identity",
     authorization_reference: "workload-identity://firekey-secret-writer",
-    capabilities: ["secretStore.createVersion", "secretStore.disableVersion", "secretStore.destroyVersion"],
+    capabilities: ["secretStore.getVersion", "secretStore.testConsumerAccess", "secretStore.disableVersion", "secretStore.destroyVersion"],
     allowed_resources: ["projects/acme-prod/secrets"],
     http: null,
     playbook_id: null,
@@ -215,17 +215,38 @@ export const services = [
   { id: "svc_reconcile", organisation_id: "org_acme", application_id: "app_billing", environment_id: "env_billing_prod", runtime_connection_id: "conn_runtime", runtime_resource: "projects/acme-prod/locations/us-central1/services/reconciliation-worker", display_name: "reconciliation-worker", repository: "github.com/acme/billing", identity: "reconciliation@acme-prod.iam.gserviceaccount.com", created_at: earlier, updated_at: now, revision: 1 },
   { id: "svc_ingest", organisation_id: "org_acme", application_id: "app_data", environment_id: "env_data_prod", runtime_connection_id: "conn_runtime", runtime_resource: "projects/acme-prod/locations/us-east4/services/event-ingest", display_name: "event-ingest", repository: "github.com/acme/warehouse", identity: "event-ingest@acme-prod.iam.gserviceaccount.com", created_at: earlier, updated_at: now, revision: 2 },
   { id: "svc_exports", organisation_id: "org_acme", application_id: "app_data", environment_id: "env_data_prod", runtime_connection_id: "conn_runtime", runtime_resource: "projects/acme-prod/locations/us-east4/services/warehouse-export-worker", display_name: "warehouse-export-worker", repository: "github.com/acme/warehouse", identity: "warehouse-export@acme-prod.iam.gserviceaccount.com", created_at: earlier, updated_at: now, revision: 1 },
-].map((service) => ({ ...service, telemetry_connection_ids: ["conn_telemetry"] }))
+].map((service) => ({
+  ...service,
+  telemetry_connection_ids: ["conn_telemetry"],
+  verification: {
+    kind: "http",
+    target: `https://verification.acme.test/${service.id}`,
+    method: "POST",
+    expected_status: [200],
+    required_fields: { success: true },
+    confirmation: null,
+    timeout_seconds: 30,
+  },
+}))
 
 export const credentials = [
-  { id: "cred_sendgrid", organisation_id: "org_acme", connection_id: "conn_sendgrid", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/sendgrid", provider: "sendgrid", kind: "api-key", display_name: "production-password-emailer", provider_id: "sg_key_4902", scopes: ["mail.send"], consumer_ids: ["svc_notifications"], active_generation_id: "gen_sendgrid_7", policy_version: "policy_prod_v3", created_at: "2026-05-18T10:00:00Z", updated_at: now, revision: 8 },
-  { id: "cred_stripe", organisation_id: "org_acme", connection_id: "conn_stripe", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/stripe", provider: "stripe", kind: "api-key", display_name: "stripe-checkout-live", provider_id: "rk_live_8184", scopes: ["charges.write", "customers.read"], consumer_ids: ["svc_checkout", "svc_webhooks"], active_generation_id: "gen_stripe_5", policy_version: "policy_prod_v3", created_at: "2026-06-14T10:00:00Z", updated_at: "2026-08-15T15:20:00Z", revision: 5 },
-  { id: "cred_vendor", organisation_id: "org_acme", connection_id: "conn_vendor", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/vendor", provider: "internal-vendor", kind: "api-key", display_name: "vendor-order-export", provider_id: "vendor_key_942", scopes: ["orders.read", "orders.export"], consumer_ids: ["svc_orders"], active_generation_id: "gen_vendor_3", policy_version: "policy_prod_v3", created_at: "2026-06-01T09:00:00Z", updated_at: "2026-08-10T11:00:00Z", revision: 3 },
-  { id: "cred_github", organisation_id: "org_acme", connection_id: "conn_github_provider", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/github", provider: "github", kind: "fine-grained-token", display_name: "deployment-release-token", provider_id: "gh_pat_2841", scopes: ["contents:read", "deployments:write"], consumer_ids: ["svc_webhooks"], active_generation_id: "gen_github_4", policy_version: "policy_prod_v3", created_at: "2026-04-01T09:00:00Z", updated_at: now, revision: 5 },
-  { id: "cred_billing", organisation_id: "org_acme", connection_id: "conn_stripe", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/billing", provider: "stripe", kind: "restricted-key", display_name: "billing-subscriptions", provider_id: "rk_live_3172", scopes: ["subscriptions.write", "invoices.read"], consumer_ids: ["svc_billing"], active_generation_id: "gen_billing_9", policy_version: "policy_finance_v2", created_at: "2026-03-12T09:00:00Z", updated_at: "2026-08-12T10:00:00Z", revision: 9 },
-  { id: "cred_reconcile", organisation_id: "org_acme", connection_id: "conn_netsuite", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/reconcile", provider: "netsuite", kind: "oauth-client", display_name: "finance-reconciliation", provider_id: "oauth_client_992", scopes: ["transactions.read"], consumer_ids: ["svc_reconcile"], active_generation_id: "gen_reconcile_2", policy_version: "policy_finance_v2", created_at: "2026-07-02T09:00:00Z", updated_at: "2026-08-02T10:00:00Z", revision: 2 },
-  { id: "cred_ingest", organisation_id: "org_acme", connection_id: "conn_segment", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/ingest", provider: "segment", kind: "write-key", display_name: "production-event-ingest", provider_id: "segment_18f2", scopes: ["events.write"], consumer_ids: ["svc_ingest"], active_generation_id: "gen_ingest_6", policy_version: "policy_data_v1", created_at: "2026-02-10T09:00:00Z", updated_at: "2026-08-08T10:00:00Z", revision: 6 },
-  { id: "cred_exports", organisation_id: "org_acme", connection_id: "conn_snowflake", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/exports", provider: "snowflake", kind: "key-pair", display_name: "warehouse-export-signer", provider_id: "snow_user_export", scopes: ["warehouse:use", "stage:write"], consumer_ids: ["svc_exports"], active_generation_id: "gen_exports_4", policy_version: "policy_data_v1", created_at: "2026-01-12T09:00:00Z", updated_at: "2026-08-01T10:00:00Z", revision: 4 },
+  { id: "cred_sendgrid", organisation_id: "org_acme", connection_id: "conn_sendgrid", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/sendgrid/versions/7", provider: "sendgrid", kind: "api-key", display_name: "production-password-emailer", provider_id: "sg_key_4902", scopes: ["mail.send"], consumer_ids: ["svc_notifications"], active_generation_id: "gen_sendgrid_7", control_version: "control_sendgrid_v1", created_at: "2026-05-18T10:00:00Z", updated_at: now, revision: 8 },
+  { id: "cred_stripe", organisation_id: "org_acme", connection_id: "conn_stripe", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/stripe/versions/5", provider: "stripe", kind: "api-key", display_name: "stripe-checkout-live", provider_id: "rk_live_8184", scopes: ["charges.write", "customers.read"], consumer_ids: ["svc_checkout", "svc_webhooks"], active_generation_id: "gen_stripe_5", control_version: "control_stripe_v1", created_at: "2026-06-14T10:00:00Z", updated_at: "2026-08-15T15:20:00Z", revision: 5 },
+  { id: "cred_vendor", organisation_id: "org_acme", connection_id: "conn_vendor", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/vendor/versions/3", provider: "internal-vendor", kind: "api-key", display_name: "vendor-order-export", provider_id: "vendor_key_942", scopes: ["orders.read", "orders.export"], consumer_ids: ["svc_orders"], active_generation_id: "gen_vendor_3", control_version: "control_vendor_v1", created_at: "2026-06-01T09:00:00Z", updated_at: "2026-08-10T11:00:00Z", revision: 3 },
+  { id: "cred_github", organisation_id: "org_acme", connection_id: "conn_github_provider", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/github/versions/4", provider: "github", kind: "fine-grained-token", display_name: "deployment-release-token", provider_id: "gh_pat_2841", scopes: ["contents:read", "deployments:write"], consumer_ids: ["svc_webhooks"], active_generation_id: "gen_github_4", control_version: "control_github_v1", created_at: "2026-04-01T09:00:00Z", updated_at: now, revision: 5 },
+  { id: "cred_billing", organisation_id: "org_acme", connection_id: "conn_stripe", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/billing/versions/9", provider: "stripe", kind: "restricted-key", display_name: "billing-subscriptions", provider_id: "rk_live_3172", scopes: ["subscriptions.write", "invoices.read"], consumer_ids: ["svc_billing"], active_generation_id: "gen_billing_9", control_version: "control_billing_v1", created_at: "2026-03-12T09:00:00Z", updated_at: "2026-08-12T10:00:00Z", revision: 9 },
+  { id: "cred_reconcile", organisation_id: "org_acme", connection_id: "conn_netsuite", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/reconcile/versions/2", provider: "netsuite", kind: "oauth-client", display_name: "finance-reconciliation", provider_id: "oauth_client_992", scopes: ["transactions.read"], consumer_ids: ["svc_reconcile"], active_generation_id: "gen_reconcile_2", control_version: "control_reconcile_v1", created_at: "2026-07-02T09:00:00Z", updated_at: "2026-08-02T10:00:00Z", revision: 2 },
+  { id: "cred_ingest", organisation_id: "org_acme", connection_id: "conn_segment", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/ingest/versions/6", provider: "segment", kind: "write-key", display_name: "production-event-ingest", provider_id: "segment_18f2", scopes: ["events.write"], consumer_ids: ["svc_ingest"], active_generation_id: "gen_ingest_6", control_version: "control_ingest_v1", created_at: "2026-02-10T09:00:00Z", updated_at: "2026-08-08T10:00:00Z", revision: 6 },
+  { id: "cred_exports", organisation_id: "org_acme", connection_id: "conn_snowflake", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/exports/versions/4", provider: "snowflake", kind: "key-pair", display_name: "warehouse-export-signer", provider_id: "snow_user_export", scopes: ["warehouse:use", "stage:write"], consumer_ids: ["svc_exports"], active_generation_id: "gen_exports_4", control_version: "control_exports_v1", created_at: "2026-01-12T09:00:00Z", updated_at: "2026-08-01T10:00:00Z", revision: 4 },
+]
+
+export const providerCredentials = [
+  { connection_id: "conn_sendgrid", provider_id: "sg_key_7710", name: "customer-notifications", kind: "api-key", scopes: ["mail.send"], status: "active", disabled: false, created_at: "2026-07-18T10:00:00Z", last_used_at: "2026-08-16T16:00:00Z", expires_at: null },
+  { connection_id: "conn_stripe", provider_id: "rk_live_4218", name: "reporting-worker", kind: "restricted-key", scopes: ["charges.read", "refunds.read"], status: "active", disabled: false, created_at: "2026-07-11T10:00:00Z", last_used_at: "2026-08-16T15:20:00Z", expires_at: null },
+  { connection_id: "conn_github_provider", provider_id: "gh_pat_7718", name: "release-automation", kind: "fine-grained-token", scopes: ["contents:read", "deployments:write"], status: "active", disabled: false, created_at: "2026-07-03T09:00:00Z", last_used_at: "2026-08-16T14:00:00Z", expires_at: "2026-11-03T09:00:00Z" },
+  { connection_id: "conn_netsuite", provider_id: "oauth_client_551", name: "finance-reporting", kind: "oauth-client", scopes: ["transactions.read"], status: "active", disabled: false, created_at: "2026-06-20T09:00:00Z", last_used_at: "2026-08-15T12:00:00Z", expires_at: null },
+  { connection_id: "conn_segment", provider_id: "segment_2711", name: "production-audit-events", kind: "write-key", scopes: ["events.write"], status: "active", disabled: false, created_at: "2026-07-22T09:00:00Z", last_used_at: "2026-08-16T11:00:00Z", expires_at: null },
+  { connection_id: "conn_snowflake", provider_id: "snow_user_reports", name: "reporting-export", kind: "key-pair", scopes: ["warehouse:use", "stage:read"], status: "active", disabled: false, created_at: "2026-07-01T09:00:00Z", last_used_at: "2026-08-16T08:00:00Z", expires_at: null },
 ]
 
 export const bindings = credentials.flatMap((credential, credentialIndex) =>
@@ -270,35 +291,35 @@ export const runs = [
   {
     id: "run_emergency_sendgrid", organisation_id: "org_acme", credential_id: "cred_sendgrid",
     trigger: { source: "github-secret-scanning", event_id: "event_github_1842", actor_id: "actor_ingestion", reason: "Verified SendGrid key exposure in a public repository", urgency: "emergency", received_at: "2026-08-16T11:42:00Z" },
-    policy_version: "policy_prod_v3", stage: "approval", status: "paused",
+    control_version: "control_sendgrid_v1", stage: "approval", status: "paused",
     lease: null, fencing_token: 4, browser_playbook_version: null, plan_id: "plan_sendgrid_42", plan_hash: hash("a"), current_generation_id: "gen_sendgrid_7", target_generation_id: "gen_sendgrid_8",
     failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-16T11:42:05Z", updated_at: "2026-08-16T17:43:00Z", revision: 14,
   },
   {
     id: "run_github_schedule", organisation_id: "org_acme", credential_id: "cred_github",
     trigger: { source: "scheduler", event_id: "schedule_90d_991", actor_id: "actor_scheduler", reason: "Routine 90-day credential rotation", urgency: "routine", received_at: "2026-08-16T16:20:00Z" },
-    policy_version: "policy_prod_v3", stage: "deploy", status: "running",
+    control_version: "control_github_v1", stage: "deploy", status: "running",
     lease: { owner_id: "actor_coordinator", fencing_token: 2, expires_at: "2026-08-16T18:10:00Z" }, fencing_token: 2, browser_playbook_version: null, plan_id: "plan_github_91", plan_hash: hash("b"), current_generation_id: "gen_github_4", target_generation_id: "gen_github_5",
     failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-16T16:20:00Z", updated_at: now, revision: 8,
   },
   {
     id: "run_stripe_complete", organisation_id: "org_acme", credential_id: "cred_stripe",
     trigger: { source: "scheduler", event_id: "schedule_90d_948", actor_id: "actor_scheduler", reason: "Routine restricted key rotation", urgency: "routine", received_at: "2026-08-15T13:00:00Z" },
-    policy_version: "policy_prod_v3", stage: "complete", status: "completed",
+    control_version: "control_stripe_v1", stage: "complete", status: "completed",
     lease: null, fencing_token: 3, browser_playbook_version: null, plan_id: "plan_stripe_44", plan_hash: hash("c"), current_generation_id: "gen_stripe_4", target_generation_id: "gen_stripe_5",
     failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-15T13:00:00Z", updated_at: "2026-08-15T15:20:00Z", revision: 18,
   },
   {
     id: "run_segment_complete", organisation_id: "org_acme", credential_id: "cred_ingest",
     trigger: { source: "cloud-logging", event_id: "event_segment_118", actor_id: "actor_ingestion", reason: "Verified write key exposure in an application log", urgency: "emergency", received_at: "2026-08-12T08:10:00Z" },
-    policy_version: "policy_data_v1", stage: "complete", status: "completed",
+    control_version: "control_ingest_v1", stage: "complete", status: "completed",
     lease: null, fencing_token: 3, browser_playbook_version: null, plan_id: "plan_segment_18", plan_hash: hash("8"), current_generation_id: "gen_ingest_5", target_generation_id: "gen_ingest_6",
     failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-12T08:10:10Z", updated_at: "2026-08-12T09:42:00Z", revision: 17,
   },
   {
     id: "run_vendor_failed", organisation_id: "org_acme", credential_id: "cred_vendor",
     trigger: { source: "scheduler", event_id: "schedule_90d_913", actor_id: "actor_scheduler", reason: "Routine vendor key rotation", urgency: "routine", received_at: "2026-08-14T09:00:00Z" },
-    policy_version: "policy_prod_v3", stage: "create", status: "failed",
+    control_version: "control_vendor_v1", stage: "create", status: "failed",
     lease: null, fencing_token: 2, browser_playbook_version: "play_vendor_v1", plan_id: "plan_vendor_12", plan_hash: hash("d"), current_generation_id: "gen_vendor_3", target_generation_id: null,
     failure: { code: "provider-authentication-expired", message: "The approved browser session requires reauthentication before credential creation can continue.", retryable: true, evidence_ids: ["evidence_vendor_auth"] }, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-14T09:00:00Z", updated_at: "2026-08-14T09:08:00Z", revision: 6,
   },
@@ -328,30 +349,62 @@ export const approvals = [
   { id: "approval_stripe_revoke", organisation_id: "org_acme", run_id: "run_stripe_complete", action_id: "action_revoke_stripe_old", action_digest: hash("5"), plan_hash: hash("c"), evidence_hash: hash("6"), generation_id: "gen_stripe_4", requested_by: "actor_coordinator", capability_hash: hash("7"), decision: "approved", approver_id: "actor_chigozie", expires_at: "2026-08-16T18:00:00Z", created_at: "2026-08-15T15:01:00Z", decided_at: "2026-08-15T15:04:00Z", consumed_at: "2026-08-15T15:04:10Z", revision: 3 },
 ]
 
-export const policies = [
-  { id: "policy_prod", organisation_id: "org_acme", name: "Production SaaS credentials", latest_version: 3, active_version_id: "policy_prod_v3", created_at: earlier, updated_at: now, revision: 4 },
-  { id: "policy_finance", organisation_id: "org_acme", name: "Finance restricted access", latest_version: 2, active_version_id: "policy_finance_v2", created_at: earlier, updated_at: "2026-08-12T10:00:00Z", revision: 2 },
-  { id: "policy_data", organisation_id: "org_acme", name: "Data platform service keys", latest_version: 1, active_version_id: "policy_data_v1", created_at: earlier, updated_at: "2026-08-08T10:00:00Z", revision: 1 },
-].map((policy) => ({
-  ...policy,
-  automatic_triggers: policy.id === "policy_finance" ? ["schedule", "verified-exposure"] : ["schedule", "expiry", "drift", "verified-exposure"],
-  protected_operations: ["provider.revokeCredential", "secretStore.destroyVersion"],
-  rollout: [5, 25, 50, 100],
+const requiredChecks = {
+  trigger: ["request-authenticated", "source-deduplicated", "lease-held"],
+  preflight: ["provider-ready", "credential-known", "scopes-known", "playbook-eligible", "management-authenticated", "store-ready", "consumers-known", "runtime-ready", "verifier-ready", "approvers-known", "overlap-supported", "mutation-declared", "no-conflict"],
+  plan: ["plan-bound", "controls-pinned", "plan-hashed", "recovery-ready"],
+  create: ["replacement-created", "mutation-resolved", "generation-recorded"],
+  store: ["secret-stored", "consumer-accessible", "plaintext-isolated"],
+  deploy: ["candidate-deployed", "version-bound", "generation-tagged", "rollback-ready"],
+  verify: ["provider-valid", "store-valid", "deployment-valid", "functional-valid", "downstream-valid", "telemetry-healthy", "coverage-complete", "rollback-ready"],
+  rollout: ["production-promoted", "rollout-healthy"],
+  observe: ["telemetry-healthy", "old-use-clear", "consumers-current"],
+  approval: ["approval-valid", "action-digest-valid", "evidence-current"],
+  revoke: ["old-revoked", "replacement-valid", "old-rejected", "old-secret-disabled"],
+  complete: ["consumers-current", "replacement-valid", "old-rejected", "audit-complete"],
+}
+
+export const controlVersions = credentials.map((credential) => ({
+  id: credential.control_version,
+  organisation_id: credential.organisation_id,
+  credential_id: credential.id,
+  number: 1,
+  definition: {
+    required_checks: structuredClone(requiredChecks),
+    allowed_tools: ["provider.listCredentialMetadata", "provider.getCredentialStatus", "provider.createCredential", "provider.revokeCredential", "provider.testCredential", "secretStore.getVersion", "secretStore.testConsumerAccess", "secretStore.disableVersion", "secretStore.destroyVersion", "runtime.inspectSecretBindings", "runtime.deployCandidate", "runtime.shiftTraffic", "runtime.rollback", "telemetry.queryHealth", "telemetry.queryCredentialUsage", "verification.run"],
+    protected_tools: ["provider.revokeCredential", "secretStore.disableVersion", "secretStore.destroyVersion"],
+    allowed_recovery_modes: ["rollback"],
+    maximum_observation_seconds: 1800,
+    preserve_old_generation: true,
+    require_functional_probe: true,
+    require_generation_telemetry: true,
+    rotate_before_expiry_seconds: 604800,
+    maximum_metadata_age_seconds: 86400,
+    require_runtime_alignment: true,
+    automatic_triggers: ["expiry", "drift", "verified-exposure"],
+    emergency_triggers: ["verified-exposure"],
+    minimum_automatic_confidence: "verified",
+    probe_versions: {},
+    recovery: {},
+  },
+  digest: hash("a"),
+  created_by: "actor_chigozie",
+  created_at: credential.updated_at,
 }))
 
-export const policyVersions = []
-
 export const playbooks = [
-  { id: "play_vendor", organisation_id: "org_acme", name: "Vendor console credential rotation", platform: "internal-vendor", latest_version: 1, active_version_id: "play_vendor_v1", created_at: earlier, updated_at: "2026-08-10T11:00:00Z", revision: 1 },
-  { id: "play_partner", organisation_id: "org_acme", name: "Partner portal credential rotation", platform: "partner-portal", latest_version: 1, active_version_id: null, created_at: earlier, updated_at: now, revision: 1 },
+  { id: "play_vendor", organisation_id: "org_acme", name: "Vendor console credential rotation", platform: "internal-vendor", latest_version: 1, latest_version_id: "play_vendor_v1", active_version_id: "play_vendor_v1", created_at: earlier, updated_at: "2026-08-10T11:00:00Z", revision: 1 },
+  { id: "play_partner", organisation_id: "org_acme", name: "Partner portal credential rotation", platform: "partner-portal", latest_version: 1, latest_version_id: "play_partner_v1", active_version_id: null, created_at: earlier, updated_at: now, revision: 1 },
 ]
 
 export const playbookVersions = [
-  { id: "play_vendor_v1", organisation_id: "org_acme", playbook_id: "play_vendor", number: 1, state: "published", definition: { name: "Vendor console credential rotation", platform: "internal-vendor", allowed_domains: ["*.vendor.example.com"], login_url_pattern: "https://login.vendor.example.com/*", steps: [{ id: "action_create", stage: "create", tool: "browser.secure-capture", secure_field: { name: "credential" } }, { id: "action_revoke", stage: "revoke", tool: "browser.click", secure_field: null }] }, source_ids: ["source_vendor_text"], published_by: "actor_chigozie", published_at: earlier, created_at: earlier },
+  { id: "play_vendor_v1", organisation_id: "org_acme", playbook_id: "play_vendor", number: 1, state: "published", definition: { name: "Vendor console credential rotation", platform: "internal-vendor", allowed_domains: ["*.vendor.example.com"], login_url_pattern: "https://login.vendor.example.com/*", steps: [{ id: "action_create", stage: "create", effect: "create-credential", tool: "browser.secure-capture", secure_field: { name: "credential" } }, { id: "action_revoke", stage: "revoke", effect: "revoke-credential", tool: "browser.click", secure_field: null }] }, source_ids: ["source_vendor_text"], published_by: "actor_chigozie", published_at: earlier, created_at: earlier },
+  { id: "play_partner_v1", organisation_id: "org_acme", playbook_id: "play_partner", number: 1, state: "draft", definition: { name: "Partner portal credential rotation", platform: "partner-portal", allowed_domains: ["*.partner.example.com"], login_url_pattern: "https://login.partner.example.com/*", steps: [{ id: "action_create", stage: "create", effect: "create-credential", tool: "browser.secure-capture", objective: "Create and capture the replacement credential", secure_field: { name: "credential" } }, { id: "action_revoke", stage: "revoke", effect: "revoke-credential", tool: "browser.click", objective: "Revoke the previous credential", secure_field: null }] }, source_ids: ["source_partner_text"], published_by: null, published_at: null, created_at: now },
 ]
 
 export const playbookSources = [
   { id: "source_vendor_text", organisation_id: "org_acme", playbook_id: "play_vendor", kind: "text", resource: `sha256:${hash("vendor-procedure")}`, content_type: "text/plain", size: 78, status: "ready", analysis: { source_id: "source_vendor_text", transcript: [{ start_seconds: 0, end_seconds: 0, text: "Open credential settings, create and capture the replacement, then revoke the prior key." }], screen_text: [], shots: [], redaction_count: 0, processor: "firekey-source-sanitizer", created_at: earlier }, created_by: "actor_chigozie", created_at: earlier, updated_at: earlier, revision: 0 },
+  { id: "source_partner_text", organisation_id: "org_acme", playbook_id: "play_partner", kind: "text", resource: `sha256:${hash("partner-procedure")}`, content_type: "text/plain", size: 68, status: "ready", analysis: { source_id: "source_partner_text", transcript: [{ start_seconds: 0, end_seconds: 0, text: "Create and capture the replacement, then revoke the prior credential." }], screen_text: [], shots: [], redaction_count: 0, processor: "firekey-source-sanitizer", created_at: now }, created_by: "actor_chigozie", created_at: now, updated_at: now, revision: 0 },
 ]
 
 const agentBase = { organisation_id: "org_acme", version: "2026.08.16", owner: "platform-security@acme.com", endpoint: "https://agents.firekey.acme.internal", deployment: "cloud-run://acme-agents", registry: "agent-registry://acme-prod", ingress_gateway: "agent-gateway://firekey-ingress", egress_gateway: "secure-web-proxy://firekey-egress", region: "us-central1", approved_callers: ["serviceAccount:firekey-workflow@acme-prod.iam.gserviceaccount.com"], tool_destinations: ["mcp://firekey-broker"], status: "ready", registered_at: now }
@@ -369,7 +422,7 @@ const auditKinds = [
   ["approval.requested", "actor_coordinator", "approvals/approval_sendgrid_revoke", "run_emergency_sendgrid", { action: "provider.revokeCredential" }],
   ["connection.reauthentication", "actor_authbroker", "connections/conn_vendor", "run_vendor_failed", { status: "reauthentication-required" }],
   ["run.stage.started", "actor_coordinator", "runs/run_github_schedule/stages/deploy", "run_github_schedule", { stage: "deploy" }],
-  ["plan.created", "actor_planner", "plans/plan_github_91", "run_github_schedule", { policy_version: "policy_prod_v3" }],
+  ["plan.created", "actor_planner", "plans/plan_github_91", "run_github_schedule", { control_version: "control_github_v1" }],
   ["verification.passed", "actor_verifier", "probes/probe_sendgrid_v1", "run_emergency_sendgrid", { status: "passed", auth_failures: 0 }],
 ]
 export const audits = auditKinds.map(([kind, actor_id, resource, run_id, payload], index) => ({
@@ -394,5 +447,5 @@ export const notifications = [
 ]
 
 export function createStore() {
-  return structuredClone({ overview, connections, applications, environments, services, credentials, generations, bindings, runs, incidents, approvals, policies, policyVersions, playbooks, playbookVersions, playbookSources, agents, audits, notifications, setups: [] })
+  return structuredClone({ overview, connections, applications, environments, services, credentials, providerCredentials, generations, bindings, runs, incidents, approvals, controlVersions, playbooks, playbookVersions, playbookSources, agents, audits, notifications, setups: [] })
 }

@@ -8,8 +8,6 @@ import { PlaybooksPage } from "./pages/playbooks"
 import { IncidentsPage } from "./pages/incidents"
 import { RotationsPage } from "./pages/rotations"
 import { ApprovalsPage } from "./pages/approvals"
-import { PoliciesPage } from "./pages/policies"
-import { AgentsPage } from "./pages/agents"
 import { ConnectionsPage } from "./pages/connections"
 import { AuditsPage } from "./pages/audits"
 import { SettingsPage } from "./pages/settings"
@@ -27,7 +25,7 @@ const queryClient = new QueryClient({
 
 export function App() {
   const [currentNav, setCurrentNav] = useState<NavItem>("overview")
-  const [activeRunId, setActiveRunId] = useState<string>("run_emergency_sendgrid")
+  const [activeRunId, setActiveRunId] = useState<string>("")
 
   const handleNavigateRotation = (runId: string) => {
     setActiveRunId(runId)
@@ -54,10 +52,6 @@ export function App() {
         return <RotationsPage activeRunId={activeRunId} onNavigateApproval={() => setCurrentNav("approvals")} />
       case "approvals":
         return <ApprovalsPage />
-      case "policies":
-        return <PoliciesPage />
-      case "agents":
-        return <AgentsPage />
       case "connections":
         return <ConnectionsPage />
       case "audits":

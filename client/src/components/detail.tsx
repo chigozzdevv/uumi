@@ -1,5 +1,20 @@
 import type { ReactNode } from "react"
 
+export function DetailTabs<T extends string>({ items, value, onChange }: { items: ReadonlyArray<{ id: T; label: string }>; value: T; onChange: (value: T) => void }) {
+  return <div className="mb-6 flex gap-1">
+    {items.map((item) => <button key={item.id} className={`focus-ring border-b-2 px-4 py-3 text-[11px] font-semibold ${value === item.id ? "border-[var(--ink)] text-[var(--ink)]" : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]"}`} onClick={() => onChange(item.id)}>{item.label}</button>)}
+  </div>
+}
+
+export function DetailCard({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <section className="rounded-2xl border border-[var(--border)] bg-white p-6">
+      {title && <h3 className="eyebrow mb-4">{title}</h3>}
+      {children}
+    </section>
+  )
+}
+
 export function DetailList({ children }: { children: ReactNode }) {
   return <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2">{children}</dl>
 }

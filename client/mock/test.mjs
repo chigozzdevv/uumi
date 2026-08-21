@@ -10,6 +10,7 @@ const connectionIds = ids(store.connections)
 const generationIds = ids(store.generations)
 const runIds = ids(store.runs)
 const sourceIds = ids(store.playbookSources)
+const controlKeys = new Set(store.controlVersions.map((item) => `${item.credential_id}:${item.id}`))
 
 assert.equal(store.overview.credentials, store.credentials.length)
 assert.equal(store.overview.pending_approvals, store.approvals.filter((item) => item.decision === "pending").length)
@@ -28,6 +29,7 @@ for (const credential of store.credentials) {
   assert(secretStore.allowed_resources.some((boundary) => credential.secret_reference === boundary || credential.secret_reference.startsWith(`${boundary.replace(/\/$/, "")}/`)), `${credential.id} escapes its secret-store boundary`)
   assert(!("playbook_version" in credential), `${credential.id} must not assign a Playbook directly`)
   assert(generationIds.has(credential.active_generation_id), `${credential.id} references an unknown active generation`)
+  assert(controlKeys.has(`${credential.id}:${credential.control_version}`), `${credential.id} references unknown controls`)
   for (const serviceId of credential.consumer_ids) {
     assert(serviceIds.has(serviceId), `${credential.id} references an unknown consumer`)
     assert(
@@ -35,6 +37,14 @@ for (const credential of store.credentials) {
       `${credential.id} is missing a binding for ${serviceId}`,
     )
   }
+}
+
+for (const metadata of store.providerCredentials) {
+  const connection = store.connections.find((item) => item.id === metadata.connection_id)
+  assert(connection?.roles.includes("provider"), `${metadata.provider_id} requires a provider connection`)
+  assert.equal(connection.interface, "api", `${metadata.provider_id} requires API discovery`)
+  assert(metadata.provider_id && metadata.kind && metadata.scopes.length, `${metadata.provider_id} has incomplete metadata`)
+  assert(!Object.hasOwn(metadata, "secret"), `${metadata.provider_id} must not expose secret material`)
 }
 
 for (const generation of store.generations) {
@@ -76,6 +86,7 @@ for (const connection of store.connections) {
 
 for (const run of store.runs) {
   assert(credentialIds.has(run.credential_id), `${run.id} references an unknown credential`)
+  assert(controlKeys.has(`${run.credential_id}:${run.control_version}`), `${run.id} is not pinned to credential-owned controls`)
   assert(!("dry_run_id" in run) && !("dry_run_playbook_id" in run), `${run.id} contains a removed dry-run binding`)
 }
 
@@ -83,6 +94,12 @@ for (const version of store.playbookVersions) {
   assert(version.source_ids.length, `${version.id} requires source provenance`)
   for (const sourceId of version.source_ids) assert(sourceIds.has(sourceId), `${version.id} references unknown source ${sourceId}`)
   assert(version.definition.steps.every((step) => step.protected !== true), `${version.id} embeds approval policy in a Playbook`)
+}
+
+for (const playbook of store.playbooks) {
+  const latest = store.playbookVersions.find((version) => version.id === playbook.latest_version_id)
+  assert(latest && latest.playbook_id === playbook.id && latest.number === playbook.latest_version, `${playbook.id} does not point to its latest immutable version`)
+  if (playbook.active_version_id) assert.equal(store.playbookVersions.find((version) => version.id === playbook.active_version_id)?.state, "published", `${playbook.id} active version is not published`)
 }
 
 for (const source of store.playbookSources) {

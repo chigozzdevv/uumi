@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react"
-import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query"
-import { ArrowUpRight, ChevronRight, Plus } from "lucide-react"
-import { Detail, DetailList } from "../components/detail"
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ArrowUpRight, ChevronRight, LoaderCircle, Plus } from "lucide-react"
+import { Detail, DetailCard, DetailList, DetailTabs } from "../components/detail"
+import { ControlsFields, ControlsSummary } from "../components/controls"
+import { buildControlPreferences, controlsAreValid, controlsFromDefinition, defaultControls, type ControlValues } from "../lib/controls"
 import { PageHeader } from "../components/header"
+import { ManageResourceModal } from "../components/manage"
 import { Provider } from "../components/provider"
 import { CredentialSetup } from "../components/setup"
 import { Failure, Loading } from "../components/state"
@@ -12,9 +15,21 @@ import { Button } from "../components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import type { ManagedCredential } from "../types"
 import { api } from "../lib/api"
-import { formatDate, providerName, titleCase } from "../lib/format"
+import { Field, formControl } from "../components/workspace"
+import { connectionStatus, formatDate, providerName, titleCase } from "../lib/format"
 
 type CredentialTarget = "approvals" | "rotations" | "connections" | "incidents" | "applications"
+
+function identifier(prefix: string) {
+  return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`
+}
+
+function sameControls(left: ControlValues, right: ControlValues) {
+  return left.expiryDays === right.expiryDays
+    && left.observationMinutes === right.observationMinutes
+    && left.automaticTriggers.length === right.automaticTriggers.length
+    && left.automaticTriggers.every((trigger) => right.automaticTriggers.includes(trigger))
+}
 
 export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate: (target: CredentialTarget) => void; onNavigateRotation: (runId: string) => void }) {
   const queryClient = useQueryClient()
@@ -22,8 +37,11 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
   const [provider, setProvider] = useState("all")
   const [selected, setSelected] = useState<ManagedCredential | null>(null)
   const [creating, setCreating] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editName, setEditName] = useState("")
+  const [editControls, setEditControls] = useState<ControlValues>(defaultControls)
   const [tab, setTab] = useState("overview")
-  const [graph, runs, incidents, connections, applications, environments, policies] = useQueries({
+  const [graph, runs, incidents, connections, applications, environments, playbooks] = useQueries({
     queries: [
       { queryKey: ["graph"], queryFn: () => api.getGraph() },
       { queryKey: ["rotations"], queryFn: () => api.getRotations() },
@@ -31,9 +49,12 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
       { queryKey: ["connections"], queryFn: () => api.getConnections() },
       { queryKey: ["applications"], queryFn: () => api.getApplications() },
       { queryKey: ["environments"], queryFn: () => api.getEnvironments() },
-      { queryKey: ["policies"], queryFn: () => api.getPolicies() },
+      { queryKey: ["playbooks"], queryFn: () => api.getPlaybooks() },
     ],
   })
+  const credentialDetail = useQuery({ queryKey: ["credentials", selected?.id], queryFn: () => api.getCredential(selected!.id), enabled: Boolean(selected) })
+  const currentSelected = credentialDetail.data ?? selected
+  const controlVersion = useQuery({ queryKey: ["controls", currentSelected?.id, currentSelected?.control_version], queryFn: () => api.getCredentialControls(currentSelected!.id, currentSelected!.control_version), enabled: Boolean(currentSelected) })
   const createCredential = useMutation({
     mutationFn: api.importCredential.bind(api),
     onSuccess: async () => {
@@ -43,6 +64,40 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
       ])
     },
   })
+  const saveCredential = useMutation({
+    mutationFn: async () => {
+      let credential = currentSelected!
+      if (editName.trim() !== credential.display_name) {
+        credential = await api.updateCredential(credential.id, { expected_revision: credential.revision, display_name: editName.trim() })
+      }
+      if (!sameControls(editControls, controlsFromDefinition(controlVersion.data?.definition))) {
+        const controls = buildControlPreferences(editControls)
+        const changed = await api.updateCredentialControls(credential.id, {
+          expected_revision: credential.revision,
+          version_id: identifier("control_version"),
+          controls,
+        })
+        credential = changed.credential
+        queryClient.setQueryData(["controls", credential.id, changed.controls.id], changed.controls)
+      }
+      return credential
+    },
+    onSuccess: async (credential) => {
+      queryClient.setQueryData(["credentials", credential.id], credential)
+      setSelected(credential)
+      setEditing(false)
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ["graph"] }), queryClient.invalidateQueries({ queryKey: ["overview"] }), queryClient.invalidateQueries({ queryKey: ["controls"] })])
+    },
+  })
+  const deleteCredential = useMutation({
+    mutationFn: () => api.archiveCredential(currentSelected!.id, currentSelected!.revision),
+    onSuccess: async () => {
+      queryClient.removeQueries({ queryKey: ["credentials", currentSelected!.id] })
+      setEditing(false)
+      setSelected(null)
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ["graph"] }), queryClient.invalidateQueries({ queryKey: ["overview"] })])
+    },
+  })
 
   const rows = useMemo(() => {
     const credentials = graph.data?.credentials ?? []
@@ -50,7 +105,7 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
     return credentials.filter((item) => (provider === "all" || item.provider === provider) && (!term || `${item.display_name} ${item.id} ${item.provider}`.toLowerCase().includes(term)))
   }, [graph.data, provider, search])
 
-  const queries = [graph, runs, incidents, connections, applications, environments, policies]
+  const queries = [graph, runs, incidents, connections, applications, environments, playbooks]
   if (queries.some((query) => query.isLoading)) return <div className="page"><Loading /></div>
   const error = queries.find((query) => query.error)?.error
   if (error) return <div className="page"><Failure error={error} /></div>
@@ -59,9 +114,11 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
     const run = runs.data!.find((entry) => entry.credential_id === item.id && !["completed", "compensated"].includes(entry.status))
     const incident = incidents.data!.find((entry) => entry.credential_id === item.id && !["resolved", "dismissed"].includes(entry.status))
     const connection = connections.data!.find((entry) => entry.id === item.connection_id)
-    if (run?.status === "running" || run?.status === "recovering") return { label: "Rotating", variant: "active" as const }
-    if (run || incident || connection?.status !== "ready") return { label: "Pending", variant: "warning" as const }
-    return { label: "Active", variant: "healthy" as const }
+    if (run?.status === "running" || run?.status === "recovering") return { label: "Running", variant: "active" as const, moving: true }
+    if (connection?.status !== "ready") return { ...connectionStatus(connection?.status), moving: false }
+    if (run?.status === "paused" || incident?.status === "action-required") return { label: "Action required", variant: "warning" as const, moving: false }
+    if (run || incident) return { label: "Pending", variant: "warning" as const, moving: false }
+    return { label: "Active", variant: "healthy" as const, moving: false }
   }
 
   function actionFor(item: ManagedCredential): { label: string; target?: CredentialTarget; runId?: string } {
@@ -69,7 +126,8 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
     const incident = incidents.data!.find((entry) => entry.credential_id === item.id && !["resolved", "dismissed"].includes(entry.status))
     const connection = connections.data!.find((entry) => entry.id === item.connection_id)
     if (run?.status === "paused" && run.stage === "approval") return { label: "Review approval", target: "approvals" }
-    if (connection?.status === "reauthentication-required" || connection?.status === "degraded") return { label: "Open connection", target: "connections" }
+    if (connection?.status === "setup-required" || connection?.status === "reauthentication-required") return { label: "Set up connection", target: "connections" }
+    if (connection?.status === "degraded" || connection?.status === "disabled") return { label: "Review connection", target: "connections" }
     if (run) return { label: "Open rotation", target: "rotations", runId: run.id }
     if (incident) return { label: "Open incident", target: "incidents" }
     return { label: "View details" }
@@ -82,22 +140,53 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
     else { setSelected(item); setTab("overview") }
   }
 
-  const selectedServices = selected ? graph.data!.services.filter((service) => selected.consumer_ids.includes(service.id)) : []
-  const selectedConnection = selected ? connections.data!.find((item) => item.id === selected.connection_id) : undefined
-  const selectedSecretStore = selected ? connections.data!.find((item) => item.id === selected.secret_store_connection_id) : undefined
-  const selectedAction = selected ? actionFor(selected) : undefined
+  const selectedServices = currentSelected ? graph.data!.services.filter((service) => currentSelected.consumer_ids.includes(service.id)) : []
+  const selectedConnection = currentSelected ? connections.data!.find((item) => item.id === currentSelected.connection_id) : undefined
+  const selectedSecretStore = currentSelected ? connections.data!.find((item) => item.id === currentSelected.secret_store_connection_id) : undefined
+  const selectedAction = currentSelected ? actionFor(currentSelected) : undefined
+  const openRuns = currentSelected ? runs.data!.filter((item) => item.credential_id === currentSelected.id && !["completed", "compensated"].includes(item.status)) : []
+  const openIncidents = currentSelected ? incidents.data!.filter((item) => item.credential_id === currentSelected.id && !["resolved", "dismissed"].includes(item.status)) : []
+  const editChanged = Boolean(currentSelected && controlVersion.data) && (
+    editName.trim() !== currentSelected!.display_name
+    || !sameControls(editControls, controlsFromDefinition(controlVersion.data!.definition))
+  )
 
-  if (creating) return <CredentialSetup isOpen onClose={() => setCreating(false)} graph={graph.data!} connections={connections.data!} applications={applications.data!} environments={environments.data!} policies={policies.data!} onCreate={(input) => createCredential.mutateAsync(input)} />
+  if (creating) return <CredentialSetup isOpen onClose={() => setCreating(false)} graph={graph.data!} connections={connections.data!} applications={applications.data!} environments={environments.data!} playbooks={playbooks.data!} onCreate={(input) => createCredential.mutateAsync(input)} />
 
-  if (selected) return (
+  if (currentSelected) return (
     <div className="page">
-      <PageHeader eyebrow="Inventory / Credentials" title={selected.display_name} titlePrefix={<Provider value={selected.provider} label={false} />} onBack={() => setSelected(null)} actions={<>{(selectedAction?.target || selectedAction?.runId) && <Button onClick={() => performAction(selected)}>{selectedAction.label}<ArrowUpRight className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => onNavigate("applications")}>View applications</Button></>} />
-      <div className="mb-6 flex gap-1">{["overview", "consumers", "control"].map((item) => <button key={item} className={`focus-ring border-b-2 px-4 py-3 text-[11px] font-semibold capitalize ${tab === item ? "border-[var(--ink)] text-[var(--ink)]" : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]"}`} onClick={() => setTab(item)}>{item}</button>)}</div>
-      <section className="rounded-2xl border border-[var(--border)] bg-white p-6">
-        {tab === "overview" && <DetailList><Detail label="Type">{titleCase(selected.kind)}</Detail><Detail label="Scopes">{selected.scopes.join(", ") || "None"}</Detail><Detail label="Provider ID">{selected.provider_id ?? "Not recorded"}</Detail><Detail label="Consumers">{selected.consumer_ids.length}</Detail><Detail label="Secret reference"><span className="mono-code break-all">{selected.secret_reference}</span></Detail><Detail label="Updated">{formatDate(selected.updated_at, true)}</Detail></DetailList>}
+      <PageHeader eyebrow="Inventory / Credentials" title={currentSelected.display_name} titlePrefix={<Provider value={currentSelected.provider} label={false} />} onBack={() => setSelected(null)} actions={<>{(selectedAction?.target || selectedAction?.runId) && <Button onClick={() => performAction(currentSelected)}>{selectedAction.label}<ArrowUpRight className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => { setEditName(currentSelected.display_name); setEditControls(controlsFromDefinition(controlVersion.data?.definition)); saveCredential.reset(); deleteCredential.reset(); setEditing(true) }} disabled={!controlVersion.data}>Edit</Button></>} />
+      <DetailTabs items={[{ id: "overview", label: "Overview" }, { id: "consumers", label: "Consumers" }, { id: "controls", label: "Controls" }]} value={tab} onChange={setTab} />
+      <DetailCard>
+        {tab === "overview" && <DetailList><Detail label="Type">{titleCase(currentSelected.kind)}</Detail><Detail label="Scopes">{currentSelected.scopes.join(", ") || "None"}</Detail><Detail label="Provider ID">{currentSelected.provider_id ?? "Not recorded"}</Detail><Detail label="Consumers">{currentSelected.consumer_ids.length}</Detail><Detail label="Secret reference"><span className="mono-code break-all">{currentSelected.secret_reference}</span></Detail><Detail label="Updated">{formatDate(currentSelected.updated_at, true)}</Detail></DetailList>}
         {tab === "consumers" && <div className="divide-y divide-[var(--border-soft)]">{selectedServices.map((service) => <div key={service.id} className="grid gap-2 py-4 sm:grid-cols-[1fr_1.5fr]"><div className="text-[11px] font-semibold">{service.display_name}</div><div className="text-[10px] text-[var(--ink-soft)]"><div>{service.runtime_resource}</div><div className="mt-1 text-[var(--ink-muted)]">{applications.data!.find((item) => item.id === service.application_id)?.display_name} · {environments.data!.find((item) => item.id === service.environment_id)?.display_name}</div></div></div>)}</div>}
-        {tab === "control" && <DetailList><Detail label="Management connection">{selectedConnection?.display_name}</Detail><Detail label="Interface">{titleCase(selectedConnection?.interface ?? "unknown")}</Detail><Detail label="Secret store">{selectedSecretStore?.display_name}</Detail><Detail label="Policy">{policies.data!.find((item) => item.active_version_id === selected.policy_version)?.name}</Detail><Detail label="Browser Playbook">{selectedConnection?.interface === "browser" ? selectedConnection.playbook_version_id : "Not required"}</Detail><Detail label="Connection status"><Badge variant={selectedConnection?.status === "ready" ? "healthy" : "danger"}>{titleCase(selectedConnection?.status ?? "unknown")}</Badge></Detail></DetailList>}
-      </section>
+        {tab === "controls" && <div className="space-y-6">
+          {controlVersion.data ? <ControlsSummary value={controlsFromDefinition(controlVersion.data.definition)} /> : controlVersion.error ? <div className="text-[10px] text-[var(--red)]">{controlVersion.error.message}</div> : <div className="text-[10px] text-[var(--ink-muted)]">Loading controls…</div>}
+          <div className="border-t border-[var(--border-soft)] pt-5"><DetailList><Detail label="Connection">{selectedConnection?.display_name}</Detail><Detail label="Interface">{titleCase(selectedConnection?.interface ?? "unknown")}</Detail><Detail label="Secret">{selectedSecretStore?.display_name}</Detail><Detail label="Connection status"><Badge variant={connectionStatus(selectedConnection?.status).variant}>{connectionStatus(selectedConnection?.status).label}</Badge></Detail></DetailList></div>
+        </div>}
+      </DetailCard>
+      <ManageResourceModal
+        isOpen={editing}
+        onClose={() => setEditing(false)}
+        title="Edit credential"
+        resourceLabel="credential"
+        onSave={() => saveCredential.mutate()}
+        onDelete={() => deleteCredential.mutate()}
+        dependencies={[
+          { label: "Consumers", items: selectedServices.map((item) => item.display_name) },
+          { label: "Rotations", items: openRuns.map((item) => item.id) },
+          { label: "Incidents", items: openIncidents.map((item) => item.id) },
+        ]}
+        saveDisabled={!editName.trim() || !controlsAreValid(editControls) || !editChanged}
+        saving={saveCredential.isPending}
+        deleting={deleteCredential.isPending}
+        error={(saveCredential.error ?? deleteCredential.error)?.message}
+      >
+        <div className="space-y-6">
+          <Field label="Credential name"><input className={formControl} value={editName} onChange={(event) => setEditName(event.target.value)} /></Field>
+          <ControlsFields value={editControls} onChange={setEditControls} />
+        </div>
+      </ManageResourceModal>
     </div>
   )
 
@@ -125,7 +214,7 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
 
       <div>
         <Table>
-          <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Consumer</TableHead><TableHead>Status</TableHead><TableHead>Updated</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Consumer</TableHead><TableHead>Status</TableHead><TableHead>Updated</TableHead><TableHead className="pr-0 text-right">Action</TableHead></TableRow></TableHeader>
           <TableBody>
             {rows.map((item) => {
               const status = operationalState(item)
@@ -134,9 +223,9 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
                 <TableRow key={item.id}>
                   <TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left" onClick={() => { setSelected(item); setTab("overview") }}><Provider value={item.provider} label={false} /><div><div className="font-medium hover:underline">{item.display_name}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{titleCase(item.kind)}</div></div></button></TableCell>
                   <TableCell><div>{service?.display_name ?? "Unmapped"}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{item.consumer_ids.length} binding{item.consumer_ids.length === 1 ? "" : "s"}</div></TableCell>
-                  <TableCell><Badge variant={status.variant}>{status.label}</Badge></TableCell>
+                  <TableCell><Badge variant={status.variant} className="gap-1.5">{status.moving && <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />}{status.label}</Badge></TableCell>
                   <TableCell className="text-[10px] text-[var(--ink-soft)]">{formatDate(item.updated_at)}</TableCell>
-                  <TableCell className="text-right"><Button variant="ghost" size="sm" onClick={() => performAction(item)}>{actionFor(item).label}<ChevronRight className="size-3.5" /></Button></TableCell>
+                  <TableCell className="pr-0"><div className="flex justify-end"><Button className="pr-1" variant="ghost" size="sm" onClick={() => performAction(item)}>{actionFor(item).label}<ChevronRight className="size-3.5" /></Button></div></TableCell>
                 </TableRow>
               )
             })}

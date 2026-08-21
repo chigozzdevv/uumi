@@ -21,9 +21,7 @@ export type NavItem =
   | "incidents"
   | "rotations"
   | "approvals"
-  | "policies"
   | "playbooks"
-  | "agents"
   | "connections"
   | "audits"
   | "settings"
@@ -69,8 +67,6 @@ const groups: NavGroup[] = [
     items: [
       { id: "connections", label: "Connections" },
       { id: "playbooks", label: "Playbooks" },
-      { id: "policies", label: "Policies" },
-      { id: "agents", label: "Agents" },
     ],
   },
 ]

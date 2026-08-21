@@ -50,7 +50,20 @@ export interface Connection {
   region: string
   created_at: string
   updated_at: string
+  archived_at?: string | null
   revision: number
+}
+
+export interface ProviderCredentialMetadata {
+  provider_id: string
+  name: string | null
+  kind: string | null
+  scopes: string[]
+  status: string | null
+  disabled: boolean | null
+  created_at: string | null
+  last_used_at: string | null
+  expires_at: string | null
 }
 
 export interface Application {
@@ -60,6 +73,7 @@ export interface Application {
   repository_ids: string[]
   created_at: string
   updated_at: string
+  archived_at?: string | null
   revision: number
 }
 
@@ -72,7 +86,26 @@ export interface Environment {
   region: string
   created_at: string
   updated_at: string
+  archived_at?: string | null
   revision: number
+}
+
+export interface FunctionalVerification {
+  kind: "http" | "email"
+  target: string
+  method: "GET" | "POST"
+  expected_status: number[]
+  required_fields: Record<string, string | number | boolean>
+  confirmation: null | {
+    target: string
+    method: string
+    headers: Record<string, string>
+    expected_status: number[]
+    required_fields: Record<string, string | number | boolean>
+    correlation_field: string
+    interval_seconds: number
+  }
+  timeout_seconds: number
 }
 
 export interface ConsumerService {
@@ -84,10 +117,12 @@ export interface ConsumerService {
   telemetry_connection_ids: Identifier[]
   runtime_resource: string
   display_name: string
+  verification: FunctionalVerification | null
   repository: string | null
-  identity: string
+  identity: string | null
   created_at: string
   updated_at: string
+  archived_at?: string | null
   revision: number
 }
 
@@ -104,9 +139,10 @@ export interface ManagedCredential {
   scopes: string[]
   consumer_ids: Identifier[]
   active_generation_id: Identifier | null
-  policy_version: Identifier
+  control_version: Identifier
   created_at: string
   updated_at: string
+  archived_at?: string | null
   revision: number
 }
 
@@ -157,24 +193,12 @@ export interface Playbook {
   name: string
   platform: string
   latest_version: number
+  latest_version_id: Identifier | null
   active_version_id: Identifier | null
   created_at: string
   updated_at: string
+  archived_at?: string | null
   revision: number
-}
-
-export interface Policy {
-  id: Identifier
-  organisation_id: Identifier
-  name: string
-  latest_version: number
-  active_version_id: Identifier | null
-  created_at: string
-  updated_at: string
-  revision: number
-  automatic_triggers?: string[]
-  protected_operations?: string[]
-  rollout?: number[]
 }
 
 export interface Incident {
@@ -239,7 +263,7 @@ export interface RotationRun {
   organisation_id: Identifier
   credential_id: Identifier
   trigger: Trigger
-  policy_version: Identifier
+  control_version: Identifier
   stage: StageName
   status: RunStatus
   lease: { owner_id: Identifier; fencing_token: number; expires_at: string } | null
@@ -278,27 +302,6 @@ export interface Approval {
   decided_at: string | null
   consumed_at: string | null
   revision: number
-}
-
-export interface AgentRegistration {
-  id: Identifier
-  organisation_id: Identifier
-  kind: "inventory" | "planner" | "playbook" | "operator"
-  display_name: string
-  version: string
-  skills: string[]
-  owner: string
-  identity: string
-  endpoint: string
-  deployment: string
-  registry: string
-  ingress_gateway: string
-  egress_gateway: string
-  region: string
-  approved_callers: string[]
-  tool_destinations: string[]
-  status: "deploying" | "ready" | "degraded" | "disabled"
-  registered_at: string
 }
 
 export interface AuditEvent {

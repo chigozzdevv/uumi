@@ -1,4 +1,5 @@
-import type { ReactNode } from "react"
+import { ChevronDown } from "lucide-react"
+import type { ReactNode, SelectHTMLAttributes } from "react"
 import { Journey } from "./journey"
 import { PageHeader } from "./header"
 import { Button } from "./ui/button"
@@ -27,13 +28,13 @@ export function SetupPage({
   error?: string
 }) {
   return (
-    <div className="page max-w-[1080px]">
+    <div className="page max-w-[960px]">
       <PageHeader eyebrow={eyebrow} title={title} description={description} onBack={onCancel} />
       <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-white">
         <div className="border-b border-[var(--border-soft)] px-6 pt-6"><Journey steps={steps} current={current} /></div>
-        <div className="min-h-[360px] px-6 py-7 sm:px-8">{children}</div>
+        <div className="mx-auto min-h-[360px] w-full max-w-[760px] px-6 py-7 sm:px-8">{children}</div>
         {error && <div role="alert" className="mx-6 mb-5 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)] sm:mx-8">{error}</div>}
-        <footer className="flex items-center gap-3 border-t border-[var(--border-soft)] bg-[var(--surface-soft)] px-6 py-4 sm:px-8">
+        <footer className="flex items-center gap-3 border-t border-[var(--border-soft)] bg-white px-6 py-4 sm:px-8">
           <div className="flex-1">{current > 0 && <Button variant="ghost" onClick={onBack}>Back</Button>}</div>
           <Button variant="secondary" onClick={onCancel}>Cancel</Button>
           {primary}
@@ -48,11 +49,34 @@ export function SuccessPage({ eyebrow, title, description, onBack, actions, chil
 }
 
 export function FormGrid({ children }: { children: ReactNode }) {
-  return <div className="grid gap-5 sm:grid-cols-2">{children}</div>
+  return <div className="grid items-start gap-4 sm:grid-cols-2">{children}</div>
 }
 
 export function Field({ label, hint, children, wide = false }: { label: string; hint?: string; children: ReactNode; wide?: boolean }) {
   return <label className={wide ? "block sm:col-span-2" : "block"}><span className="mb-1.5 block text-[10px] font-semibold text-[var(--ink-soft)]">{label}</span>{children}{hint && <span className="mt-1.5 block text-[9px] leading-4 text-[var(--ink-muted)]">{hint}</span>}</label>
+}
+
+export function ResourceSelect({ label, value, onChange, addLabel, onAdd, children, className = formControl, wide = false }: { label: string; value: string; onChange: (value: string) => void; addLabel: string; onAdd: () => void; children: ReactNode; className?: string; wide?: boolean }) {
+  return <label className={wide ? "block sm:col-span-2" : "block"}>
+    <span className="mb-1.5 block text-[10px] font-semibold text-[var(--ink-soft)]">{label}</span>
+    <div className="relative">
+      <select className={`${className} appearance-none pr-10`} value={value} onChange={(event) => {
+        if (event.target.value === "__add_resource__") onAdd()
+        else onChange(event.target.value)
+      }}>
+        {children}
+        <option value="__add_resource__">{addLabel}…</option>
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--ink-muted)]" />
+    </div>
+  </label>
+}
+
+export function SelectControl({ children, className = formControl, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <div className="relative">
+    <select className={`${className} appearance-none pr-10`} {...props}>{children}</select>
+    <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--ink-muted)]" />
+  </div>
 }
 
 export function Fieldset({ label, hint, children, wide = false }: { label: string; hint?: string; children: ReactNode; wide?: boolean }) {

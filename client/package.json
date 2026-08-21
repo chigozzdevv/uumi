@@ -9,7 +9,8 @@
     "mock": "node mock/server.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --check scripts/dev.mjs && node --check mock/server.mjs && node mock/test.mjs",
+    "test": "node --check scripts/dev.mjs && node --check mock/server.mjs && node mock/test.mjs && node mock/http.test.mjs",
+    "test:http": "node mock/http.test.mjs",
     "preview": "vite preview",
     "check": "npm run lint && npm run test && npm run build"
   },

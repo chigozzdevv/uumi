@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react"
 import { useQueries } from "@tanstack/react-query"
-import { ArrowUpRight, ChevronRight, ShieldAlert } from "lucide-react"
-import { Detail, DetailList, Section } from "../components/detail"
+import { ArrowUpRight, ChevronRight } from "lucide-react"
+import { Detail, DetailCard, DetailList, DetailTabs } from "../components/detail"
 import { PageHeader } from "../components/header"
-import { Marker } from "../components/marker"
 import { Failure, Loading } from "../components/state"
 import { Toolbar } from "../components/toolbar"
 import { Badge } from "../components/ui/badge"
@@ -23,6 +22,7 @@ export function IncidentsPage({ onNavigateRotation }: { onNavigateRotation: (run
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("open")
   const [selected, setSelected] = useState<Incident | null>(null)
+  const [detailTab, setDetailTab] = useState<"source" | "correlation">("source")
   const [incidents, graph] = useQueries({ queries: [
     { queryKey: ["incidents"], queryFn: () => api.getIncidents() },
     { queryKey: ["graph"], queryFn: () => api.getGraph() },
@@ -47,7 +47,8 @@ export function IncidentsPage({ onNavigateRotation }: { onNavigateRotation: (run
   if (selected) return <div className="page">
     <PageHeader eyebrow="Operations / Incidents" title={titleCase(selected.source)} onBack={() => setSelected(null)} actions={selected.run_id ? <Button onClick={() => onNavigateRotation(selected.run_id!)}>Open rotation <ArrowUpRight className="size-3.5" /></Button> : undefined} />
     <div className="mb-5 flex flex-wrap items-center gap-2"><Badge variant={severityVariant(selected.severity)}>{selected.severity}</Badge><Badge variant={selected.confidence === "verified" ? "healthy" : "active"}>{selected.confidence} confidence</Badge><Badge variant={selected.status === "action-required" ? "warning" : selected.status === "resolved" ? "healthy" : "active"}>{titleCase(selected.status)}</Badge></div>
-    <div className="grid gap-5 xl:grid-cols-2"><Section title="Source"><DetailList><Detail label="Repository">{selected.resource.repository ?? "—"}</Detail><Detail label="Project">{selected.resource.project ?? "—"}</Detail><Detail label="Service">{selected.resource.service ?? "—"}</Detail><Detail label="Observed">{formatDate(selected.created_at, true)}</Detail></DetailList></Section><Section title="Correlation"><DetailList><Detail label="Credential">{credentialName(selected.credential_id)}</Detail><Detail label="Provider">{selected.resource.provider ?? "—"}</Detail><Detail label="Candidates">{selected.candidates.length}</Detail><Detail label="Run">{selected.run_id ?? "Not started"}</Detail></DetailList></Section></div>
+    <DetailTabs items={[{ id: "source", label: "Source" }, { id: "correlation", label: "Correlation" }]} value={detailTab} onChange={setDetailTab} />
+    <DetailCard>{detailTab === "source" ? <DetailList><Detail label="Repository">{selected.resource.repository ?? "—"}</Detail><Detail label="Project">{selected.resource.project ?? "—"}</Detail><Detail label="Service">{selected.resource.service ?? "—"}</Detail><Detail label="Observed">{formatDate(selected.created_at, true)}</Detail></DetailList> : <DetailList><Detail label="Credential">{credentialName(selected.credential_id)}</Detail><Detail label="Provider">{selected.resource.provider ?? "—"}</Detail><Detail label="Candidates">{selected.candidates.length}</Detail><Detail label="Run">{selected.run_id ?? "Not started"}</Detail></DetailList>}</DetailCard>
   </div>
 
   return (
@@ -57,15 +58,15 @@ export function IncidentsPage({ onNavigateRotation }: { onNavigateRotation: (run
 
       <div>
         <Table>
-          <TableHeader><TableRow><TableHead>Severity</TableHead><TableHead>Signal</TableHead><TableHead>Correlated credential</TableHead><TableHead>Confidence</TableHead><TableHead>Status</TableHead><TableHead className="w-36">Action</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Source</TableHead><TableHead>Affected resource</TableHead><TableHead>Credential</TableHead><TableHead>Severity</TableHead><TableHead>Status</TableHead><TableHead className="pr-0 text-right">Action</TableHead></TableRow></TableHeader>
           <TableBody>{rows.map((incident) => (
             <TableRow key={incident.id}>
+              <TableCell><div className="font-medium">{titleCase(incident.source)}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{incident.source_event_id}</div></TableCell>
+              <TableCell><div>{incident.resource.service ?? incident.resource.repository ?? "—"}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{incident.resource.project ?? incident.resource.repository ?? "—"}</div></TableCell>
+              <TableCell>{credentialName(incident.credential_id)}</TableCell>
               <TableCell><Badge variant={severityVariant(incident.severity)}>{incident.severity}</Badge></TableCell>
-              <TableCell><div className="flex items-center gap-3"><Marker icon={ShieldAlert} tone="red" /><span className="font-medium">{titleCase(incident.source)}</span></div></TableCell>
-              <TableCell><div>{credentialName(incident.credential_id)}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{incident.resource.service ?? incident.resource.repository}</div></TableCell>
-              <TableCell><Badge variant={incident.confidence === "verified" ? "healthy" : "active"}>{incident.confidence}</Badge></TableCell>
               <TableCell><Badge variant={incident.status === "resolved" ? "healthy" : incident.status === "action-required" ? "warning" : "active"}>{titleCase(incident.status)}</Badge></TableCell>
-              <TableCell><Button variant="ghost" size="sm" onClick={() => setSelected(incident)}>View details <ChevronRight className="size-3.5" /></Button></TableCell>
+              <TableCell className="pr-0"><div className="flex justify-end"><Button variant="ghost" size="sm" className="pr-1" onClick={() => { setSelected(incident); setDetailTab("source") }}>View details <ChevronRight className="size-3.5" /></Button></div></TableCell>
             </TableRow>
           ))}</TableBody>
         </Table>
