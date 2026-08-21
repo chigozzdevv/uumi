@@ -37,7 +37,7 @@ class RotationPlan(Contract):
     organisation_id: Identifier
     run_id: Identifier
     credential_id: Identifier
-    policy_version: Identifier
+    control_version: Identifier
     browser_playbook_version: Identifier | None = None
     strategy: RotationStrategy
     target_scopes: frozenset[str]

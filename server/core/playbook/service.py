@@ -10,6 +10,7 @@ from contracts import (
     ConnectionRole,
     Playbook,
     PlaybookDraft,
+    PlaybookEffect,
     PlaybookState,
     PlaybookVersion,
     Stage,
@@ -34,6 +35,16 @@ class ConnectionCatalog(Protocol):
         updated_at: datetime,
     ) -> Connection: ...
 
+    async def connections(self, organisation_id: str) -> tuple[Connection, ...]: ...
+
+    async def detach_playbook(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        expected_revision: int,
+        updated_at: datetime,
+    ) -> Connection: ...
+
 
 class PlaybookRepository(Protocol):
     async def add_version(
@@ -49,6 +60,10 @@ class PlaybookRepository(Protocol):
     ) -> tuple[Playbook, PlaybookVersion]: ...
 
     async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]: ...
+
+    async def get(self, organisation_id: str, playbook_id: str) -> Playbook: ...
+
+    async def replace(self, value: Playbook, expected_revision: int) -> Playbook: ...
 
     async def get_version(
         self,
@@ -80,10 +95,73 @@ class PlaybookService:
 
     async def list_playbooks(self, organisation_id: str, limit: int = 100) -> tuple[Playbook, ...]:
         playbooks = await self._repository.list_playbooks(organisation_id, _LIST_SCAN_LIMIT)
+        playbooks = tuple(playbook for playbook in playbooks if playbook.archived_at is None)
         ordered = sorted(
             playbooks, key=lambda playbook: (playbook.created_at, playbook.id), reverse=True
         )
         return tuple(ordered[:limit])
+
+    async def get(self, organisation_id: str, playbook_id: str) -> Playbook:
+        return await self._repository.get(organisation_id, playbook_id)
+
+    async def get_version(
+        self, organisation_id: str, playbook_id: str, version_id: str
+    ) -> PlaybookVersion:
+        return await self._repository.get_version(organisation_id, playbook_id, version_id)
+
+    async def rename(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        expected_revision: int,
+        name: str,
+    ) -> Playbook:
+        current = await self.get(organisation_id, playbook_id)
+        _editable(current, expected_revision)
+        changed = current.model_copy(
+            update={
+                "name": name,
+                "updated_at": self._clock(),
+                "revision": expected_revision + 1,
+            }
+        )
+        return await self._repository.replace(changed, expected_revision)
+
+    async def archive(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        expected_revision: int,
+        cascade: bool = False,
+    ) -> Playbook:
+        current = await self.get(organisation_id, playbook_id)
+        _editable(current, expected_revision)
+        connections = (
+            await self._inventory.connections(organisation_id)
+            if self._inventory is not None
+            else ()
+        )
+        attached = tuple(
+            connection
+            for connection in connections
+            if connection.archived_at is None and connection.playbook_id == playbook_id
+        )
+        if attached and not cascade:
+            raise PlaybookError("playbook is still attached to an active connection")
+        now = self._clock()
+        if self._inventory is not None:
+            for connection in attached:
+                await self._inventory.detach_playbook(
+                    organisation_id, connection.id, connection.revision, now
+                )
+        changed = current.model_copy(
+            update={
+                "archived_at": now,
+                "updated_at": now,
+                "revision": expected_revision + 1,
+            }
+        )
+        return await self._repository.replace(changed, expected_revision)
 
     async def create_version(
         self,
@@ -184,7 +262,26 @@ def validate_definition(definition: PlaybookDraft) -> None:
             or not domain_covered(parsed.hostname, definition.allowed_domains)
         ):
             raise PlaybookError("browser checkpoint escapes the playbook domains")
-    if not any(step.stage is Stage.CREATE and step.secure_field for step in definition.steps):
-        raise PlaybookError("browser credential creation requires secure capture")
-    if not any(step.stage is Stage.REVOKE for step in definition.steps):
-        raise PlaybookError("browser playbook requires credential revocation steps")
+    creation = tuple(
+        index
+        for index, step in enumerate(definition.steps)
+        if step.effect is PlaybookEffect.CREATE_CREDENTIAL
+    )
+    if len(creation) != 1:
+        raise PlaybookError("browser playbook requires one protected credential creation")
+    if any(step.stage is Stage.CREATE for step in definition.steps[creation[0] + 1 :]):
+        raise PlaybookError("secure credential creation must finish the create stage")
+    revocation = tuple(
+        step for step in definition.steps if step.effect is PlaybookEffect.REVOKE_CREDENTIAL
+    )
+    if len(revocation) != 1:
+        raise PlaybookError("browser playbook requires one credential revocation")
+
+
+def _editable(playbook: Playbook, expected_revision: int) -> None:
+    if playbook.archived_at is not None:
+        raise PlaybookError("archived playbooks cannot be changed")
+    if playbook.revision != expected_revision:
+        raise PlaybookError(
+            f"playbook expected revision {expected_revision}, found {playbook.revision}"
+        )

@@ -2,7 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -129,6 +129,65 @@ async def test_secret_manager_transfers_bytes_without_returning_them() -> None:
     secret.clear()
     with pytest.raises(RuntimeError, match="cleared"):
         secret.bytes()
+    await client.close()
+
+
+@pytest.mark.anyio
+async def test_secret_manager_proves_consumer_access_without_returning_secret() -> None:
+    expires_at = datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=10)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(":generateAccessToken"):
+            assert request.url.path.endswith(
+                "/serviceAccounts/consumer@project-one.iam.gserviceaccount.com:generateAccessToken"
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "accessToken": "consumer-access-token",
+                    "expireTime": expires_at.isoformat().replace("+00:00", "Z"),
+                },
+            )
+        assert request.url.path.endswith("/versions/7:access")
+        assert request.headers["Authorization"] == "Bearer consumer-access-token"
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"credential-value").decode()}},
+        )
+
+    client = _google(handler)
+    connection = _runtime_context().connection.model_copy(
+        update={
+            "platform": "google-secret-manager",
+            "roles": frozenset({ConnectionRole.SECRET_STORE}),
+            "authorization_reference": (
+                "workload-identity://secret-writer@project-one.iam.gserviceaccount.com"
+            ),
+            "capabilities": SecretManagerConnector.tools,
+        }
+    )
+    context = _context()
+    context = ConnectorContext(
+        request_id=context.request_id,
+        agent_id=context.agent_id,
+        connection=connection,
+        run=context.run,
+        now=context.now,
+        idempotency_key=context.idempotency_key,
+    )
+
+    result = await SecretManagerConnector(client).execute(
+        "secretStore.testConsumerAccess",
+        {
+            "version": "projects/project-one/secrets/key/versions/7",
+            "consumer_identity": "consumer@project-one.iam.gserviceaccount.com",
+        },
+        context,
+    )
+
+    assert result.result["accessible"] is True
+    assert "credential-value" not in repr(result)
+    assert "consumer-access-token" not in repr(result)
     await client.close()
 
 
@@ -647,6 +706,37 @@ async def test_google_customer_calls_reject_process_identity_fallback() -> None:
             connection=_context().connection,
         )
 
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_google_mints_short_lived_connection_token() -> None:
+    expires_at = datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=10)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith(
+            "/serviceAccounts/runtime@project-one.iam.gserviceaccount.com:generateAccessToken"
+        )
+        body = json.loads(request.content)
+        assert body == {
+            "scope": ["https://www.googleapis.com/auth/cloud-platform"],
+            "lifetime": "600s",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "accessToken": "short-lived-customer-token",
+                "expireTime": expires_at.isoformat().replace("+00:00", "Z"),
+            },
+        )
+
+    google = _google(handler)
+    token, returned_expiry = await google.mint_access_token_for(_runtime_context().connection)
+
+    assert token.bytes() == b"short-lived-customer-token"
+    assert returned_expiry == expires_at
+    assert "short-lived-customer-token" not in repr(token)
+    token.clear()
     await google.close()
 
 

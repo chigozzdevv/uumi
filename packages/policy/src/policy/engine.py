@@ -21,7 +21,7 @@ class GatePolicy:
         undefined = set(Stage).difference(self._required)
         if undefined:
             names = ", ".join(sorted(stage.value for stage in undefined))
-            raise ValueError(f"policy does not define every stage: {names}")
+            raise ValueError(f"controls do not define every stage: {names}")
 
     def validate(self, proof: StageProof) -> None:
         missing = self._required[proof.stage].difference(proof.checks)

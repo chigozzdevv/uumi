@@ -1,5 +1,7 @@
+import hashlib
 from collections.abc import Callable
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from contracts import (
     CleanupRunCommand,
@@ -8,12 +10,14 @@ from contracts import (
     CreateRunCommand,
     EventKind,
     FailRunCommand,
+    Failure,
     PauseRunCommand,
     RecoverRunCommand,
     RenewLeaseCommand,
     ResumeRunCommand,
     RotationRun,
     RunStatus,
+    Stage,
     StartRunCommand,
 )
 
@@ -26,6 +30,15 @@ Clock = Callable[[], datetime]
 IdFactory = Callable[[str], str]
 
 _LIST_SCAN_LIMIT = 500
+_RECOVERY_STAGES = frozenset({Stage.DEPLOY, Stage.VERIFY, Stage.ROLLOUT, Stage.OBSERVE})
+
+
+@dataclass(frozen=True, slots=True)
+class ReapResult:
+    scanned: int
+    restarted: int
+    failed: int
+    runs: tuple[RotationRun, ...]
 
 
 def utcnow() -> datetime:
@@ -194,3 +207,100 @@ class RunWorkflow:
                 now,
             ),
         )
+
+    async def reap_expired(self, organisation_id: str, actor_id: str) -> ReapResult:
+        now = self._clock()
+        runs = await self._repository.list_runs(organisation_id, _LIST_SCAN_LIMIT)
+        candidates = tuple(
+            run
+            for run in runs
+            if run.status is RunStatus.CLEANUP
+            or (
+                run.status in {RunStatus.RUNNING, RunStatus.RECOVERING}
+                and run.lease is not None
+                and run.lease.expires_at <= now
+            )
+        )
+        restarted = 0
+        failed = 0
+        changed: list[RotationRun] = []
+        for run in candidates:
+            if run.status is RunStatus.CLEANUP:
+                result = await self._restart_recovery(run, actor_id, now)
+                restarted += 1
+            elif run.status is RunStatus.RECOVERING:
+                result = await self.fail(
+                    FailRunCommand(
+                        id=_reap_id(run, "fail-recovery"),
+                        organisation_id=organisation_id,
+                        run_id=run.id,
+                        actor_id=actor_id,
+                        expected_revision=run.revision,
+                        fencing_token=run.fencing_token,
+                        failure=Failure(
+                            code="recovery-lease-expired",
+                            message="Recovery worker lease expired before recovery completed.",
+                            retryable=False,
+                        ),
+                    )
+                )
+                failed += 1
+            elif run.stage in _RECOVERY_STAGES and run.plan_id is not None:
+                cleanup = await self.cleanup(
+                    CleanupRunCommand(
+                        id=_reap_id(run, "cleanup"),
+                        organisation_id=organisation_id,
+                        run_id=run.id,
+                        actor_id=actor_id,
+                        expected_revision=run.revision,
+                        fencing_token=run.fencing_token,
+                        failure=Failure(
+                            code="stage-lease-expired",
+                            message=(f"Worker lease expired while executing {run.stage.value}."),
+                            retryable=True,
+                        ),
+                    )
+                )
+                result = await self._restart_recovery(cleanup.run, actor_id, now)
+                restarted += 1
+            else:
+                result = await self.fail(
+                    FailRunCommand(
+                        id=_reap_id(run, "fail"),
+                        organisation_id=organisation_id,
+                        run_id=run.id,
+                        actor_id=actor_id,
+                        expected_revision=run.revision,
+                        fencing_token=run.fencing_token,
+                        failure=Failure(
+                            code="stage-lease-expired",
+                            message=f"Worker lease expired while executing {run.stage.value}.",
+                            retryable=True,
+                        ),
+                    )
+                )
+                failed += 1
+            changed.append(result.run)
+        return ReapResult(len(candidates), restarted, failed, tuple(changed))
+
+    async def _restart_recovery(
+        self, run: RotationRun, actor_id: str, now: datetime
+    ) -> MutationResult:
+        return await self.recover(
+            RecoverRunCommand(
+                id=_reap_id(run, "recover"),
+                organisation_id=run.organisation_id,
+                run_id=run.id,
+                actor_id=actor_id,
+                expected_revision=run.revision,
+                owner_id=actor_id,
+                expires_at=now + timedelta(minutes=30),
+            )
+        )
+
+
+def _reap_id(run: RotationRun, operation: str) -> str:
+    checksum = hashlib.sha256(
+        f"{run.organisation_id}\0{run.id}\0{run.revision}\0{operation}".encode()
+    ).hexdigest()[:40]
+    return f"reap_{checksum}"

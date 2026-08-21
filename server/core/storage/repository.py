@@ -64,7 +64,7 @@ def validate_create(run: RotationRun, command: CreateRunCommand) -> None:
     if (
         run.organisation_id != command.organisation_id
         or run.credential_id != command.credential_id
-        or run.policy_version != command.policy_version
+        or run.control_version != command.control_version
         or run.trigger != command.trigger
         or run.id != (command.run_id or run.id)
     ):

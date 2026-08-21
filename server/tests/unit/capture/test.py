@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 from capture import CaptureError, SecureCapture
+from connectors.base import SecretValue
 from contracts import (
     Connection,
     ConnectionAuthorization,
@@ -80,16 +81,30 @@ class Driver:
 class Secrets:
     def __init__(self) -> None:
         self.seen: bytes | None = None
+        self.disabled: list[str] = []
 
     async def add_version_for(
-        self, connection: Connection, secret: str, value: Any
+        self,
+        connection: Connection,
+        secret: str,
+        value: Any,
+        access_token: SecretValue,
     ) -> dict[str, str]:
         assert connection.id == "sink_one"
         assert secret == "projects/project-one/secrets/key"
         self.seen = value.bytes()
+        assert access_token.bytes() == b"ephemeral-access"
         return {
             "secret_reference": "projects/project-one/secrets/key/versions/7",
         }
+
+    async def disable_for(
+        self, connection: Connection, version: str, access_token: SecretValue
+    ) -> dict[str, str]:
+        assert connection.id == "sink_one"
+        assert access_token.bytes() == b"ephemeral-access"
+        self.disabled.append(version)
+        return {"name": version, "state": "DISABLED"}
 
 
 class Connections:
@@ -127,15 +142,17 @@ async def test_capture_stores_masks_checks_and_only_returns_reference() -> None:
         lambda: NOW,
     )
 
-    result = await capture.transfer(
-        "capture_one",
-        "org_one",
-        "session_one",
-        _field(),
-        _checkpoint(),
-        "sink_one",
-        "projects/project-one/secrets/key",
-    )
+    with SecretValue(b"ephemeral-access") as access:
+        result = await capture.transfer(
+            "capture_one",
+            "org_one",
+            "session_one",
+            _field(),
+            _checkpoint(),
+            "sink_one",
+            "projects/project-one/secrets/key",
+            access,
+        )
 
     assert secrets.seen == b"one-time-key"
     assert locator.masked is True
@@ -148,15 +165,16 @@ async def test_capture_stores_masks_checks_and_only_returns_reference() -> None:
 @pytest.mark.anyio
 async def test_capture_fails_closed_if_secret_remains_elsewhere_in_dom() -> None:
     locator = Locator()
+    secrets = Secrets()
     capture = SecureCapture(
         Page(locator, exposed=True),  # type: ignore[arg-type]
         Driver(locator),  # type: ignore[arg-type]
-        Secrets(),  # type: ignore[arg-type]
+        secrets,  # type: ignore[arg-type]
         Connections(),
         lambda: NOW,
     )
 
-    with pytest.raises(CaptureError) as raised:
+    with SecretValue(b"ephemeral-access") as access, pytest.raises(CaptureError) as raised:
         await capture.transfer(
             "capture_one",
             "org_one",
@@ -165,9 +183,12 @@ async def test_capture_fails_closed_if_secret_remains_elsewhere_in_dom() -> None
             _checkpoint(),
             "sink_one",
             "projects/project-one/secrets/key",
+            access,
         )
 
     assert raised.value.secret_reference is not None
+    assert raised.value.cleanup_required is False
+    assert secrets.disabled == ["projects/project-one/secrets/key/versions/7"]
     assert "remains visible" in str(raised.value)
 
 

@@ -98,7 +98,7 @@ variable "workflow_organisations" {
 }
 
 variable "workload_identity_service_accounts" {
-  description = "Customer-managed service accounts that FireKey broker, browser capture, and coordinator may impersonate for connection-scoped Google operations."
+  description = "Customer-managed service accounts that the FireKey API, broker, and coordinator may impersonate for connection-scoped Google operations. Browser workers receive only encrypted, short-lived session authorization."
   type        = set(string)
   default     = []
 

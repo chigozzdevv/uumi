@@ -17,9 +17,6 @@ class Permission(StrEnum):
     PLAYBOOK_READ = "playbook.read"
     PLAYBOOK_WRITE = "playbook.write"
     PLAYBOOK_APPROVE = "playbook.approve"
-    POLICY_READ = "policy.read"
-    POLICY_WRITE = "policy.write"
-    POLICY_APPROVE = "policy.approve"
     VERIFICATION_READ = "verification.read"
     VERIFICATION_WRITE = "verification.write"
     VERIFICATION_APPROVE = "verification.approve"
@@ -46,7 +43,6 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.RUN_READ,
             Permission.INVENTORY_READ,
             Permission.PLAYBOOK_READ,
-            Permission.POLICY_READ,
             Permission.VERIFICATION_READ,
             Permission.APPROVAL_READ,
             Permission.AGENT_READ,
@@ -61,7 +57,6 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.INVENTORY_READ,
             Permission.PLAYBOOK_READ,
             Permission.PLAYBOOK_WRITE,
-            Permission.POLICY_READ,
             Permission.VERIFICATION_READ,
             Permission.VERIFICATION_WRITE,
             Permission.APPROVAL_READ,
@@ -77,7 +72,6 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.INVENTORY_READ,
             Permission.PLAYBOOK_READ,
             Permission.PLAYBOOK_WRITE,
-            Permission.POLICY_READ,
             Permission.VERIFICATION_READ,
             Permission.VERIFICATION_WRITE,
             Permission.APPROVAL_READ,

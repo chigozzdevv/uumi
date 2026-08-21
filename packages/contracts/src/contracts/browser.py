@@ -181,6 +181,30 @@ class BrowserAccessGrant(Contract):
     session: BrowserSession
 
 
+class BrowserSecretKeyRequest(Contract):
+    session_id: Identifier
+    secret_store_connection_id: Identifier
+    secret_resource: str = Field(min_length=1, max_length=1024)
+
+
+class BrowserSecretKey(Contract):
+    public_key: str = Field(min_length=512, max_length=4096)
+
+
+class BrowserSecretAccessEnvelope(Contract):
+    session_id: Identifier
+    secret_store_connection_id: Identifier
+    secret_resource: str = Field(min_length=1, max_length=1024)
+    expires_at: AwareDatetime
+    encrypted_key: str = Field(min_length=128, max_length=2048)
+    nonce: str = Field(min_length=16, max_length=64)
+    ciphertext: str = Field(min_length=32, max_length=8192)
+
+
+class BrowserSecretAccessReceipt(Contract):
+    expires_at: AwareDatetime
+
+
 class SetupStatus(StrEnum):
     PROVISIONING = "provisioning"
     READY = "ready"

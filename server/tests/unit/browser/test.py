@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -13,9 +14,11 @@ from browser.compute import BrowserVm, BrowserVmManager
 from browser.driver import AuthenticationRequiredError, BrowserDriver, metadata_url
 from browser.gateway import BrowserSessionGateway
 from browser.model import ComputerUseClient
+from browser.secret import BrowserSecretAccessService, associated_data
 from browser.service import BrowserService
 from browser.setup import BrowserSetupService
 from browser.worker import ComputerUseWorker
+from connectors.base import SecretValue
 from connectors.base.errors import ConnectorError
 from contracts import (
     BrowserAccessMode,
@@ -24,6 +27,7 @@ from contracts import (
     BrowserActionRecord,
     BrowserActionStatus,
     BrowserPolicy,
+    BrowserSecretAccessEnvelope,
     BrowserSession,
     BrowserStatus,
     Connection,
@@ -36,6 +40,7 @@ from contracts import (
     NotificationKind,
     PageCheckpoint,
     PlaybookDraft,
+    PlaybookEffect,
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
@@ -56,6 +61,9 @@ from coordinator.service import _flag_reauthentication
 from core.auth import AccessControl, AuthenticatedIdentity, PrincipalGrant, Role
 from core.errors import CapabilityError, ResourceConflictError, ResourceNotFoundError
 from core.storage.paths import FirestorePaths
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from testkit import make_http_provider_api, make_run
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -276,7 +284,7 @@ async def test_takeover_capability_is_identity_bound_and_releases_to_a_safe_paus
             urgency="high",
             received_at=NOW,
         ),
-        policy_version="policy_one",
+        control_version="policy_one",
         status=RunStatus.PAUSED,
         created_at=NOW,
         updated_at=NOW,
@@ -287,12 +295,23 @@ async def test_takeover_capability_is_identity_bound_and_releases_to_a_safe_paus
     async def load_signer() -> CapabilitySigner:
         return signer
 
+    class SecretAccess:
+        def __init__(self) -> None:
+            self.installed: list[str] = []
+
+        async def install(self, run: RotationRun, session: BrowserSession) -> datetime:
+            self.installed.append(f"{run.id}:{session.id}")
+            return NOW + timedelta(minutes=5)
+
+    secret_access = SecretAccess()
+
     access = BrowserAccessService(
         catalog,
         sessions,
         load_signer,
         "https://browser.example.com",
         lambda: NOW,
+        secret_access,
     )
     grant = await access.issue(
         "org_one", session.id, BrowserAccessMode.TAKEOVER, "operator-subject"
@@ -304,6 +323,7 @@ async def test_takeover_capability_is_identity_bound_and_releases_to_a_safe_paus
     assert grant.session.recording_paused is True
     assert claims.tool == "browser.takeover"
     assert claims.agent_id.startswith("actor_")
+    assert secret_access.installed == ["run_one:session_one"]
 
     released = await access.release("org_one", session.id, "operator-subject")
     rebound = await sessions.rebind_fence("org_one", session.id, released.revision, 4)
@@ -311,6 +331,87 @@ async def test_takeover_capability_is_identity_bound_and_releases_to_a_safe_paus
     assert released.status is BrowserStatus.PAUSED
     assert released.recording_paused is True
     assert rebound.fencing_token == 4
+
+
+@pytest.mark.anyio
+async def test_secret_store_access_is_encrypted_and_bound_to_one_browser_session() -> None:
+    signer = CapabilitySigner(b"s" * 32)
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    connection = Connection(
+        id="secret_one",
+        organisation_id="org_one",
+        platform="google-secret-manager",
+        display_name="Production secrets",
+        roles=frozenset({ConnectionRole.SECRET_STORE}),
+        interface=ConnectionInterface.API,
+        authorization=ConnectionAuthorization.WORKLOAD_IDENTITY,
+        authorization_reference=("workload-identity://capture@project-one.iam.gserviceaccount.com"),
+        capabilities=frozenset({"secretStore.createVersion"}),
+        allowed_resources=("projects/project-one/secrets/key",),
+        status=ConnectionStatus.READY,
+        region="us-central1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    class SecretCatalog:
+        async def get[T](self, path: str, model: type[T]) -> T:
+            assert model is Connection and path.endswith("/secret_one")
+            return cast(T, connection)
+
+    class Google:
+        async def mint_access_token_for(self, selected: Connection) -> tuple[SecretValue, datetime]:
+            assert selected == connection
+            return SecretValue(b"ephemeral-customer-token"), NOW + timedelta(minutes=10)
+
+    claims = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        capability = request.headers["X-FireKey-Capability"]
+        claims.append(signer.verify(capability, NOW))
+        if request.url.path.endswith("/v1/access/key"):
+            return httpx.Response(200, json={"public_key": public_key.decode()})
+        envelope = BrowserSecretAccessEnvelope.model_validate(body)
+        aes_key = private_key.decrypt(
+            base64.b64decode(envelope.encrypted_key),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+        plaintext = AESGCM(aes_key).decrypt(
+            base64.b64decode(envelope.nonce),
+            base64.b64decode(envelope.ciphertext),
+            associated_data(envelope),
+        )
+        assert plaintext == b"ephemeral-customer-token"
+        assert b"ephemeral-customer-token" not in request.content
+        return httpx.Response(200, json={"expires_at": envelope.expires_at.isoformat()})
+
+    async def load_signer() -> CapabilitySigner:
+        return signer
+
+    session = _session().model_copy(update={"internal_address": "10.2.0.4"})
+    run = make_run(NOW).model_copy(update={"fencing_token": session.fencing_token})
+    service = BrowserSecretAccessService(
+        SecretCatalog(),
+        cast(Any, Google()),
+        load_signer,
+        lambda: NOW,
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    expires_at = await service.install(run, session)
+
+    assert expires_at == NOW + timedelta(minutes=10)
+    assert [item.tool for item in claims] == ["browser.secret-key", "browser.secret-access"]
+    assert claims[0].nonce != claims[1].nonce
 
 
 @pytest.mark.anyio
@@ -375,7 +476,11 @@ async def test_takeover_blocks_an_alternate_selector_for_a_protected_element(
 @pytest.mark.anyio
 async def test_computer_use_enables_injection_detection_and_parses_supported_action() -> None:
     google = ComputerGoogle("click")
-    client = ComputerUseClient(google, "project-one")  # type: ignore[arg-type]
+    client = ComputerUseClient(
+        cast(Any, google),
+        "project-one",
+        "projects/project-one/locations/us-east1/templates/firekey-guardrails",
+    )
 
     proposal = await client.propose("click the approved control", b"image")
 
@@ -385,11 +490,24 @@ async def test_computer_use_enables_injection_detection_and_parses_supported_act
     computer = google.body["tools"][0]["computerUse"]
     assert computer["enablePromptInjectionDetection"] is True
     assert "navigate" not in computer["excludedPredefinedFunctions"]
+    assert google.body["modelArmorConfig"] == {
+        "promptTemplateName": (
+            "projects/project-one/locations/us-east1/templates/firekey-guardrails"
+        ),
+        "responseTemplateName": (
+            "projects/project-one/locations/us-east1/templates/firekey-guardrails"
+        ),
+    }
+    assert proposal.safety_explanation == "Provider safety policy requires confirmation"
 
 
 @pytest.mark.anyio
 async def test_computer_use_rejects_model_navigation() -> None:
-    client = ComputerUseClient(ComputerGoogle("navigate"), "project-one")  # type: ignore[arg-type]
+    client = ComputerUseClient(
+        cast(Any, ComputerGoogle("navigate")),
+        "project-one",
+        "projects/project-one/locations/us-east1/templates/firekey-guardrails",
+    )
 
     with pytest.raises(ConnectorError, match="unsupported browser action"):
         await client.propose("go to an approved URL", b"image")
@@ -1117,6 +1235,7 @@ async def test_setup_vm_metadata_contains_only_the_token_hash() -> None:
         "evidence-bucket",
         "us-east1",
         "us-east1-docker.pkg.dev/project-one/firekey/browser@sha256:" + "a" * 64,
+        "projects/project-one/locations/us-east1/templates/firekey-guardrails",
     )
     raw = "setup-token-that-must-not-enter-metadata"
     token_hash = hashlib.sha256(raw.encode()).hexdigest()
@@ -1218,6 +1337,39 @@ def _login_driver(url: str) -> BrowserDriver:
         login_url_pattern="https://*.vendor.example.com/login*",
     )
     return BrowserDriver(cast(Any, _LoginPage(url)), policy)
+
+
+@pytest.mark.anyio
+async def test_setup_frames_mask_authentication_and_token_controls() -> None:
+    class SetupPage:
+        def __init__(self) -> None:
+            self.selector = ""
+            self.mask: list[object] = []
+
+        def locator(self, selector: str) -> object:
+            self.selector = selector
+            return object()
+
+        async def screenshot(self, **kwargs: object) -> bytes:
+            mask = kwargs.get("mask")
+            assert isinstance(mask, list)
+            self.mask = mask
+            return b"masked-setup-frame"
+
+    page = SetupPage()
+    policy = BrowserPolicy(
+        allowed_domains=("*.vendor.example.com",),
+        allowed_actions=frozenset({BrowserActionKind.NAVIGATE}),
+    )
+    driver = BrowserDriver(cast(Any, page), policy)
+
+    frame = await driver.setup_screenshot()
+
+    assert frame == b"masked-setup-frame"
+    assert page.mask
+    assert 'input[type="password"]' in page.selector
+    assert 'input[autocomplete="one-time-code"]' in page.selector
+    assert 'input[name*="token" i]' in page.selector
 
 
 @pytest.mark.anyio
@@ -1799,7 +1951,7 @@ async def test_executor_binds_the_browser_connection() -> None:
         provider="internal-vendor",
         kind="api-key",
         display_name="Vendor production key",
-        policy_version="policy_one",
+        control_version="policy_one",
         created_at=NOW,
         updated_at=NOW,
     )
@@ -1863,6 +2015,11 @@ def _computer_version() -> PlaybookVersion:
         PlaybookStep(
             id=f"step_{stage.value}",
             stage=stage,
+            effect=(
+                PlaybookEffect.CREATE_CREDENTIAL
+                if stage is Stage.CREATE
+                else PlaybookEffect.REVOKE_CREDENTIAL
+            ),
             tool="browser.secure-capture" if stage is Stage.CREATE else "browser.click",
             operation=stage.value,
             objective=f"Execute the {stage.value} lifecycle stage",

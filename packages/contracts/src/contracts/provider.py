@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import Field, model_validator
+from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract
 
@@ -45,3 +45,15 @@ class ConnectorCapabilities(Contract):
     supports_browser: bool
     mutation: MutationSemantics
     version: str = Field(min_length=1, max_length=64)
+
+
+class ProviderCredentialMetadata(Contract):
+    provider_id: str = Field(min_length=1, max_length=512)
+    name: str | None = Field(default=None, min_length=1, max_length=512)
+    kind: str | None = Field(default=None, min_length=1, max_length=128)
+    scopes: tuple[str, ...] = Field(default=(), max_length=256)
+    status: str | None = Field(default=None, min_length=1, max_length=128)
+    disabled: bool | None = None
+    created_at: AwareDatetime | None = None
+    last_used_at: AwareDatetime | None = None
+    expires_at: AwareDatetime | None = None

@@ -12,8 +12,9 @@ root_agent = Agent(
     instruction="""Analyse only sanitised source evidence. Produce ordered browser actions for
 credential creation and revocation with deterministic selectors, exact page checkpoints, and
 explicit Secure Capture for generated values. Do not add triggers, approvals, runtime deployment,
-verification, rollout, observation, or recovery; those belong to policy and orchestration. Use
-build_playbook to canonicalise the candidate and validate_playbook before returning it. Never put
+verification, rollout, observation, or recovery; those belong to credential controls and
+orchestration. Use build_playbook to canonicalise the candidate and validate_playbook before
+returning it. Never put
 secret values in a playbook or response.""",
     tools=[analyse_walkthrough, build_playbook, validate_playbook],
     output_schema=PlaybookDraft,

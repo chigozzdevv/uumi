@@ -183,7 +183,11 @@ class FirestoreGenerationRepository:
                 return generation
             if generation.state is not GenerationState.SUPERSEDED:
                 raise ResourceConflictError("only a superseded generation can be revoked")
-            if report.status is not VerificationStatus.PASSED:
+            if (
+                report.status is not VerificationStatus.PASSED
+                or report.organisation_id != organisation_id
+                or report.generation_id != generation.id
+            ):
                 raise ResourceConflictError("revocation verification did not pass")
             changed = generation.model_copy(
                 update={"state": GenerationState.REVOKED, "revoked_at": revoked_at}

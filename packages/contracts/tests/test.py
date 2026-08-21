@@ -8,16 +8,16 @@ from contracts import (
     BrowserPolicy,
     BrowserSession,
     BrowserStatus,
+    ControlDefinition,
+    ControlVersion,
     EventKind,
     MutationMode,
     MutationSemantics,
     OutboxEvent,
     PageCheckpoint,
     PlaybookDraft,
+    PlaybookEffect,
     PlaybookStep,
-    PolicyDefinition,
-    PolicyState,
-    PolicyVersion,
     RecoveryMode,
     RotationPlan,
     RotationStrategy,
@@ -27,6 +27,7 @@ from contracts import (
     Selector,
     SelectorKind,
     Stage,
+    StepOutput,
 )
 from policy import REQUIRED_CHECKS, digest
 from pydantic import ValidationError
@@ -52,7 +53,7 @@ def test_rollout_must_be_ordered_and_complete() -> None:
             organisation_id="org_one",
             run_id="run_one",
             credential_id="cred_one",
-            policy_version="policy_one",
+            control_version="policy_one",
             browser_playbook_version=None,
             strategy=RotationStrategy.PARALLEL,
             target_scopes=frozenset({"mail.send"}),
@@ -149,6 +150,7 @@ def test_browser_playbook_requires_a_login_url_pattern() -> None:
                 PlaybookStep(
                     id="step_one",
                     stage=Stage.CREATE,
+                    effect=PlaybookEffect.CREATE_CREDENTIAL,
                     tool="browser.secure-capture",
                     operation="capture",
                     objective="Capture the created key",
@@ -168,7 +170,7 @@ def test_browser_playbook_requires_a_login_url_pattern() -> None:
 
 
 def test_browser_playbook_requires_secure_capture() -> None:
-    with pytest.raises(ValidationError, match="secure capture"):
+    with pytest.raises(ValidationError, match="credential creation"):
         PlaybookDraft(
             name="Vendor rotation",
             platform="vendor",
@@ -178,6 +180,7 @@ def test_browser_playbook_requires_secure_capture() -> None:
                 PlaybookStep(
                     id="step_one",
                     stage=Stage.CREATE,
+                    effect=PlaybookEffect.CREATE_CREDENTIAL,
                     tool="browser.click",
                     operation="click",
                     objective="Click the Create control",
@@ -193,7 +196,7 @@ def test_browser_playbook_cannot_embed_approval_policy() -> None:
     selector = Selector(kind=SelectorKind.TEST_ID, value="credential-control")
     checkpoint = PageCheckpoint(url_pattern="https://vendor.example.com/keys")
 
-    with pytest.raises(ValidationError, match="policy protects operations"):
+    with pytest.raises(ValidationError, match="credential controls protect operations"):
         PlaybookDraft(
             name="Vendor rotation",
             platform="vendor",
@@ -203,6 +206,7 @@ def test_browser_playbook_cannot_embed_approval_policy() -> None:
                 PlaybookStep(
                     id="create_key",
                     stage=Stage.CREATE,
+                    effect=PlaybookEffect.CREATE_CREDENTIAL,
                     tool="browser.secure-capture",
                     operation="capture",
                     objective="Capture the replacement credential",
@@ -221,10 +225,73 @@ def test_browser_playbook_cannot_embed_approval_policy() -> None:
                 PlaybookStep(
                     id="revoke_key",
                     stage=Stage.REVOKE,
+                    effect=PlaybookEffect.REVOKE_CREDENTIAL,
                     tool="browser.click",
                     operation="revoke",
                     objective="Revoke the prior credential",
                     selectors=(selector,),
+                    checkpoint=checkpoint,
+                    evidence_checks=frozenset({"revoked"}),
+                ),
+            ),
+        )
+
+
+def test_browser_playbook_rejects_unprotected_credential_creation() -> None:
+    selector = Selector(kind=SelectorKind.TEST_ID, value="credential")
+
+    with pytest.raises(ValidationError, match="credential creation"):
+        PlaybookStep(
+            id="create_key",
+            stage=Stage.CREATE,
+            effect=PlaybookEffect.CREATE_CREDENTIAL,
+            tool="browser.click",
+            operation="create",
+            objective="Create the replacement credential",
+            selectors=(selector,),
+            checkpoint=PageCheckpoint(url_pattern="https://vendor.example.com/keys"),
+            evidence_checks=frozenset({"created"}),
+        )
+
+
+def test_browser_playbook_rejects_secret_output_extraction() -> None:
+    selector = Selector(kind=SelectorKind.TEST_ID, value="credential")
+    checkpoint = PageCheckpoint(url_pattern="https://vendor.example.com/keys")
+
+    with pytest.raises(ValidationError, match="cannot extract step outputs"):
+        PlaybookDraft(
+            name="Vendor rotation",
+            platform="vendor",
+            allowed_domains=("vendor.example.com",),
+            login_url_pattern="https://vendor.example.com/login",
+            steps=(
+                PlaybookStep(
+                    id="create_key",
+                    stage=Stage.CREATE,
+                    effect=PlaybookEffect.CREATE_CREDENTIAL,
+                    tool="browser.secure-capture",
+                    operation="capture",
+                    objective="Create and capture the replacement credential",
+                    selectors=(selector,),
+                    checkpoint=checkpoint,
+                    secure_field=SecureField(
+                        name="api_key",
+                        selector=selector,
+                        provider_id_selector=Selector(
+                            kind=SelectorKind.TEST_ID, value="credential-id"
+                        ),
+                    ),
+                    outputs=(StepOutput(name="secret", selector=selector),),
+                    evidence_checks=frozenset({"captured"}),
+                ),
+                PlaybookStep(
+                    id="revoke_key",
+                    stage=Stage.REVOKE,
+                    effect=PlaybookEffect.REVOKE_CREDENTIAL,
+                    tool="browser.click",
+                    operation="revoke",
+                    objective="Revoke the previous credential",
+                    selectors=(Selector(kind=SelectorKind.TEST_ID, value="revoke"),),
                     checkpoint=checkpoint,
                     evidence_checks=frozenset({"revoked"}),
                 ),
@@ -257,29 +324,28 @@ def test_secure_capture_session_requires_both_barriers() -> None:
         )
 
 
-def test_active_policy_requires_approval_and_all_stage_checks() -> None:
-    definition = PolicyDefinition(
+def test_controls_require_all_stage_checks() -> None:
+    definition = ControlDefinition(
         required_checks=REQUIRED_CHECKS,
         allowed_tools=frozenset({"provider.create", "verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
         maximum_observation_seconds=1800,
     )
 
-    with pytest.raises(ValidationError, match="require approval"):
-        PolicyVersion(
-            id="policy_version_one",
-            organisation_id="org_one",
-            policy_id="policy_one",
-            number=1,
-            definition=definition,
-            digest=digest(definition),
-            state=PolicyState.ACTIVE,
-            created_by="admin_one",
-            created_at=NOW,
-        )
+    version = ControlVersion(
+        id="control_version_one",
+        organisation_id="org_one",
+        credential_id="credential_one",
+        number=1,
+        definition=definition,
+        digest=digest(definition),
+        created_by="admin_one",
+        created_at=NOW,
+    )
+    assert version.credential_id == "credential_one"
 
     with pytest.raises(ValidationError, match="at least 12 items"):
-        PolicyDefinition(
+        ControlDefinition(
             required_checks={Stage.TRIGGER: REQUIRED_CHECKS[Stage.TRIGGER]},
             allowed_tools=frozenset({"provider.create", "verification.run"}),
             allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),

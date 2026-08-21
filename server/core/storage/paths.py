@@ -202,13 +202,9 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/plans/{_segment(plan_id)}"
 
     @staticmethod
-    def policy(organisation_id: str, policy_id: str) -> str:
-        return f"{FirestorePaths.organisation(organisation_id)}/policies/{_segment(policy_id)}"
-
-    @staticmethod
-    def policy_version(organisation_id: str, version_id: str) -> str:
-        organisation = FirestorePaths.organisation(organisation_id)
-        return f"{organisation}/policy-versions/{_segment(version_id)}"
+    def control_version(organisation_id: str, credential_id: str, version_id: str) -> str:
+        credential = FirestorePaths.credential(organisation_id, credential_id)
+        return f"{credential}/control-versions/{_segment(version_id)}"
 
     @staticmethod
     def recovery(organisation_id: str, recovery_id: str) -> str:

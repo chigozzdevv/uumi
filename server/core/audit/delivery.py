@@ -18,6 +18,7 @@ class AuditDeliverySummary:
     claimed: int
     logged: int
     failed: int
+    dead_lettered: int
 
 
 class AuditDeliveryRepository(Protocol):
@@ -45,6 +46,14 @@ class AuditDeliveryRepository(Protocol):
         available_at: datetime,
     ) -> None: ...
 
+    async def mark_dead_letter(
+        self,
+        claim: AuditClaim,
+        owner_id: str,
+        error: str,
+        dead_lettered_at: datetime,
+    ) -> None: ...
+
 
 class AuditTransport(Protocol):
     async def write(self, event: AuditEvent) -> str: ...
@@ -59,6 +68,7 @@ class AuditPublisher:
         clock: Callable[[], datetime],
         lease_duration: timedelta = timedelta(seconds=60),
         batch_size: int = 20,
+        maximum_attempts: int = 10,
     ) -> None:
         self._repository = repository
         self._transport = transport
@@ -66,9 +76,10 @@ class AuditPublisher:
         self._clock = clock
         self._lease_duration = lease_duration
         self._batch_size = batch_size
+        self._maximum_attempts = maximum_attempts
 
     async def drain(self, maximum: int = 100) -> AuditDeliverySummary:
-        claimed = logged = failed = 0
+        claimed = logged = failed = dead_lettered = 0
         while claimed < maximum:
             batch = await self._repository.claim(
                 self._owner_id,
@@ -80,24 +91,34 @@ class AuditPublisher:
                 break
             results = await asyncio.gather(*(self._write(item) for item in batch))
             claimed += len(batch)
-            logged += sum(results)
-            failed += len(results) - sum(results)
-        return AuditDeliverySummary(claimed, logged, failed)
+            logged += sum(result == "logged" for result in results)
+            failed += sum(result == "failed" for result in results)
+            dead_lettered += sum(result == "dead-lettered" for result in results)
+        return AuditDeliverySummary(claimed, logged, failed, dead_lettered)
 
-    async def _write(self, claim: AuditClaim) -> bool:
+    async def _write(self, claim: AuditClaim) -> str:
         try:
             receipt = await self._transport.write(claim.outbox.event)
         except Exception as error:
             now = self._clock()
+            safe_error = _safe_error(error)
+            if claim.outbox.attempts >= self._maximum_attempts:
+                await self._repository.mark_dead_letter(
+                    claim,
+                    self._owner_id,
+                    safe_error,
+                    now,
+                )
+                return "dead-lettered"
             await self._repository.mark_failed(
                 claim,
                 self._owner_id,
-                _safe_error(error),
+                safe_error,
                 now + _backoff(claim.outbox.attempts),
             )
-            return False
+            return "failed"
         await self._repository.mark_logged(claim, self._owner_id, receipt, self._clock())
-        return True
+        return "logged"
 
 
 def _backoff(attempts: int) -> timedelta:

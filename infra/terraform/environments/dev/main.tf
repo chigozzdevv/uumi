@@ -94,8 +94,8 @@ locals {
   workload_identity_grants = {
     for grant in setproduct(
       var.workload_identity_service_accounts,
-      ["firekey-broker", "firekey-browser", "firekey-coordinator"],
-    ) : "${grant[1]}:${grant[0]}" => {
+      ["firekey-api", "firekey-broker", "firekey-coordinator"],
+      ) : "${grant[1]}:${grant[0]}" => {
       service_account = grant[0]
       caller          = grant[1]
     }
@@ -292,6 +292,7 @@ module "runtime" {
   capability_public_key     = var.capability_public_key
   browser_template          = module.browser.template
   browser_zone              = var.zone
+  model_armor_template      = "projects/${var.project_id}/locations/${var.region}/templates/firekey-agent-guardrails"
   network                   = module.browser.network
   subnetwork                = module.browser.runtime_subnetwork
 
@@ -363,6 +364,9 @@ module "events" {
   secretmanager_member    = module.storage.secretmanager_member
   publisher_name          = module.runtime.publisher_name
   publisher_uri           = module.runtime.publisher_uri
+  api_uri                 = module.runtime.api_uri
+  reaper_service_account  = module.identity.emails["firekey-workflow"]
+  reaper_organisations    = var.workflow_organisations
   ingestion_uri           = module.runtime.ingestion_uri
   notification_name       = module.runtime.notification_name
   notification_uri        = module.runtime.notification_uri

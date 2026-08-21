@@ -33,6 +33,8 @@ class AuditOutbox(Contract):
     lease_expires_at: AwareDatetime | None = None
     logged_at: AwareDatetime | None = None
     provider_receipt: str | None = Field(default=None, min_length=1, max_length=512)
+    dead_lettered_at: AwareDatetime | None = None
+    dead_letter_reason: str | None = Field(default=None, min_length=1, max_length=1024)
     last_error: str | None = Field(default=None, max_length=1024)
 
     @model_validator(mode="after")
@@ -43,6 +45,12 @@ class AuditOutbox(Contract):
             raise ValueError("a logged audit event cannot remain leased")
         if (self.logged_at is None) != (self.provider_receipt is None):
             raise ValueError("audit log time and provider receipt must be set together")
+        if (self.dead_lettered_at is None) != (self.dead_letter_reason is None):
+            raise ValueError("audit dead-letter time and reason must be set together")
+        if self.logged_at is not None and self.dead_lettered_at is not None:
+            raise ValueError("an audit event cannot be logged and dead-lettered")
+        if self.dead_lettered_at is not None and self.lease_owner is not None:
+            raise ValueError("a dead-lettered audit event cannot remain leased")
         return self
 
 

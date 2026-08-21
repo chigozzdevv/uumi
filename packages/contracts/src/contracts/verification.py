@@ -13,6 +13,7 @@ class ProbeKind(StrEnum):
     RUNTIME = "runtime"
     TELEMETRY = "telemetry"
     GENERATION = "generation"
+    CREDENTIAL = "credential-authentication"
 
 
 class VerificationStatus(StrEnum):
@@ -65,6 +66,8 @@ class ProbeDefinition(Contract):
     method: str = Field(default="GET", min_length=1, max_length=16)
     headers: dict[str, str] = Field(default_factory=dict)
     body_reference: str | None = Field(default=None, max_length=1024)
+    secret_reference: str | None = Field(default=None, max_length=1024)
+    secret_connection_id: Identifier | None = None
     expected_status: tuple[int, ...] = (200,)
     expected_generation_id: Identifier | None = None
     generation_binding: GenerationBinding = GenerationBinding.NONE
@@ -88,10 +91,16 @@ class ProbeDefinition(Contract):
         if self.generation_binding is GenerationBinding.NONE and self.expected_generation_id:
             raise ValueError("an expected generation requires a generation binding")
         if self.target_binding is not TargetBinding.STATIC and self.kind not in {
+            ProbeKind.CREDENTIAL,
             ProbeKind.PROVIDER,
             ProbeKind.SECRET,
         }:
             raise ValueError("dynamic targets are only valid for provider and secret probes")
+        secret_bound = self.secret_reference is not None and self.secret_connection_id is not None
+        if (self.secret_reference is None) != (self.secret_connection_id is None):
+            raise ValueError("probe secret reference and connection must be set together")
+        if (self.kind is ProbeKind.CREDENTIAL) != secret_bound:
+            raise ValueError("credential authentication probes require one secret-store binding")
         return self
 
 

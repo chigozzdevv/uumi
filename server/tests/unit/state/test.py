@@ -175,6 +175,55 @@ def test_retryable_recovery_reenters_the_same_stage() -> None:
     assert run.recovery_evidence_ids == ()
 
 
+def test_recovering_run_cannot_advance_without_completing_recovery() -> None:
+    machine, run = start()
+    failure = Failure(code="temporary-error", message="provider was unavailable", retryable=True)
+    run = machine.fail(run, failure, 1, run.revision, NOW)
+    run = machine.recover(run, "worker_one", run.revision, LEASE_END, NOW)
+    assert run.lease is not None
+
+    with pytest.raises(TransitionRejectedError, match="normally running"):
+        machine.complete(
+            run,
+            make_proof(Stage.TRIGGER, NOW),
+            run.lease.fencing_token,
+            run.revision,
+            NOW,
+        )
+
+
+def test_expired_active_run_can_enter_cleanup_under_a_new_worker() -> None:
+    machine, run = start()
+    failure = Failure(code="lease-expired", message="worker stopped", retryable=True)
+
+    interrupted = machine.cleanup(
+        run,
+        failure,
+        fencing_token=999,
+        expected_revision=run.revision,
+        now=LEASE_END,
+    )
+
+    assert interrupted.status is RunStatus.CLEANUP
+    assert interrupted.failure == failure
+
+
+def test_expired_active_run_can_fail_and_release_its_lease() -> None:
+    machine, run = start()
+    failure = Failure(code="lease-expired", message="worker stopped", retryable=True)
+
+    interrupted = machine.fail(
+        run,
+        failure,
+        fencing_token=999,
+        expected_revision=run.revision,
+        now=LEASE_END,
+    )
+
+    assert interrupted.status is RunStatus.FAILED
+    assert interrupted.lease is None
+
+
 def test_rollback_recovery_finishes_as_compensated() -> None:
     machine, run = start()
     failure = Failure(
@@ -201,6 +250,15 @@ def test_rollback_recovery_finishes_as_compensated() -> None:
     assert run.recovery_stage is Stage.TRIGGER
     assert run.recovery_mode is RecoveryMode.ROLLBACK
     assert run.recovery_evidence_ids == ("evidence_one",)
+
+    with pytest.raises(TransitionRejectedError, match="terminal"):
+        machine.fail(
+            run,
+            failure,
+            fencing_token=1,
+            expected_revision=run.revision,
+            now=NOW,
+        )
 
 
 def test_gate_policy_covers_all_twelve_stages() -> None:

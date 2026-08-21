@@ -3,6 +3,19 @@ from pydantic import AwareDatetime, Field, model_validator
 from contracts.base import Contract, Identifier
 
 
+class SecretResourceMetadata(Contract):
+    reference: str = Field(pattern=r"^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+$")
+    display_name: str = Field(min_length=1, max_length=256)
+
+
+class SecretVersionMetadata(Contract):
+    reference: str = Field(
+        pattern=r"^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[A-Za-z0-9_-]+$"
+    )
+    state: str = Field(min_length=1, max_length=32)
+    created_at: AwareDatetime | None = None
+
+
 class ManagedCredential(Contract):
     id: Identifier
     organisation_id: Identifier
@@ -16,13 +29,14 @@ class ManagedCredential(Contract):
     scopes: frozenset[str] = frozenset()
     consumer_ids: tuple[Identifier, ...] = ()
     active_generation_id: Identifier | None = None
-    policy_version: Identifier
+    control_version: Identifier
     expires_at: AwareDatetime | None = None
     rotation_due_at: AwareDatetime | None = None
     last_observed_at: AwareDatetime | None = None
     metadata_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     created_at: AwareDatetime
     updated_at: AwareDatetime
+    archived_at: AwareDatetime | None = None
     revision: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")

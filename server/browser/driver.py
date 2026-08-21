@@ -98,7 +98,14 @@ class BrowserDriver:
         return await self._page.screenshot(type="png", animations="disabled", mask=masks)
 
     async def setup_screenshot(self) -> bytes:
-        return await self._page.screenshot(type="png", animations="disabled")
+        # Setup is human-driven, but frames still cross the VM boundary. Mask
+        # authentication and token controls before the gateway can stream them.
+        sensitive = self._page.locator(_SETUP_SENSITIVE_SELECTOR)
+        return await self._page.screenshot(
+            type="png",
+            animations="disabled",
+            mask=[sensitive],
+        )
 
     async def validate_coordinate(self, selector: Selector, x: int, y: int) -> None:
         if not 0 <= x <= 999 or not 0 <= y <= 999:
@@ -282,4 +289,25 @@ _KEYS = frozenset(
         "Escape",
         "Tab",
     }
+)
+
+_SETUP_SENSITIVE_SELECTOR = ", ".join(
+    (
+        'input[type="password"]',
+        'input[autocomplete="current-password"]',
+        'input[autocomplete="new-password"]',
+        'input[autocomplete="one-time-code"]',
+        'input[name*="secret" i]',
+        'input[id*="secret" i]',
+        'input[name*="token" i]',
+        'input[id*="token" i]',
+        'input[name*="api-key" i]',
+        'input[id*="api-key" i]',
+        'textarea[name*="secret" i]',
+        'textarea[id*="secret" i]',
+        'textarea[name*="token" i]',
+        'textarea[id*="token" i]',
+        'textarea[name*="api-key" i]',
+        'textarea[id*="api-key" i]',
+    )
 )

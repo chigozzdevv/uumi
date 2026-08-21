@@ -5,8 +5,8 @@ from contracts import (
     Approval,
     Connection,
     ConsumerBinding,
+    ControlVersion,
     ManagedCredential,
-    PolicyVersion,
     ProtectedAction,
     RotationRun,
     ToolAttempt,
@@ -186,9 +186,12 @@ class FirestoreBrokerRepository:
             values.append(ConsumerBinding.model_validate(_data(snapshot)))
         return tuple(values)
 
-    async def policy(self, organisation_id: str, version_id: str) -> PolicyVersion:
+    async def controls(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion:
         return await self._catalog.get(
-            FirestorePaths.policy_version(organisation_id, version_id), PolicyVersion
+            FirestorePaths.control_version(organisation_id, credential_id, version_id),
+            ControlVersion,
         )
 
     async def approval(self, organisation_id: str, approval_id: str) -> Approval:

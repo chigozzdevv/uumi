@@ -25,6 +25,7 @@ from contracts import (
 from core.errors import ResourceConflictError
 
 _PROBE_ROLES = {
+    ProbeKind.CREDENTIAL: ConnectionRole.PROVIDER,
     ProbeKind.SECRET: ConnectionRole.SECRET_STORE,
     ProbeKind.RUNTIME: ConnectionRole.RUNTIME,
     ProbeKind.GENERATION: ConnectionRole.RUNTIME,
@@ -52,6 +53,7 @@ class ProbeExecutor:
         connection: Connection,
         context: ConnectorContext,
         clock: Callable[[], datetime],
+        secret_connection: Connection | None = None,
     ) -> ProbeResult:
         started_at = clock()
         try:
@@ -95,6 +97,10 @@ class ProbeExecutor:
             elif definition.kind is ProbeKind.PROVIDER:
                 observations, checks, raw = await self._provider_probe(
                     definition, connection, scoped_context
+                )
+            elif definition.kind is ProbeKind.CREDENTIAL:
+                observations, checks, raw = await self._credential_probe(
+                    definition, connection, secret_connection
                 )
             else:
                 raise ResourceConflictError(f"unsupported probe kind {definition.kind.value}")
@@ -398,7 +404,12 @@ class ProbeExecutor:
             raise ConnectorError(
                 "verification-telemetry-response", "Logging returned invalid entries"
             )
-        if len(entries) < thresholds.minimum_count:
+        if definition.negative and entries:
+            raise ConnectorError(
+                "verification-old-generation-use",
+                "old credential generation still has matching telemetry",
+            )
+        if not definition.negative and len(entries) < thresholds.minimum_count:
             raise ConnectorError("verification-telemetry-count", "insufficient matching telemetry")
         error_count = 0
         auth_failure_count = 0
@@ -431,13 +442,14 @@ class ProbeExecutor:
             "error_count": error_count,
             "authentication_failure_count": auth_failure_count,
         }
+        checks = {
+            "telemetry-query-executed",
+            "telemetry-generation-bound",
+        }
+        checks.add("telemetry-no-old-use" if definition.negative else "telemetry-threshold-met")
         return (
             observations,
-            {
-                "telemetry-query-executed",
-                "telemetry-generation-bound",
-                "telemetry-threshold-met",
-            },
+            checks,
             _json(record),
         )
 
@@ -473,6 +485,54 @@ class ProbeExecutor:
         }
         check = "provider-credential-exists" if expected else "provider-credential-revoked"
         return observations, {check}, _json(response.result)
+
+    async def _credential_probe(
+        self,
+        definition: ProbeDefinition,
+        connection: Connection,
+        secret_connection: Connection | None,
+    ) -> tuple[dict[str, str | int | float | bool | None], set[str], bytes]:
+        if (
+            secret_connection is None
+            or secret_connection.id != definition.secret_connection_id
+            or secret_connection.organisation_id != definition.organisation_id
+            or ConnectionRole.SECRET_STORE not in secret_connection.roles
+            or definition.secret_reference is None
+        ):
+            raise ConnectorError(
+                "verification-secret-binding",
+                "credential authentication probe has no secret-store binding",
+            )
+        connector = self._connectors.resolve(connection, "provider.testCredential")
+        test = getattr(connector, "test_credential", None)
+        if not callable(test):
+            raise ConnectorError(
+                "credential-test-unavailable",
+                "provider connector cannot authenticate the workload credential",
+            )
+        with await SecretManagerConnector(self._google).access_for(
+            secret_connection, definition.secret_reference
+        ) as value:
+            status = await test(connection, value)
+        operation = connection.http.test_credential if connection.http is not None else None
+        if operation is None:
+            raise ConnectorError(
+                "credential-test-unavailable",
+                "provider connection has no credential authentication test",
+            )
+        accepted = status in operation.success_statuses
+        if accepted is definition.negative:
+            expected = "reject" if definition.negative else "accept"
+            raise ConnectorError(
+                "verification-credential-authentication",
+                f"provider should {expected} the credential",
+            )
+        observations: dict[str, str | int | float | bool | None] = {
+            "credential_accepted": accepted,
+            "http_status": status,
+        }
+        check = "credential-rejected" if definition.negative else "credential-accepted"
+        return observations, {check}, _json(observations)
 
 
 def _field(value: dict[str, Any], path: str) -> Any:

@@ -18,6 +18,7 @@ class MemoryOutbox:
         self.claims = claims
         self.published: list[tuple[str, str]] = []
         self.failed: list[tuple[str, str, datetime]] = []
+        self.dead_lettered: list[tuple[str, str, datetime]] = []
 
     async def claim(
         self,
@@ -46,6 +47,15 @@ class MemoryOutbox:
         available_at: datetime,
     ) -> None:
         self.failed.append((claim.outbox.event.id, error, available_at))
+
+    async def mark_dead_letter(
+        self,
+        claim: OutboxClaim,
+        owner_id: str,
+        error: str,
+        dead_lettered_at: datetime,
+    ) -> None:
+        self.dead_lettered.append((claim.outbox.event.id, error, dead_lettered_at))
 
 
 class MemoryTransport:
@@ -76,6 +86,7 @@ async def test_publisher_drains_claimed_events() -> None:
     assert summary.claimed == 2
     assert summary.published == 2
     assert summary.failed == 0
+    assert summary.dead_lettered == 0
     assert transport.events == ["event_one", "event_two"]
     assert repository.published == [
         ("event_one", "message-event_one"),
@@ -102,6 +113,26 @@ async def test_publisher_releases_failure_with_backoff() -> None:
             "TimeoutError: provider unavailable retry",
             NOW + timedelta(seconds=20),
         )
+    ]
+
+
+async def test_publisher_dead_letters_a_poison_event_after_the_attempt_limit() -> None:
+    claim = _claim("event_one", attempts=10)
+    repository = MemoryOutbox([claim])
+    publisher = EventPublisher(
+        repository,
+        MemoryTransport({"event_one"}),
+        owner_id="publisher_one",
+        clock=lambda: NOW,
+    )
+
+    summary = await publisher.drain()
+
+    assert summary.dead_lettered == 1
+    assert summary.failed == 0
+    assert repository.failed == []
+    assert repository.dead_lettered == [
+        ("event_one", "TimeoutError: provider unavailable retry", NOW)
     ]
 
 

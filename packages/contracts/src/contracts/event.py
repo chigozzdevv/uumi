@@ -42,6 +42,8 @@ class OutboxEvent(Contract):
     lease_expires_at: AwareDatetime | None = None
     published_at: AwareDatetime | None = None
     publisher_message_id: str | None = Field(default=None, min_length=1, max_length=256)
+    dead_lettered_at: AwareDatetime | None = None
+    dead_letter_reason: str | None = Field(default=None, min_length=1, max_length=1024)
     last_error: str | None = Field(default=None, max_length=1024)
 
     @model_validator(mode="after")
@@ -52,4 +54,10 @@ class OutboxEvent(Contract):
             raise ValueError("a published event cannot remain leased")
         if (self.published_at is None) != (self.publisher_message_id is None):
             raise ValueError("published time and publisher message ID must be set together")
+        if (self.dead_lettered_at is None) != (self.dead_letter_reason is None):
+            raise ValueError("dead-letter time and reason must be set together")
+        if self.published_at is not None and self.dead_lettered_at is not None:
+            raise ValueError("an outbox event cannot be published and dead-lettered")
+        if self.dead_lettered_at is not None and self.lease_owner is not None:
+            raise ValueError("a dead-lettered event cannot remain leased")
         return self

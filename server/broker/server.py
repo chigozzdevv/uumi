@@ -90,7 +90,7 @@ server: MCPServer[BrokerRuntime] = MCPServer(
     "FireKey Tool Broker",
     description="Capability-scoped credential, secret-store, and runtime operations.",
     instructions=(
-        "All calls are bound to credential inventory, active policy, connection boundaries, "
+        "All calls are bound to credential inventory, pinned controls, connection boundaries, "
         "the run lease, and fencing token. Mutation capabilities are injected by Agent Gateway."
     ),
     version="0.1.0",
@@ -170,6 +170,21 @@ async def provider_revoke(call: BrokerCall, ctx: Context[BrokerRuntime, Any]) ->
 )
 async def secret_status(call: BrokerCall, ctx: Context[BrokerRuntime, Any]) -> dict[str, Any]:
     return await _execute("secretStore.getVersion", call, ctx)
+
+
+@server.tool(
+    name="secretStore.testConsumerAccess",
+    description=(
+        "Prove the declared runtime identity can read one secret version without returning "
+        "its value."
+    ),
+    annotations=_read("Test consumer secret access"),
+    structured_output=True,
+)
+async def secret_consumer_access(
+    call: BrokerCall, ctx: Context[BrokerRuntime, Any]
+) -> dict[str, Any]:
+    return await _execute("secretStore.testConsumerAccess", call, ctx)
 
 
 @server.tool(

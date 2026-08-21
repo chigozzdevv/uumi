@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from capture import SecureCapture
+from connectors.base import SecretValue
 from contracts import (
     BrowserAction,
     BrowserActionKind,
@@ -106,6 +107,7 @@ class ComputerUseWorker:
         proposal: ProposedBrowserAction,
         step: PlaybookStep,
         confirmed: bool,
+        access_token: SecretValue,
     ) -> tuple[BrowserSession, SecureCaptureResult | None]:
         if not step.protected or step.secure_field is None or step.checkpoint is None:
             raise ResourceConflictError(
@@ -135,6 +137,7 @@ class ComputerUseWorker:
                 step.checkpoint,
                 session.secret_store_connection_id,
                 session.secret_resource,
+                access_token,
             )
             resumed = await self._sessions.complete_capture(result, authorised.revision)
             return resumed, result

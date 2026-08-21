@@ -2,10 +2,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from contracts import (
+    ControlVersion,
     CreateRunCommand,
     EventKind,
-    PolicyState,
-    PolicyVersion,
     RotationRun,
     RunCommand,
     RunStatus,
@@ -64,8 +63,10 @@ class FirestoreRunRepository:
                 run.trigger.event_id,
             )
         )
-        policy_ref = self._client.document(
-            FirestorePaths.policy_version(run.organisation_id, run.policy_version)
+        controls_ref = self._client.document(
+            FirestorePaths.control_version(
+                run.organisation_id, run.credential_id, run.control_version
+            )
         )
         request_hash = creation_hash(command)
 
@@ -95,17 +96,17 @@ class FirestoreRunRepository:
                 raise IdempotencyConflictError(
                     f"command {command.id} already belongs to another run"
                 )
-            policy_snapshot = await policy_ref.get(transaction=transaction)
-            if not policy_snapshot.exists or policy_snapshot.to_dict() is None:
-                raise StorageIntegrityError("run policy version is missing")
-            policy = PolicyVersion.model_validate(policy_snapshot.to_dict())
+            controls_snapshot = await controls_ref.get(transaction=transaction)
+            if not controls_snapshot.exists or controls_snapshot.to_dict() is None:
+                raise StorageIntegrityError("run control version is missing")
+            controls = ControlVersion.model_validate(controls_snapshot.to_dict())
             if (
-                policy.organisation_id != run.organisation_id
-                or policy.id != run.policy_version
-                or policy.state is not PolicyState.ACTIVE
-                or policy.digest != digest(policy.definition)
+                controls.organisation_id != run.organisation_id
+                or controls.credential_id != run.credential_id
+                or controls.id != run.control_version
+                or controls.digest != digest(controls.definition)
             ):
-                raise StorageIntegrityError("run policy version is not active and immutable")
+                raise StorageIntegrityError("run control version is not immutable")
             step = RunStep(
                 id=command.id,
                 organisation_id=run.organisation_id,
@@ -239,19 +240,23 @@ class FirestoreRunRepository:
                 raise StorageIntegrityError(f"run {run.id} does not hold its credential lock")
 
             if proof is not None:
-                policy_ref = self._client.document(
-                    FirestorePaths.policy_version(run.organisation_id, run.policy_version)
+                controls_ref = self._client.document(
+                    FirestorePaths.control_version(
+                        run.organisation_id, run.credential_id, run.control_version
+                    )
                 )
-                policy_snapshot = await policy_ref.get(transaction=transaction)
-                if not policy_snapshot.exists or policy_snapshot.to_dict() is None:
-                    raise StorageIntegrityError("run policy version disappeared")
-                policy = PolicyVersion.model_validate(policy_snapshot.to_dict())
-                if policy.state not in {
-                    PolicyState.ACTIVE,
-                    PolicyState.SUPERSEDED,
-                } or policy.digest != digest(policy.definition):
-                    raise StorageIntegrityError("run policy version lost immutable authority")
-                GatePolicy(policy.definition.required_checks).validate(proof)
+                controls_snapshot = await controls_ref.get(transaction=transaction)
+                if not controls_snapshot.exists or controls_snapshot.to_dict() is None:
+                    raise StorageIntegrityError("run control version disappeared")
+                controls = ControlVersion.model_validate(controls_snapshot.to_dict())
+                if (
+                    controls.organisation_id != run.organisation_id
+                    or controls.credential_id != run.credential_id
+                    or controls.id != run.control_version
+                    or controls.digest != digest(controls.definition)
+                ):
+                    raise StorageIntegrityError("run control version lost immutable authority")
+                GatePolicy(controls.definition.required_checks).validate(proof)
 
             updated = transition(run)
             validate_transition(run, updated, command.organisation_id)

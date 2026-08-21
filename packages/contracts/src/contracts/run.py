@@ -50,7 +50,7 @@ class RotationRun(Contract):
     organisation_id: Identifier
     credential_id: Identifier
     trigger: Trigger
-    policy_version: Identifier
+    control_version: Identifier
     stage: Stage = Stage.TRIGGER
     status: RunStatus = RunStatus.PENDING
     lease: Lease | None = None

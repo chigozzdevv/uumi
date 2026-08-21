@@ -9,7 +9,7 @@ def build_run(command: CreateRunCommand, run_id: str, now: datetime) -> Rotation
         organisation_id=command.organisation_id,
         credential_id=command.credential_id,
         trigger=command.trigger,
-        policy_version=command.policy_version,
+        control_version=command.control_version,
         created_at=now,
         updated_at=now,
     )

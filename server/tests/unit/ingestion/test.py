@@ -12,12 +12,11 @@ from contracts import (
     Confidence,
     ConsumerBinding,
     ConsumerService,
+    ControlDefinition,
+    ControlVersion,
     Incident,
     IncidentStatus,
     ManagedCredential,
-    PolicyDefinition,
-    PolicyState,
-    PolicyVersion,
     RecoveryMode,
     Severity,
     SourceResource,
@@ -180,7 +179,7 @@ async def test_repository_selection_change_invalidates_github_routing() -> None:
 
 
 @pytest.mark.anyio
-async def test_active_policy_automatically_starts_exactly_correlated_run() -> None:
+async def test_automatic_controls_start_exactly_correlated_run() -> None:
     credential = _credential()
     inventory = Inventory(credential)
     incidents = Incidents()
@@ -190,7 +189,7 @@ async def test_active_policy_automatically_starts_exactly_correlated_run() -> No
         inventory,
         RunWorkflow(MemoryRunRepository(), clock=lambda: NOW),
     )
-    automation = IncidentAutomation(service, inventory, Policies(_policy()))
+    automation = IncidentAutomation(service, inventory, Controls(_controls()))
     event = ProviderSource().normalise(
         "org_one",
         "sendgrid",
@@ -215,7 +214,7 @@ async def test_active_policy_automatically_starts_exactly_correlated_run() -> No
 
 
 @pytest.mark.anyio
-async def test_high_confidence_single_candidate_requires_explicit_policy_threshold() -> None:
+async def test_high_confidence_single_candidate_requires_explicit_controls_threshold() -> None:
     credential = _credential().model_copy(update={"provider_id": None})
     inventory = Inventory(credential, repository="example/mailer")
     incidents = Incidents()
@@ -225,7 +224,7 @@ async def test_high_confidence_single_candidate_requires_explicit_policy_thresho
         inventory,
         RunWorkflow(MemoryRunRepository(), clock=lambda: NOW),
     )
-    automation = IncidentAutomation(service, inventory, Policies(_policy()))
+    automation = IncidentAutomation(service, inventory, Controls(_controls()))
     event = (
         ProviderSource()
         .normalise(
@@ -368,12 +367,16 @@ class Inventory:
         )
 
 
-class Policies:
-    def __init__(self, policy: PolicyVersion) -> None:
-        self.policy = policy
+class Controls:
+    def __init__(self, controls: ControlVersion) -> None:
+        self.controls = controls
 
-    async def get_version(self, organisation_id: str, version_id: str) -> PolicyVersion:
-        return self.policy
+    async def get_control_version(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion:
+        assert credential_id == self.controls.credential_id
+        assert version_id == self.controls.id
+        return self.controls
 
 
 def _credential() -> ManagedCredential:
@@ -387,14 +390,14 @@ def _credential() -> ManagedCredential:
         kind="api-key",
         display_name="Production mailer",
         provider_id="provider-key-one",
-        policy_version="policy_one",
+        control_version="control_one",
         created_at=NOW,
         updated_at=NOW,
     )
 
 
-def _policy() -> PolicyVersion:
-    definition = PolicyDefinition(
+def _controls() -> ControlVersion:
+    definition = ControlDefinition(
         required_checks=REQUIRED_CHECKS,
         allowed_tools=frozenset({"verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
@@ -403,16 +406,13 @@ def _policy() -> PolicyVersion:
         emergency_triggers=frozenset({"credential-exposure-detected"}),
         minimum_automatic_confidence=Confidence.HIGH,
     )
-    return PolicyVersion(
-        id="policy_one",
+    return ControlVersion(
+        id="control_one",
         organisation_id="org_one",
-        policy_id="policy_root",
+        credential_id="credential_one",
         number=1,
         definition=definition,
         digest=digest(definition),
-        state=PolicyState.ACTIVE,
         created_by="admin_one",
         created_at=NOW,
-        approved_by="admin_two",
-        approved_at=NOW,
     )

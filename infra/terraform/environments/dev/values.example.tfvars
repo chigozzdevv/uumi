@@ -9,7 +9,7 @@ gateway_users             = ["group:firekey-operators@example.com"]
 
 identity_platform_domains = ["app.example.com"]
 
-workflow_organisations        = ["org_replace"]
+workflow_organisations = ["org_replace"]
 workload_identity_service_accounts = [
   "projects/customer-project/serviceAccounts/firekey-connection@customer-project.iam.gserviceaccount.com"
 ]

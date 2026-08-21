@@ -1,13 +1,12 @@
 from datetime import UTC, datetime
 
 from contracts import (
+    ControlDefinition,
+    ControlVersion,
     HttpAuth,
     HttpAuthScheme,
     HttpOperation,
     HttpProviderApi,
-    PolicyDefinition,
-    PolicyState,
-    PolicyVersion,
     RecoveryMode,
     RotationRun,
     Stage,
@@ -48,33 +47,37 @@ def make_http_provider_api(
             path="/api_keys/{provider_id}",
             success_statuses=(204,),
         ),
+        test_credential=HttpOperation(
+            method="GET",
+            path="/scopes",
+            success_statuses=(200,),
+        ),
+        credential_auth=HttpAuth(scheme=HttpAuthScheme.BEARER),
     )
 
 
-def make_policy_version(
+def make_control_version(
     organisation_id: str = "org_one",
-    version_id: str = "policy_one",
+    version_id: str = "control_one",
+    credential_id: str = "cred_one",
     now: datetime | None = None,
-) -> PolicyVersion:
+) -> ControlVersion:
     current = now or datetime.now(UTC)
-    definition = PolicyDefinition(
+    definition = ControlDefinition(
         required_checks=REQUIRED_CHECKS,
         allowed_tools=frozenset({"provider.create", "verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
         maximum_observation_seconds=1800,
     )
-    return PolicyVersion(
+    return ControlVersion(
         id=version_id,
         organisation_id=organisation_id,
-        policy_id="policy_default",
+        credential_id=credential_id,
         number=1,
         definition=definition,
         digest=digest(definition),
-        state=PolicyState.ACTIVE,
         created_by="admin_one",
         created_at=current,
-        approved_by="approver_one",
-        approved_at=current,
     )
 
 
@@ -92,7 +95,7 @@ def make_run(now: datetime | None = None) -> RotationRun:
             urgency="routine",
             received_at=current,
         ),
-        policy_version="policy_one",
+        control_version="control_one",
         created_at=current,
         updated_at=current,
     )

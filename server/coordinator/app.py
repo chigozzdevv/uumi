@@ -11,6 +11,7 @@ from agents.storage import AgentRepository
 from broker import CapabilitySigner, ConnectorRegistry
 from broker.evidence import GcsEvidenceSink
 from browser.compute import BrowserVmManager
+from browser.secret import BrowserSecretAccessService
 from browser.service import BrowserService
 from browser.storage import FirestoreBrowserRepository
 from connectors.cloudrun import CloudRunConnector
@@ -114,6 +115,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     agent_runtime = AgentRuntimeService(fleet, continuity, google, settings.project_id, _now)
     browser_service = BrowserService(FirestoreBrowserRepository(firestore), _now)
+
+    async def load_signer() -> CapabilitySigner:
+        return signer
+
+    secret_access = BrowserSecretAccessService(catalog, google, load_signer, _now)
     browser = BrowserStepExecutor(
         catalog,
         browser_service,
@@ -126,8 +132,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             settings.evidence_bucket,
             settings.region,
             settings.browser_image,
+            settings.model_armor_template,
         ),
         signer,
+        secret_access=secret_access,
     )
     verifier = VerificationService(
         FirestoreVerificationRepository(firestore),

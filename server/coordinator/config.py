@@ -15,6 +15,7 @@ class CoordinatorSettings(BaseSettings):
     capability_secret: str = Field(default="", min_length=20)
     oidc_audience: str = Field(default="", min_length=8)
     browser_image: str = Field(default="", min_length=20)
+    model_armor_template: str = Field(default="", min_length=20)
 
     @model_validator(mode="after")
     def validate_runtime(self) -> "CoordinatorSettings":
@@ -28,6 +29,7 @@ class CoordinatorSettings(BaseSettings):
             self.capability_secret,
             self.oidc_audience,
             self.browser_image,
+            self.model_armor_template,
         )
         if not all(required):
             raise ValueError("coordinator runtime configuration is incomplete")
@@ -35,4 +37,6 @@ class CoordinatorSettings(BaseSettings):
             raise ValueError("capability secret must be a full Secret Manager version")
         if not self.browser_template.startswith("projects/"):
             raise ValueError("browser template must be a full Compute Engine resource")
+        if not self.model_armor_template.startswith("projects/"):
+            raise ValueError("Model Armor template must be a full resource name")
         return self

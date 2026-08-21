@@ -261,7 +261,7 @@ class Inventory:
                 provider="sendgrid",
                 kind="api-key",
                 display_name="Mailer",
-                policy_version="policy_one",
+                control_version="policy_one",
                 created_at=NOW,
                 updated_at=NOW,
             ),

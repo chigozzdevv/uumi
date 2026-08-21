@@ -15,7 +15,7 @@ def anyio_backend() -> str:
 
 class Runtime:
     async def publish(self) -> PublishResponse:
-        return PublishResponse(claimed=3, published=2, failed=1)
+        return PublishResponse(claimed=3, published=2, failed=1, dead_lettered=0)
 
 
 async def test_publish_endpoint_reports_delivery_summary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -25,7 +25,12 @@ async def test_publish_endpoint_reports_delivery_summary(monkeypatch: pytest.Mon
         response = await client.post("/publish")
 
     assert response.status_code == 200
-    assert response.json() == {"claimed": 3, "published": 2, "failed": 1}
+    assert response.json() == {
+        "claimed": 3,
+        "published": 2,
+        "failed": 1,
+        "dead_lettered": 0,
+    }
 
 
 async def test_live_endpoint_has_no_provider_dependency() -> None:

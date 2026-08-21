@@ -5,11 +5,10 @@ import pytest
 from contracts import (
     AgentResult,
     AgentTask,
+    ControlDefinition,
+    ControlVersion,
     CredentialGeneration,
     GenerationState,
-    PolicyDefinition,
-    PolicyState,
-    PolicyVersion,
     RunStatus,
     Stage,
     StageExecutionRequest,
@@ -216,7 +215,7 @@ async def test_coordinator_executes_trigger_stage() -> None:
             "status": RunStatus.RUNNING,
             "revision": 1,
             "fencing_token": 1,
-            "policy_version": "pol_ver_1",
+            "control_version": "pol_ver_1",
             "lease": Lease(
                 owner_id="worker_1", fencing_token=1, expires_at=NOW + timedelta(hours=1)
             ),
@@ -226,26 +225,25 @@ async def test_coordinator_executes_trigger_stage() -> None:
     from policy import digest
     from policy.rules import REQUIRED_CHECKS
 
-    policy_def = PolicyDefinition(
+    controls_definition = ControlDefinition(
         required_checks=REQUIRED_CHECKS,
         allowed_tools=frozenset({"provider.createCredential", "verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
         maximum_observation_seconds=1800,
     )
-    policy_ver = PolicyVersion(
+    controls_version = ControlVersion(
         id="pol_ver_1",
-        policy_id="policy_1",
         organisation_id="org_one",
+        credential_id=run.credential_id,
         number=1,
-        definition=policy_def,
-        digest=digest(policy_def),
-        state=PolicyState.ACTIVE,
+        definition=controls_definition,
+        digest=digest(controls_definition),
         created_by="admin_one",
         created_at=NOW,
-        approved_by="admin_two",
-        approved_at=NOW,
     )
-    catalog.store[FirestorePaths.policy_version("org_one", "pol_ver_1")] = policy_ver.model_dump()
+    catalog.store[FirestorePaths.control_version("org_one", run.credential_id, "pol_ver_1")] = (
+        controls_version.model_dump()
+    )
     catalog.store[FirestorePaths.run("org_one", "run_one")] = run.model_dump()
     catalog.store[FirestorePaths.dedupe("org_one", run.trigger.source, run.trigger.event_id)] = {
         "run_id": "run_one"

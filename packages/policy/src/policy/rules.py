@@ -28,7 +28,7 @@ REQUIRED_CHECKS: dict[Stage, frozenset[str]] = {
     Stage.PLAN: frozenset(
         {
             "plan-bound",
-            "policy-approved",
+            "controls-pinned",
             "plan-hashed",
             "recovery-ready",
         }

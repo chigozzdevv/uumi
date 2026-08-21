@@ -62,6 +62,8 @@ class FirestoreAuditOutboxRepository:
             snapshot = await reference.get(transaction=transaction)
             cursor = await cursor_ref.get(transaction=transaction)
             current = AuditOutbox.model_validate(_data(snapshot))
+            if current.dead_lettered_at is not None:
+                raise ResourceConflictError("audit event is dead-lettered")
             if current.logged_at is not None:
                 if current.provider_receipt == receipt:
                     return
@@ -93,6 +95,53 @@ class FirestoreAuditOutboxRepository:
 
         await apply(self._client.transaction(max_attempts=5))
 
+    async def mark_dead_letter(
+        self,
+        claim: AuditClaim,
+        owner_id: str,
+        error: str,
+        dead_lettered_at: datetime,
+    ) -> None:
+        reference = self._client.document(claim.path)
+        event = claim.outbox.event
+        cursor_ref = self._client.document(FirestorePaths.audit_delivery(event.organisation_id))
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> None:
+            snapshot = await reference.get(transaction=transaction)
+            cursor = await cursor_ref.get(transaction=transaction)
+            current = AuditOutbox.model_validate(_data(snapshot))
+            if current.dead_lettered_at is not None:
+                return
+            if current.logged_at is not None:
+                raise ResourceConflictError("audit event is already logged")
+            _owned(current, owner_id)
+            if _logged_sequence(cursor) != current.event.sequence - 1:
+                raise ResourceConflictError("audit event is not next for its organisation")
+            changed = current.model_copy(
+                update={
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "dead_lettered_at": dead_lettered_at,
+                    "dead_letter_reason": error,
+                    "last_error": error,
+                }
+            )
+            transaction.set(reference, encode(changed))
+            transaction.set(
+                cursor_ref,
+                {
+                    "organisation_id": event.organisation_id,
+                    "logged_sequence": event.sequence,
+                    "event_id": event.id,
+                    "event_hash": event.event_hash,
+                    "dead_lettered_at": dead_lettered_at,
+                    "last_error": error,
+                },
+            )
+
+        await apply(self._client.transaction(max_attempts=5))
+
     async def mark_failed(
         self,
         claim: AuditClaim,
@@ -106,7 +155,7 @@ class FirestoreAuditOutboxRepository:
         async def apply(transaction: AsyncTransaction) -> None:
             snapshot = await reference.get(transaction=transaction)
             current = AuditOutbox.model_validate(_data(snapshot))
-            if current.logged_at is not None:
+            if current.logged_at is not None or current.dead_lettered_at is not None:
                 return
             _owned(current, owner_id)
             changed = current.model_copy(
@@ -138,7 +187,11 @@ class FirestoreAuditOutboxRepository:
                 FirestorePaths.audit_delivery(current.event.organisation_id)
             )
             cursor = await cursor_ref.get(transaction=transaction)
-            if current.logged_at is not None or current.available_at > now:
+            if (
+                current.logged_at is not None
+                or current.dead_lettered_at is not None
+                or current.available_at > now
+            ):
                 return None
             if current.lease_expires_at is not None and current.lease_expires_at > now:
                 return None

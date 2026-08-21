@@ -10,16 +10,22 @@ from contracts import (
     ConnectionStatus,
     ConsumerBinding,
     ConsumerService,
+    ControlPreferences,
+    ControlVersion,
     CredentialGeneration,
     Environment,
+    FunctionalVerification,
     GenerationState,
     ManagedCredential,
     PageCheckpoint,
     Playbook,
     PlaybookDraft,
+    PlaybookEffect,
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
+    ProbeKind,
+    ProbeVersion,
     SecureField,
     Selector,
     SelectorKind,
@@ -38,6 +44,13 @@ NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 class Catalog:
     def __init__(self) -> None:
         self.version: PlaybookVersion | None = None
+        self.playbook: Playbook | None = None
+        self.credential_values: tuple[ManagedCredential, ...] = ()
+        self.binding_values: tuple[ConsumerBinding, ...] = ()
+        self.archived_resources: tuple[
+            Connection | Application | Environment | ConsumerService | ManagedCredential, ...
+        ] = ()
+        self.archived_bindings: tuple[ConsumerBinding, ...] = ()
         self.connection_values: dict[str, Connection] = {
             "provider_one": _api_connection("provider_one", ConnectionRole.PROVIDER),
             "secret_one": _api_connection("secret_one", ConnectionRole.SECRET_STORE),
@@ -61,9 +74,11 @@ class Catalog:
             name=definition.name,
             platform=definition.platform,
             latest_version=1,
+            latest_version_id=version_id,
             created_at=created_at,
             updated_at=created_at,
         )
+        self.playbook = root
         self.version = PlaybookVersion(
             id=version_id,
             organisation_id=organisation_id,
@@ -80,6 +95,14 @@ class Catalog:
 
     async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]:
         return ()
+
+    async def get(self, organisation_id: str, playbook_id: str) -> Playbook:
+        assert self.playbook is not None
+        return self.playbook
+
+    async def replace(self, value: Playbook, expected_revision: int) -> Playbook:
+        self.playbook = value
+        return value
 
     async def get_version(
         self, organisation_id: str, playbook_id: str, version_id: str
@@ -108,6 +131,43 @@ class Catalog:
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
         return self.connection_values[resource_id]
 
+    async def get_credential(self, organisation_id: str, resource_id: str) -> ManagedCredential:
+        raise ResourceConflictError("credential not found")
+
+    async def get_control_version(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion:
+        raise ResourceConflictError("control version not found")
+
+    async def get_playbook_version(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        version_id: str,
+    ) -> PlaybookVersion:
+        assert self.version is not None
+        return self.version
+
+    async def replace_connection(self, value: Connection, expected_revision: int) -> Connection:
+        self.connection_values[value.id] = value
+        return value
+
+    async def replace_application(self, value: Application, expected_revision: int) -> Application:
+        return value
+
+    async def replace_environment(self, value: Environment, expected_revision: int) -> Environment:
+        return value
+
+    async def replace_service(
+        self, value: ConsumerService, expected_revision: int
+    ) -> ConsumerService:
+        return value
+
+    async def replace_credential(
+        self, value: ManagedCredential, expected_revision: int
+    ) -> ManagedCredential:
+        return value
+
     async def attach_playbook(
         self,
         organisation_id: str,
@@ -124,6 +184,27 @@ class Catalog:
                 "playbook_id": playbook_id,
                 "playbook_version_id": version_id,
                 "status": ConnectionStatus.READY,
+                "updated_at": updated_at,
+                "revision": expected_revision + 1,
+            }
+        )
+        self.connection_values[connection_id] = connection
+        return connection
+
+    async def detach_playbook(
+        self,
+        organisation_id: str,
+        connection_id: str,
+        expected_revision: int,
+        updated_at: datetime,
+    ) -> Connection:
+        connection = self.connection_values[connection_id]
+        assert connection.revision == expected_revision
+        connection = connection.model_copy(
+            update={
+                "playbook_id": None,
+                "playbook_version_id": None,
+                "status": ConnectionStatus.SETUP_REQUIRED,
                 "updated_at": updated_at,
                 "revision": expected_revision + 1,
             }
@@ -184,6 +265,11 @@ class Catalog:
             runtime_connection_id="runtime_one",
             runtime_resource="projects/project-one/locations/us-east1/services/service-one",
             display_name="Service one",
+            verification=FunctionalVerification(
+                kind=ProbeKind.HTTP,
+                target="https://service.example/verify",
+                required_fields={"success": True},
+            ),
             identity="service-one@example.iam.gserviceaccount.com",
             created_at=NOW,
             updated_at=NOW,
@@ -205,11 +291,31 @@ class Catalog:
         credential: ManagedCredential,
         generation: CredentialGeneration,
         bindings: tuple[ConsumerBinding, ...],
+        controls: ControlVersion,
+        probes: tuple[ProbeVersion, ...],
     ) -> ManagedCredential:
         return credential
 
+    async def replace_controls(
+        self,
+        credential: ManagedCredential,
+        expected_revision: int,
+        controls: ControlVersion,
+    ) -> tuple[ManagedCredential, ControlVersion]:
+        return credential, controls
+
+    async def archive_inventory(
+        self,
+        resources: tuple[
+            Connection | Application | Environment | ConsumerService | ManagedCredential, ...
+        ],
+        bindings: tuple[ConsumerBinding, ...],
+    ) -> None:
+        self.archived_resources = resources
+        self.archived_bindings = bindings
+
     async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]:
-        return ()
+        return self.credential_values
 
     async def connections(self, organisation_id: str) -> tuple[Connection, ...]:
         return tuple(self.connection_values.values())
@@ -224,7 +330,7 @@ class Catalog:
         return ()
 
     async def bindings(self, organisation_id: str) -> tuple[ConsumerBinding, ...]:
-        return ()
+        return self.binding_values
 
 
 @pytest.fixture
@@ -253,6 +359,26 @@ async def test_playbook_publishes_then_attaches_to_browser_connection() -> None:
 
 
 @pytest.mark.anyio
+async def test_confirmed_playbook_archive_detaches_browser_connection() -> None:
+    repository = Catalog()
+    repository.connection_values["browser_one"] = _browser_connection()
+    service = PlaybookService(repository, clock=lambda: NOW, inventory=repository)
+    root, version = await service.create_version(
+        "org_one", "playbook_one", "version_one", _draft(), "author_one"
+    )
+    published = await service.publish("org_one", root.id, version.id, "admin_one")
+    await service.attach("org_one", "browser_one", 0, root.id, published.id)
+
+    archived = await service.archive("org_one", root.id, root.revision, cascade=True)
+
+    connection = repository.connection_values["browser_one"]
+    assert archived.archived_at == NOW
+    assert connection.playbook_id is None
+    assert connection.playbook_version_id is None
+    assert connection.status is ConnectionStatus.SETUP_REQUIRED
+
+
+@pytest.mark.anyio
 async def test_playbook_rejects_checkpoints_outside_its_domains() -> None:
     service = PlaybookService(Catalog(), clock=lambda: NOW)
     escaped = _draft().model_copy(update={"login_url_pattern": "https://untrusted.example/login"})
@@ -272,13 +398,13 @@ async def test_inventory_rejects_missing_consumer_binding() -> None:
         organisation_id="org_one",
         connection_id="provider_one",
         secret_store_connection_id="secret_one",
-        secret_reference="projects/project-one/secrets/key",
+        secret_reference="projects/project-one/secrets/key/versions/1",
         provider="provider",
         kind="api-key",
         display_name="Production key",
         consumer_ids=("service_one",),
         active_generation_id="generation_one",
-        policy_version="policy_one",
+        control_version="policy_one",
         created_at=NOW,
         updated_at=NOW,
     )
@@ -293,7 +419,161 @@ async def test_inventory_rejects_missing_consumer_binding() -> None:
     )
 
     with pytest.raises(ResourceConflictError, match="must match"):
-        await service.import_credential(credential, generation, ())
+        await service.import_credential(
+            credential,
+            generation,
+            (),
+            ControlPreferences(
+                automatic_triggers=frozenset({"expiry"}),
+                rotate_before_expiry_seconds=604800,
+                maximum_observation_seconds=1800,
+            ),
+            "actor_one",
+        )
+
+
+@pytest.mark.anyio
+async def test_inventory_compiles_functional_probe_and_recovery_from_service_choices() -> None:
+    repository = Catalog()
+    service = InventoryService(repository, clock=lambda: NOW)
+    credential = ManagedCredential(
+        id="credential_one",
+        organisation_id="org_one",
+        connection_id="provider_one",
+        secret_store_connection_id="secret_one",
+        secret_reference="projects/project-one/secrets/key/versions/1",
+        provider="provider",
+        kind="api-key",
+        display_name="Production key",
+        provider_id="provider_key_one",
+        scopes=frozenset({"messages.write"}),
+        consumer_ids=("service_one",),
+        active_generation_id="generation_one",
+        control_version="control_one",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    generation = CredentialGeneration(
+        id="generation_one",
+        organisation_id="org_one",
+        credential_id=credential.id,
+        provider_id="provider_key_one",
+        state=GenerationState.ACTIVE,
+        attempt_id="attempt_one",
+        secret_reference=credential.secret_reference,
+        created_at=NOW,
+    )
+    binding = ConsumerBinding(
+        id="binding_one",
+        organisation_id="org_one",
+        credential_id=credential.id,
+        service_id="service_one",
+        environment_id="environment_one",
+        runtime_connection_id="runtime_one",
+        runtime_resource="projects/project-one/locations/us-east1/services/service-one",
+        runtime_secret_name="PROVIDER_KEY",
+        secret_reference=credential.secret_reference,
+        current_generation_id=generation.id,
+        verification_id="probe_functional_one",
+    )
+
+    imported = await service.import_credential(
+        credential,
+        generation,
+        (binding,),
+        ControlPreferences(
+            automatic_triggers=frozenset({"expiry"}),
+            rotate_before_expiry_seconds=604800,
+            maximum_observation_seconds=1800,
+        ),
+        "actor_one",
+    )
+
+    assert imported == credential
+
+
+@pytest.mark.anyio
+async def test_confirmed_service_archive_includes_bound_credential_and_binding() -> None:
+    repository = Catalog()
+    credential = ManagedCredential(
+        id="credential_one",
+        organisation_id="org_one",
+        connection_id="provider_one",
+        secret_store_connection_id="secret_one",
+        secret_reference="projects/project-one/secrets/key/versions/1",
+        provider="provider",
+        kind="api-key",
+        display_name="Production key",
+        consumer_ids=("service_one",),
+        active_generation_id="generation_one",
+        control_version="control_one",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    binding = ConsumerBinding(
+        id="binding_one",
+        organisation_id="org_one",
+        credential_id=credential.id,
+        service_id="service_one",
+        environment_id="environment_one",
+        runtime_connection_id="runtime_one",
+        runtime_resource="projects/project-one/locations/us-east1/services/service-one",
+        runtime_secret_name="PROVIDER_KEY",
+        secret_reference=credential.secret_reference,
+        current_generation_id="generation_one",
+        verification_id="probe_functional_one",
+    )
+    repository.credential_values = (credential,)
+    repository.binding_values = (binding,)
+    inventory = InventoryService(repository, clock=lambda: NOW)
+
+    archived = await inventory.archive_service("org_one", "service_one", 0, cascade=True)
+
+    assert archived.archived_at == NOW
+    assert {resource.id for resource in repository.archived_resources} == {
+        "service_one",
+        "credential_one",
+    }
+    assert repository.archived_bindings == (binding,)
+
+
+@pytest.mark.anyio
+async def test_inventory_lists_provider_credential_metadata_without_secret_values() -> None:
+    class Metadata:
+        async def metadata(self, connection: Connection) -> tuple[dict[str, object], ...]:
+            assert connection.id == "provider_one"
+            return (
+                {
+                    "provider_id": "provider-key-one",
+                    "name": "Production key",
+                    "kind": "api-key",
+                    "scopes": ["messages.write"],
+                },
+            )
+
+    repository = Catalog()
+    repository.connection_values["provider_one"] = repository.connection_values[
+        "provider_one"
+    ].model_copy(
+        update={
+            "capabilities": frozenset(
+                {"provider.listCredentialMetadata", "provider.createCredential"}
+            )
+        }
+    )
+    service = InventoryService(repository, provider_metadata=Metadata())
+
+    metadata = await service.list_provider_credentials("org_one", "provider_one")
+
+    assert metadata[0].provider_id == "provider-key-one"
+    assert metadata[0].scopes == ("messages.write",)
+    assert "secret" not in metadata[0].model_dump()
+
+    repository.connection_values["provider_one"] = repository.connection_values[
+        "provider_one"
+    ].model_copy(update={"status": ConnectionStatus.DEGRADED})
+    with pytest.raises(ResourceConflictError, match="not ready"):
+        await service.list_provider_credentials("org_one", "provider_one")
 
 
 @pytest.mark.anyio
@@ -472,6 +752,7 @@ def _draft() -> PlaybookDraft:
             PlaybookStep(
                 id="create_key",
                 stage=Stage.CREATE,
+                effect=PlaybookEffect.CREATE_CREDENTIAL,
                 tool="browser.secure-capture",
                 operation="capture",
                 objective="Create and capture the replacement credential",
@@ -487,6 +768,7 @@ def _draft() -> PlaybookDraft:
             PlaybookStep(
                 id="revoke_key",
                 stage=Stage.REVOKE,
+                effect=PlaybookEffect.REVOKE_CREDENTIAL,
                 tool="browser.click",
                 operation="revoke",
                 objective="Revoke the prior credential",

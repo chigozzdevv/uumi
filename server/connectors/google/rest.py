@@ -1,5 +1,6 @@
 import asyncio
 import re
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import google.auth
@@ -10,6 +11,7 @@ from google.auth.credentials import Credentials
 from google.auth.transport.requests import Request
 
 from connectors.base.errors import ConnectorError
+from connectors.base.result import SecretValue
 
 
 class GoogleRestClient:
@@ -40,6 +42,7 @@ class GoogleRestClient:
         params: dict[str, str] | None = None,
         expected: frozenset[int] = frozenset({200}),
         connection: Connection | None = None,
+        access_token: SecretValue | None = None,
     ) -> dict[str, Any]:
         response = await self.response(
             method,
@@ -50,6 +53,7 @@ class GoogleRestClient:
             params=params,
             expected=expected,
             connection=connection,
+            access_token=access_token,
         )
         if not response.content:
             return {}
@@ -69,8 +73,17 @@ class GoogleRestClient:
         params: dict[str, str] | None = None,
         expected: frozenset[int] = frozenset({200}),
         connection: Connection | None = None,
+        access_token: SecretValue | None = None,
     ) -> httpx.Response:
-        token = await self._token(self._credentials_for(connection))
+        if access_token is not None and connection is None:
+            raise ConnectorError(
+                "google-authorization", "ephemeral access must bind a declared connection"
+            )
+        token = (
+            access_token.bytes().decode("utf-8", errors="strict")
+            if access_token is not None
+            else await self._token(self._credentials_for(connection))
+        )
         request_headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
@@ -120,6 +133,49 @@ class GoogleRestClient:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    async def mint_access_token_for(
+        self,
+        connection: Connection,
+        lifetime_seconds: int = 600,
+    ) -> tuple[SecretValue, datetime]:
+        if not 300 <= lifetime_seconds <= 900:
+            raise ConnectorError(
+                "google-token-lifetime",
+                "ephemeral connection tokens must live between five and fifteen minutes",
+            )
+        if (
+            connection.interface is not ConnectionInterface.API
+            or connection.authorization is not ConnectionAuthorization.WORKLOAD_IDENTITY
+            or connection.authorization_reference is None
+        ):
+            raise ConnectorError(
+                "google-authorization",
+                "ephemeral access requires a workload-identity connection",
+            )
+        principal = _target_principal(connection.authorization_reference)
+        response = await self.request(
+            "POST",
+            f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{principal}:generateAccessToken",
+            json={"scope": list(self._scopes), "lifetime": f"{lifetime_seconds}s"},
+        )
+        token = response.get("accessToken")
+        raw_expiry = response.get("expireTime")
+        if not isinstance(token, str) or not token or not isinstance(raw_expiry, str):
+            raise ConnectorError(
+                "google-token-response", "IAM Credentials returned no ephemeral access token"
+            )
+        try:
+            expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ConnectorError(
+                "google-token-response", "IAM Credentials returned an invalid token expiry"
+            ) from error
+        if expires_at.tzinfo is None or expires_at <= datetime.now(UTC):
+            raise ConnectorError(
+                "google-token-response", "IAM Credentials returned an expired access token"
+            )
+        return SecretValue(token.encode()), expires_at
 
     def _credentials_for(self, connection: Connection | None) -> Credentials:
         if connection is None:

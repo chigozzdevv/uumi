@@ -32,7 +32,6 @@ from api.routes import (
     notifications_router,
     overview_router,
     playbooks_router,
-    policies_router,
     probes_router,
     runs_router,
     walkthroughs_router,
@@ -50,7 +49,6 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.include_router(inventory_router)
     app.include_router(notifications_router)
     app.include_router(playbooks_router)
-    app.include_router(policies_router)
     app.include_router(probes_router)
     app.include_router(approvals_router)
     app.include_router(agents_router)
@@ -60,7 +58,7 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.include_router(audit_router)
     app.include_router(overview_router)
     app.add_exception_handler(FireKeyError, _firekey_error)
-    app.add_exception_handler(PolicyViolationError, _policy_error)
+    app.add_exception_handler(PolicyViolationError, _controls_error)
     instrument(app, "firekey-api")
     return app
 
@@ -99,9 +97,9 @@ async def _firekey_error(request: Request, error: Exception) -> JSONResponse:
     )
 
 
-async def _policy_error(request: Request, error: Exception) -> JSONResponse:
+async def _controls_error(request: Request, error: Exception) -> JSONResponse:
     del request
-    return _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "policy-rejected", str(error))
+    return _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "controls-rejected", str(error))
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:

@@ -240,7 +240,7 @@ def _credential(credential_id: str, provider_id: str) -> ManagedCredential:
         display_name=credential_id,
         provider_id=provider_id,
         consumer_ids=("service_one",),
-        policy_version="policy_one",
+        control_version="policy_one",
         created_at=NOW,
         updated_at=NOW,
     )

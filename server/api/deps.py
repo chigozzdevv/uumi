@@ -10,11 +10,13 @@ from agents.storage import AgentRepository
 from broker import CapabilitySigner
 from browser.access import BrowserAccessService
 from browser.compute import BrowserVmManager
+from browser.secret import BrowserSecretAccessService
 from browser.service import BrowserService
 from browser.setup import BrowserSetupApi, BrowserSetupService, WorkflowRunResumer
 from browser.storage import FirestoreBrowserRepository
 from connectors.github import GitHubOnboardingConnector
 from connectors.google import GoogleRestClient
+from connectors.http import HttpProviderConnector
 from connectors.secrets import SecretManagerConnector
 from connectors.storage import GcsUploadConnector
 from connectors.video import VideoIntelligenceConnector
@@ -37,7 +39,6 @@ from core.inventory import InventoryService
 from core.notification import NotificationService
 from core.overview import OverviewService
 from core.playbook import PlaybookService, WalkthroughService
-from core.policy import PolicyService
 from core.storage import (
     FirestoreApprovalRepository,
     FirestoreAuditRepository,
@@ -46,7 +47,6 @@ from core.storage import (
     FirestoreInventoryRepository,
     FirestoreNotificationRepository,
     FirestorePlaybookRepository,
-    FirestorePolicyRepository,
     FirestoreProbeRepository,
     FirestoreRunRepository,
     FirestoreWalkthroughRepository,
@@ -71,7 +71,6 @@ class ApiServices:
     agent_repository: AgentRepository | None = None
     agent_continuity: AgentContinuityService | None = None
     walkthroughs: WalkthroughService | None = None
-    policies: PolicyService | None = None
     probes: ProbeService | None = None
     notifications: NotificationService | None = None
     audit: AuditWriter | None = None
@@ -120,6 +119,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             configured.browser_worker_image,
             configured.capability_public_key,
             configured.evidence_bucket,
+            configured.model_armor_template,
         )
     ):
         browser_setup = BrowserSetupService(
@@ -134,6 +134,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
                 configured.evidence_bucket,
                 configured.region,
                 configured.browser_worker_image,
+                configured.model_armor_template,
             ),
             secret_manager,
             configured.browser_gateway_url,
@@ -171,7 +172,12 @@ def build_services(settings: Settings | None = None) -> ApiServices:
                 GoogleTokenVerifier(configured.oidc_audience),
             )
         ),
-        inventory=InventoryService(inventory_repository),
+        inventory=InventoryService(
+            inventory_repository,
+            _now,
+            provider_metadata=HttpProviderConnector(secret_manager),
+            secret_metadata=secret_manager,
+        ),
         playbooks=PlaybookService(
             FirestorePlaybookRepository(client),
             _now,
@@ -192,6 +198,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             load_signer,
             configured.browser_gateway_url,
             _now,
+            BrowserSecretAccessService(FirestoreCatalog(client), google, load_signer, _now),
         ),
         agents=AgentRuntimeService(
             AgentFleetService(agent_repository),
@@ -209,7 +216,6 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             configured.walkthrough_bucket,
             _now,
         ),
-        policies=PolicyService(FirestorePolicyRepository(client), _now),
         probes=ProbeService(FirestoreProbeRepository(client), _now),
         notifications=notifications,
         audit=audit,

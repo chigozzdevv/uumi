@@ -68,8 +68,8 @@ class RotationMachine:
         bindings: StageBindings | None = None,
     ) -> RotationRun:
         self._control(run, fencing_token, expected_revision, now)
-        if run.status not in {RunStatus.RUNNING, RunStatus.RECOVERING}:
-            raise TransitionRejectedError("a paused or terminal run cannot advance")
+        if run.status is not RunStatus.RUNNING:
+            raise TransitionRejectedError("only normally running work can advance")
         if proof.run_id != run.id or proof.organisation_id != run.organisation_id:
             raise TransitionRejectedError("proof belongs to a different run")
         if proof.stage is not run.stage:
@@ -171,7 +171,7 @@ class RotationMachine:
         expected_revision: int,
         now: datetime,
     ) -> RotationRun:
-        self._control(run, fencing_token, expected_revision, now)
+        self._interrupt_control(run, fencing_token, expected_revision, now)
         if run.status not in {RunStatus.RUNNING, RunStatus.RECOVERING, RunStatus.PAUSED}:
             raise TransitionRejectedError("terminal work cannot enter cleanup")
         return self._update(run, now, status=RunStatus.CLEANUP, failure=failure)
@@ -184,9 +184,9 @@ class RotationMachine:
         expected_revision: int,
         now: datetime,
     ) -> RotationRun:
-        self._control(run, fencing_token, expected_revision, now)
-        if run.status in {RunStatus.COMPLETED, RunStatus.FAILED}:
+        if run.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.COMPENSATED}:
             raise TransitionRejectedError("terminal work cannot fail again")
+        self._interrupt_control(run, fencing_token, expected_revision, now)
         changes: dict[str, object] = {
             "status": RunStatus.FAILED,
             "failure": failure,
@@ -288,6 +288,21 @@ class RotationMachine:
             raise LeaseConflictError("stale fencing token")
         if run.lease.expires_at <= now:
             raise LeaseConflictError("lease has expired")
+
+    def _interrupt_control(
+        self,
+        run: RotationRun,
+        fencing_token: int,
+        expected_revision: int,
+        now: datetime,
+    ) -> None:
+        self._revision(run, expected_revision)
+        if run.lease is None:
+            raise LeaseConflictError("run has no active lease")
+        if run.lease.expires_at <= now:
+            return
+        if run.lease.fencing_token != fencing_token:
+            raise LeaseConflictError("stale fencing token")
 
     @staticmethod
     def _future(expires_at: datetime, now: datetime) -> None:

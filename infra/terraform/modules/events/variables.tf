@@ -54,6 +54,34 @@ variable "ingestion_uri" {
   nullable    = true
 }
 
+variable "api_uri" {
+  description = "Cloud Run API URI used by the expired-run reaper."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "reaper_service_account" {
+  description = "Workflow service account used for authenticated run-reaper requests."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "reaper_organisations" {
+  description = "FireKey organisations whose expired run leases are reconciled."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for organisation in var.reaper_organisations :
+      can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation))
+    ])
+    error_message = "Reaper organisations require valid FireKey identifiers."
+  }
+}
+
 variable "notification_name" {
   description = "Cloud Run notification worker service name."
   type        = string

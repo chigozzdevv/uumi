@@ -56,8 +56,10 @@ place private or HMAC values in Terraform variables, plans, state, commands, or 
 
 For each Google API connection, create a customer-managed service account with only the roles
 needed on that connection's declared resources. Add its full resource name to
-`workload_identity_service_accounts`. Terraform grants only the FireKey broker, isolated browser
-capture worker, and coordinator permission to impersonate that identity. Store
+`workload_identity_service_accounts`. Terraform grants only the FireKey API, broker, and
+coordinator permission to impersonate that identity. A browser worker receives an encrypted,
+short-lived token for its selected secret-store connection only when Secure Capture or authorised
+takeover needs it; the worker never receives impersonation permission. Store
 `workload-identity://SERVICE_ACCOUNT_EMAIL` as the connection's authorisation reference; it is
 identity metadata, not a credential. FireKey uses that selected identity for runtime,
 secret-store, telemetry, detection, and verification calls and rejects fallback to its own process

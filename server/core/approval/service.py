@@ -94,6 +94,8 @@ class ApprovalService:
         token: str,
     ) -> ApprovalCapability:
         now = self._clock()
+        if action.plan_hash != plan_hash or action.evidence_hash != evidence_hash:
+            raise ApprovalError("approval hashes do not match the protected action")
         if expires_at <= now:
             raise ApprovalError("approval expiry must be in the future")
         if len(token) < 43 or not token.replace("-", "").replace("_", "").isalnum():
@@ -196,6 +198,8 @@ class ApprovalService:
         evidence_hash: str,
         actor_id: str = "coordinator_one",
     ) -> Approval:
+        if action.plan_hash != plan_hash or action.evidence_hash != evidence_hash:
+            raise ApprovalError("approval hashes do not match the protected action")
         consumed = await self._repository.consume(
             organisation_id,
             approval_id,

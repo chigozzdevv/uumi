@@ -24,6 +24,7 @@ class BrowserVmManager:
         evidence_bucket: str,
         region: str,
         worker_image: str,
+        model_armor_template: str,
     ) -> None:
         self._client = client
         self._project = project_id
@@ -33,6 +34,7 @@ class BrowserVmManager:
         self._evidence = evidence_bucket
         self._region = region
         self._image = worker_image
+        self._model_armor_template = model_armor_template
 
     async def create(
         self,
@@ -60,6 +62,10 @@ class BrowserVmManager:
             {"key": "firekey-evidence", "value": self._evidence},
             {"key": "firekey-region", "value": self._region},
             {"key": "firekey-worker-image", "value": self._image},
+            {
+                "key": "firekey-model-armor-template",
+                "value": self._model_armor_template,
+            },
         ]
         if setup_token_hash is not None:
             if not re.fullmatch(r"[a-f0-9]{64}", setup_token_hash):

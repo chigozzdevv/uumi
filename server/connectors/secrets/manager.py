@@ -15,6 +15,7 @@ class SecretManagerConnector:
     tools = frozenset(
         {
             "secretStore.getVersion",
+            "secretStore.testConsumerAccess",
             "secretStore.disableVersion",
             "secretStore.destroyVersion",
         }
@@ -38,6 +39,32 @@ class SecretManagerConnector:
                 connection=connection,
             )
             return ConnectorResponse(result=_metadata(response))
+        if tool == "secretStore.testConsumerAccess":
+            identity = payload.get("consumer_identity")
+            if not isinstance(identity, str) or not identity:
+                raise ConnectorError("invalid-parameter", "consumer_identity is required")
+            consumer = connection.model_copy(
+                update={"authorization_reference": f"workload-identity://{identity}"}
+            )
+            token, expires_at = await self._client.mint_access_token_for(consumer)
+            try:
+                secret = await self._access(version, connection, token)
+                try:
+                    if not secret.bytes():
+                        raise ConnectorError(
+                            "secret-read-failed", "Secret Manager returned an empty secret"
+                        )
+                finally:
+                    secret.clear()
+            finally:
+                token.clear()
+            return ConnectorResponse(
+                result={
+                    "accessible": True,
+                    "consumer_identity": identity,
+                    "authorization_expires_at": expires_at.isoformat(),
+                }
+            )
         if tool == "secretStore.disableVersion":
             response = await self._client.request(
                 "POST",
@@ -64,20 +91,23 @@ class SecretManagerConnector:
         connection: "Connection",
         secret: str,
         value: SecretValue,
+        access_token: SecretValue | None = None,
     ) -> dict[str, Any]:
-        return await self._add_version(secret, value, connection)
+        return await self._add_version(secret, value, connection, access_token)
 
     async def _add_version(
         self,
         secret: str,
         value: SecretValue,
         connection: "Connection | None" = None,
+        access_token: SecretValue | None = None,
     ) -> dict[str, Any]:
         response = await self._client.request(
             "POST",
             f"https://secretmanager.googleapis.com/v1/{secret}:addVersion",
             json={"payload": {"data": base64.b64encode(value.bytes()).decode()}},
             connection=connection,
+            access_token=access_token,
         )
         name = response.get("name")
         if not isinstance(name, str):
@@ -86,8 +116,22 @@ class SecretManagerConnector:
         return {"secret_reference": name, "fingerprint": checksum, **_metadata(response)}
 
     async def access(self, version: str) -> SecretValue:
+        return await self._access(version)
+
+    async def access_for(self, connection: "Connection", version: str) -> SecretValue:
+        return await self._access(version, connection)
+
+    async def _access(
+        self,
+        version: str,
+        connection: "Connection | None" = None,
+        access_token: SecretValue | None = None,
+    ) -> SecretValue:
         response = await self._client.request(
-            "GET", f"https://secretmanager.googleapis.com/v1/{version}:access"
+            "GET",
+            f"https://secretmanager.googleapis.com/v1/{version}:access",
+            connection=connection,
+            access_token=access_token,
         )
         payload = response.get("payload")
         data = payload.get("data") if isinstance(payload, dict) else None
@@ -110,6 +154,53 @@ class SecretManagerConnector:
         secret: str,
     ) -> tuple[dict[str, Any], ...]:
         return await self._versions(secret, connection)
+
+    async def resources_for(
+        self,
+        connection: "Connection",
+    ) -> tuple[dict[str, Any], ...]:
+        parents = tuple(
+            dict.fromkeys(
+                boundary.partition("/secrets")[0]
+                for boundary in connection.allowed_resources
+                if boundary.startswith("projects/") and "/secrets" in boundary
+            )
+        )
+        values: list[dict[str, Any]] = []
+        for parent in parents:
+            token: str | None = None
+            while True:
+                params = {"pageSize": "100"}
+                if token:
+                    params["pageToken"] = token
+                response = await self._client.request(
+                    "GET",
+                    f"https://secretmanager.googleapis.com/v1/{parent}/secrets",
+                    params=params,
+                    connection=connection,
+                )
+                resources = response.get("secrets", [])
+                if not isinstance(resources, list) or not all(
+                    isinstance(item, dict) for item in resources
+                ):
+                    raise ConnectorError(
+                        "secret-list-failed", "Secret Manager returned invalid secret metadata"
+                    )
+                values.extend(
+                    item
+                    for item in resources
+                    if isinstance(item.get("name"), str)
+                    and any(
+                        item["name"] == boundary
+                        or item["name"].startswith(boundary.rstrip("/") + "/")
+                        for boundary in connection.allowed_resources
+                    )
+                )
+                next_token = response.get("nextPageToken")
+                if not isinstance(next_token, str) or not next_token:
+                    break
+                token = next_token
+        return tuple(values)
 
     async def _versions(
         self,
@@ -140,13 +231,15 @@ class SecretManagerConnector:
         self,
         connection: "Connection",
         version: str,
+        access_token: SecretValue | None = None,
     ) -> dict[str, Any]:
-        return await self._disable(version, connection)
+        return await self._disable(version, connection, access_token)
 
     async def _disable(
         self,
         version: str,
         connection: "Connection | None" = None,
+        access_token: SecretValue | None = None,
     ) -> dict[str, Any]:
         if not version.startswith("projects/") or "/versions/" not in version:
             raise ConnectorError(
@@ -157,6 +250,7 @@ class SecretManagerConnector:
             f"https://secretmanager.googleapis.com/v1/{version}:disable",
             json={},
             connection=connection,
+            access_token=access_token,
         )
         return _metadata(response)
 

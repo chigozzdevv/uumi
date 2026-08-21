@@ -6,7 +6,7 @@ import hmac
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 
 from broker import CapabilityClaims, CapabilityVerifier
@@ -22,6 +22,10 @@ from contracts import (
     BrowserAction,
     BrowserActionKind,
     BrowserPolicy,
+    BrowserSecretAccessEnvelope,
+    BrowserSecretAccessReceipt,
+    BrowserSecretKey,
+    BrowserSecretKeyRequest,
     BrowserSession,
     BrowserStatus,
     Connection,
@@ -39,6 +43,7 @@ from core.storage import FirestoreCatalog, FirestoreInventoryRepository
 from core.storage.paths import FirestorePaths
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import FastAPI, Header, Request, WebSocket
 from fastapi.responses import JSONResponse
 from google.cloud.firestore_v1 import AsyncClient
@@ -52,6 +57,7 @@ from browser.auth import BrowserAuthBroker, filter_storage_state, validate_stora
 from browser.driver import AuthenticationRequiredError, BrowserDriver
 from browser.model import ComputerProposal, ComputerUseClient
 from browser.replay import ReplayRecorder
+from browser.secret import associated_data
 from browser.service import BrowserService
 from browser.storage import FirestoreBrowserRepository
 from browser.worker import ComputerUseWorker, ProposedBrowserAction
@@ -68,6 +74,7 @@ class WorkerSettings(BaseSettings):
     evidence_bucket: str = Field(min_length=3)
     region: str = Field(min_length=3, max_length=32)
     model: str = "gemini-3.7-flash"
+    model_armor_template: str = Field(min_length=20)
     setup: bool = False
     setup_token_hash: str = ""
     setup_domains: str = ""
@@ -153,8 +160,33 @@ class WorkerRuntime:
         self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
         self.pending: dict[str, tuple[ProposedBrowserAction, PlaybookStep]] = {}
         self.continuations: dict[str, tuple[ComputerProposal, dict[str, str | int | bool]]] = {}
+        self.seen_nonces: dict[str, int] = {}
+        self.secret_access: SecretValue | None = None
+        self.secret_access_expires_at: datetime | None = None
+
+    def replace_secret_access(self, value: SecretValue, expires_at: datetime) -> None:
+        self.clear_secret_access()
+        self.secret_access = value
+        self.secret_access_expires_at = expires_at
+
+    def require_secret_access(self) -> SecretValue:
+        if (
+            self.secret_access is None
+            or self.secret_access_expires_at is None
+            or self.secret_access_expires_at <= _now()
+        ):
+            self.clear_secret_access()
+            raise CapabilityError("browser secret-store authorization is missing or expired")
+        return self.secret_access
+
+    def clear_secret_access(self) -> None:
+        if self.secret_access is not None:
+            self.secret_access.clear()
+        self.secret_access = None
+        self.secret_access_expires_at = None
 
     async def close(self) -> None:
+        self.clear_secret_access()
         await self.browser.close()
         await self.playwright.stop()
         self.firestore.close()  # type: ignore[no-untyped-call]
@@ -222,7 +254,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         new_id,
     )
     worker = ComputerUseWorker(
-        ComputerUseClient(google, settings.project_id, settings.model),
+        ComputerUseClient(
+            google,
+            settings.project_id,
+            settings.model_armor_template,
+            settings.model,
+        ),
         driver,
         sessions,
         capture,
@@ -362,6 +399,80 @@ async def live() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/v1/access/key", response_model=BrowserSecretKey)
+async def secret_key(
+    body: BrowserSecretKeyRequest,
+    capability: Capability,
+    request: Request,
+) -> BrowserSecretKey:
+    runtime = _runtime(request)
+    session, _, _ = await _authorise(
+        runtime,
+        capability,
+        "browser.secret-key",
+        body.model_dump(mode="json"),
+    )
+    _validate_secret_binding(session, body.secret_store_connection_id, body.secret_resource)
+    public = runtime.private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return BrowserSecretKey(public_key=public.decode())
+
+
+@app.post("/v1/access/secret", response_model=BrowserSecretAccessReceipt)
+async def install_secret_access(
+    body: BrowserSecretAccessEnvelope,
+    capability: Capability,
+    request: Request,
+) -> BrowserSecretAccessReceipt:
+    runtime = _runtime(request)
+    session, _, _ = await _authorise(
+        runtime,
+        capability,
+        "browser.secret-access",
+        body.model_dump(mode="json"),
+    )
+    _validate_secret_binding(session, body.secret_store_connection_id, body.secret_resource)
+    now = _now()
+    if body.expires_at <= now or body.expires_at > min(
+        session.expires_at, now + timedelta(minutes=15)
+    ):
+        raise CapabilityError("browser secret-store authorization expiry is invalid")
+    encrypted_key = _decode_envelope(body.encrypted_key, "encrypted key", 384)
+    nonce = bytearray(_decode_envelope(body.nonce, "nonce", 12))
+    ciphertext = _decode_envelope(body.ciphertext, "ciphertext")
+    aes_key = bytearray(
+        runtime.private_key.decrypt(
+            encrypted_key,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+    )
+    plaintext = bytearray()
+    try:
+        plaintext.extend(
+            AESGCM(bytes(aes_key)).decrypt(bytes(nonce), ciphertext, associated_data(body))
+        )
+        if not plaintext or len(plaintext) > 4096:
+            raise CapabilityError("browser secret-store authorization is invalid")
+        runtime.replace_secret_access(SecretValue(plaintext), body.expires_at)
+    except Exception as error:
+        if isinstance(error, CapabilityError):
+            raise
+        raise CapabilityError(
+            "browser secret-store authorization could not be decrypted"
+        ) from error
+    finally:
+        for value in (aes_key, nonce, plaintext):
+            for index in range(len(value)):
+                value[index] = 0
+    return BrowserSecretAccessReceipt(expires_at=body.expires_at)
+
+
 @app.post("/v1/steps/propose", response_model=ProposeResponse)
 async def propose(
     body: ProposeRequest,
@@ -418,9 +529,16 @@ async def execute(
     await _validate_approval(runtime, claims, step)
     worker: ComputerUseWorker = request.app.state.worker
     if step.secure_field is not None:
-        changed, capture = await worker.execute_protected_capture(
-            session, proposal, step, body.confirmed
-        )
+        try:
+            changed, capture = await worker.execute_protected_capture(
+                session,
+                proposal,
+                step,
+                body.confirmed,
+                runtime.require_secret_access(),
+            )
+        finally:
+            runtime.clear_secret_access()
     else:
         changed = await worker.execute(session, proposal, body.confirmed)
         capture = None
@@ -627,7 +745,40 @@ async def _authorise(
     )
     if actual != expected:
         raise CapabilityError("worker capability does not bind the exact browser operation")
+    _consume_nonce(runtime, claims)
     return session, run, claims
+
+
+def _consume_nonce(runtime: WorkerRuntime, claims: CapabilityClaims) -> None:
+    now = int(_now().timestamp())
+    runtime.seen_nonces = {
+        nonce: expiry for nonce, expiry in runtime.seen_nonces.items() if expiry > now
+    }
+    if claims.nonce in runtime.seen_nonces:
+        raise CapabilityError("browser capability was already consumed")
+    runtime.seen_nonces[claims.nonce] = claims.expires_at
+
+
+def _validate_secret_binding(
+    session: BrowserSession,
+    connection_id: str,
+    secret_resource: str,
+) -> None:
+    if (
+        connection_id != session.secret_store_connection_id
+        or secret_resource != session.secret_resource
+    ):
+        raise CapabilityError("browser secret-store authorization has stale bindings")
+
+
+def _decode_envelope(value: str, label: str, expected_length: int | None = None) -> bytes:
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error) as error:
+        raise CapabilityError(f"browser secret-store {label} is invalid") from error
+    if expected_length is not None and len(decoded) != expected_length:
+        raise CapabilityError(f"browser secret-store {label} has an invalid length")
+    return decoded
 
 
 async def _validate_approval(
@@ -825,6 +976,7 @@ async def _secure_input(
             plaintext,
             session.secret_store_connection_id,
             session.secret_resource,
+            runtime.require_secret_access(),
         )
         completed = await runtime.sessions.complete_capture(result, armed.revision)
         return completed, result
@@ -832,6 +984,7 @@ async def _secure_input(
         frozen = await runtime.sessions.freeze(armed.organisation_id, armed.id, armed.revision)
         return frozen, None
     finally:
+        runtime.clear_secret_access()
         for index in range(len(plaintext)):
             plaintext[index] = 0
 

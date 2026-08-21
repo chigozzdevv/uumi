@@ -82,6 +82,17 @@ class FirestoreAuditRepository:
                 sequence = sequence_value + 1
                 previous = hash_value
             else:
+                existing_events = (
+                    await self._client.collection(
+                        f"{FirestorePaths.organisation(organisation_id)}/audit"
+                    )
+                    .limit(1)
+                    .get(transaction=transaction)
+                )
+                if existing_events:
+                    raise StorageIntegrityError(
+                        "audit chain head is missing while audit events still exist"
+                    )
                 sequence = 0
                 previous = GENESIS
             checksum = event_hash(

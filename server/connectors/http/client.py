@@ -28,6 +28,7 @@ class HttpProviderConnector:
             "provider.createCredential",
             "provider.getCredentialStatus",
             "provider.revokeCredential",
+            "provider.testCredential",
         }
     )
 
@@ -80,6 +81,23 @@ class HttpProviderConnector:
             _expected(response, set(api.revoke_credential.success_statuses))
             return ConnectorResponse(result={"provider_id": key_id, "revoked": True})
         raise ConnectorError("unsupported-tool", f"provider does not support {tool}")
+
+    async def test_credential(
+        self,
+        connection: Connection,
+        value: SecretValue,
+    ) -> int:
+        api = _api(connection)
+        operation = api.test_credential
+        auth = api.credential_auth
+        if operation is None or auth is None:
+            raise ConnectorError(
+                "credential-test-unavailable",
+                "provider connection has no credential authentication test",
+            )
+        headers = _value_headers(value, auth)
+        response = await self._call(api, operation, headers, {})
+        return response.status_code
 
     async def prepare(
         self,
@@ -279,15 +297,7 @@ class HttpProviderConnector:
                 "missing-auth-reference", "provider connection is not authenticated"
             )
         with await self._secrets.access(auth_reference) as secret:
-            token = secret.bytes().decode()
-        if auth.scheme is HttpAuthScheme.BEARER:
-            prefix = auth.prefix if auth.prefix is not None else "Bearer "
-            return {auth.header: f"{prefix}{token}"}
-        if auth.scheme is HttpAuthScheme.HEADER:
-            prefix = auth.prefix or ""
-            return {auth.header: f"{prefix}{token}"}
-        encoded = base64.b64encode(token.encode()).decode()
-        return {auth.header: f"Basic {encoded}"}
+            return _value_headers(secret, auth)
 
 
 def _api(connection: Connection) -> HttpProviderApi:
@@ -317,6 +327,18 @@ def _api(connection: Connection) -> HttpProviderApi:
             "OAuth provider connections require bearer transport",
         )
     return connection.http
+
+
+def _value_headers(value: SecretValue, auth: HttpAuth) -> dict[str, str]:
+    token = value.bytes().decode()
+    if auth.scheme is HttpAuthScheme.BEARER:
+        prefix = auth.prefix if auth.prefix is not None else "Bearer "
+        return {auth.header: f"{prefix}{token}"}
+    if auth.scheme is HttpAuthScheme.HEADER:
+        prefix = auth.prefix or ""
+        return {auth.header: f"{prefix}{token}"}
+    encoded = base64.b64encode(value.bytes()).decode()
+    return {auth.header: f"Basic {encoded}"}
 
 
 def _render_path(path: str, payload: dict[str, Any]) -> str:

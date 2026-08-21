@@ -107,6 +107,7 @@ _READ_TOOLS = frozenset(
         "provider.listCredentialMetadata",
         "provider.getCredentialStatus",
         "secretStore.getVersion",
+        "secretStore.testConsumerAccess",
         "runtime.inspectSecretBindings",
     }
 )

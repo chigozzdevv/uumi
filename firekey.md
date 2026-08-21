@@ -8,17 +8,17 @@
 
 FireKey is a hosted platform that safely rotates API keys and other application credentials across credential providers, secret stores, applications, and runtime environments.
 
-An organisation connects the systems it already uses. FireKey maintains a metadata-only inventory of the credentials selected for management, understands which services consume each credential, applies the organisation's rotation policies, and coordinates the complete change:
+An organisation connects the systems it already uses. FireKey maintains a metadata-only inventory of the credentials selected for management, understands which services consume each credential, applies each credential's controls, and coordinates the complete change:
 
 1. Receive a scheduled, manual, expiry, or security-incident trigger.
 2. Identify the affected credential and every service that uses it.
-3. Resolve the provider, secret-store, runtime, telemetry, and policy bindings and determine whether a safe overlapping rotation is possible.
+3. Resolve the provider, secret-store, runtime, and telemetry bindings and determine whether a safe overlapping rotation is possible.
 4. Use typed provider API operations or, only for browser access, the published Playbook attached to the provider connection.
 5. Store it as a new version in the organisation's secret store.
 6. Deploy and test candidate consumers without disturbing production.
 7. Gradually promote the new credential while monitoring real behaviour.
 8. Recover automatically if verification or rollout fails.
-9. Obtain approval for destructive or policy-controlled actions.
+9. Obtain approval for destructive or controls-protected actions.
 10. Revoke the old credential and independently prove that it no longer works.
 11. Preserve a complete audit record.
 
@@ -36,7 +36,7 @@ FireKey answers five operational questions:
 
 The successful outcome of a FireKey run is not merely “a new key was created.” The successful outcome is:
 
-> Every intended consumer is operating with the replacement credential, the real business workflow has been verified, rollback was available throughout the change, the old credential has been revoked under policy, and the result is recorded in Audit.
+> Every intended consumer is operating with the replacement credential, the real business workflow has been verified, rollback was available throughout the change, the old credential has been revoked under its controls, and the result is recorded in Audit.
 
 ## Core concepts
 
@@ -53,7 +53,8 @@ The successful outcome of a FireKey run is not merely “a new key was created.�
 | Secret store | Where the credential value is stored for the consumer | Google Secret Manager |
 | Secret reference | A generation's pointer to the stored value, not the plaintext value | `sendgrid-api-key`, version 7 |
 | Connection | FireKey's authorised integration with an external system | Acme's Google Cloud connection |
-| Policy | The rules controlling triggers, tests, rollout, approvals, and revocation | Production SaaS Keys |
+| Controls | The credential-specific rules controlling triggers, observation, approvals, and recovery | Rotate before expiry and on verified exposure |
+| Controls version | FireKey's immutable record of one saved credential controls configuration | `control_version_7` |
 | Playbook | A versioned browser procedure attached to a browser provider connection | Internal Vendor Key Rotation v1 |
 | Incident | A signal that a credential may be leaked, abused, expired, or otherwise unsafe | GitHub secret-scanning alert |
 | Rotation run | One stateful execution of the rotation lifecycle | `ROT-2026-0812-0042` |
@@ -113,9 +114,7 @@ FireKey uses a compact operational navigation model:
 │ Incidents                   │
 │ Rotations                   │
 │ Approvals               2   │
-│ Policies                    │
 │ Playbooks                   │
-│ Agent Fleet                 │
 │ Connections                 │
 │ Audit                       │
 ├─────────────────────────────┤
@@ -168,24 +167,25 @@ stripe-checkout-key            Stripe     checkout-api          Healthy
 github-deploy-token            GitHub     deployment-worker     Rotating
 ```
 
-The `+` action opens one credential setup flow. A credential is a stable logical identity for
-the workload credential FireKey manages. It binds the systems needed for the full lifecycle:
+The `+` action opens one four-step credential setup flow. A credential is a stable logical identity
+for the workload credential FireKey manages. It binds the systems needed for the full lifecycle:
 
 ```text
-Management
+Credential
   Provider connection
   Credential name, type, provider ID, and scopes
 
-Storage
+Deployment
   Secret-store connection
   Stable secret resource
-
-Consumers
   Application service binding
   Runtime resource and runtime secret name
 
-Control
-  Rotation policy
+Controls
+  Automatic triggers and verification period before revocation
+
+Review
+  One confirmation of the complete configuration
 ```
 
 The provider connection may use an API or browser interface. API connections expose typed
@@ -200,10 +200,10 @@ secret into Inventory.
 Opening a credential uses the following tabs:
 
 ```text
-Overview | Generations | Consumers | Configuration | Rotations | Audit
+Overview | Consumers | Controls
 ```
 
-`Configuration` shows the credential's control bindings:
+`Controls` shows the credential's operating rules and required connections:
 
 ```text
 Provider connection
@@ -217,10 +217,13 @@ Secret store
 Browser Playbook
   Not required for API connections
 
-Policy
-  Production SaaS Keys
+Automatic triggers
+  Expiry, drift, and verified exposure
 
-[View connection] [View policy]
+Verify before revoking
+  30 minutes
+
+[Edit controls]
 ```
 
 The credential detail shows:
@@ -229,7 +232,7 @@ The credential detail shows:
 - Each generation's provider key ID, name, scope, state, fingerprint, creation attempt, and predecessor or successor.
 - Secret-store location, generation-to-version relationship, and active consumer bindings.
 - Application, environment, runtime, and consumer relationships.
-- Rotation policy and next due date.
+- Automatic rotation triggers, verification period before revocation, and next due date.
 - Provider interface and, only for browser access, the Playbook version inherited from the connection.
 - Provider management connection and authentication status.
 - Current health and compatibility status.
@@ -264,7 +267,7 @@ selects a ready runtime connection and optional telemetry connections, then decl
 runtime resource and workload identity. Credentials are not embedded in the application record.
 They are connected later through explicit consumer bindings created from the credential flow.
 
-Opening an environment shows its runtime connections, services, deployments, credentials, policies, and active changes. Opening a service shows the secret references it consumes and the specific runtime configuration that binds each secret.
+Opening an environment shows its runtime connections, services, deployments, credentials, and active changes. Opening a service shows the secret references it consumes and the specific runtime configuration that binds each secret.
 
 ### Incidents
 
@@ -277,7 +280,7 @@ Each incident displays:
 - Affected repository, project, service, or provider resource.
 - Correlated FireKey credential candidates.
 - Current containment and rotation status.
-- Recommended action and the policy that produced it.
+- Recommended action and the controls decision that produced it.
 - Linked rotation run, approval, and audit trail.
 
 Incident statuses are:
@@ -324,7 +327,7 @@ The run detail includes:
 - The original trigger and reason.
 - Current stage and owner.
 - Agent decisions with grounded inputs.
-- Deterministic policy decisions.
+- Deterministic controls decisions.
 - Tool calls and redacted results.
 - Candidate tests, logs, metrics, and traces.
 - Rollout percentages or consumer-by-consumer progress.
@@ -364,53 +367,30 @@ Approvals can protect:
 - Old-credential revocation.
 - Destructive browser actions.
 
-Every approval is bound to the exact proposed action rather than only to the run. FireKey computes an action digest over the organisation, run, credential generation, playbook and policy versions, tool name, canonical parameters, expected preconditions, and evidence snapshot. The approval stores that digest, the approver identity, decision, expiry, and hash and consumption state of a one-shot callback capability. If any protected input changes, the digest changes and FireKey must request a new approval; replaying an old approval cannot authorise a different action. Notification links return the user to the authenticated FireKey application; they never expose a raw Workflows callback URL or approval capability.
+Every approval is bound to the exact proposed action rather than only to the run. FireKey computes an action digest over the organisation, run, credential generation, playbook and controls versions, tool name, canonical parameters, expected preconditions, and evidence snapshot. The approval stores that digest, the approver identity, decision, expiry, and hash and consumption state of a one-shot callback capability. If any protected input changes, the digest changes and FireKey must request a new approval; replaying an old approval cannot authorise a different action. Notification links return the user to the authenticated FireKey application; they never expose a raw Workflows callback URL or approval capability.
 
-### Policies
+### Credential controls
 
-Policies define what FireKey may do and what must be true before it proceeds.
+Controls define when FireKey should act and the safety window it must observe. They are configured
+inside credential setup and edited from the credential's `Controls` tab; there is no separate
+dashboard page or reusable policy-selection detour.
 
-A policy contains:
+A controls configuration contains:
 
 ```text
-Policy: Production SaaS Keys
-
 Triggers
-  Scheduled: Every 90 days
-  Incident: Verified leak or suspected abuse
+  Before expiry
+  Configuration drift
+  Verified exposure
 
-Credential requirements
-  Preserve or reduce current permissions
-  Reject unexpected scope expansion
-
-Pre-production verification
-  Provider validation required
-  Secret-store write confirmation required
-  Candidate deployment required
-  Real functional probe required
-
-Rollout
-  Strategy: Gradual where supported
-  Stages: 5% → 25% → 50% → 100%
-  Abort threshold: Any authentication failure above baseline
-
-Observation
+Verify before revoking
   Duration: 30 minutes
   Require no old-key usage before revocation
-
-Approvals
-  Emergency containment: Security Admin
-  Old-key revocation: Security Admin or Platform Owner
-
-Recovery
-  Preserve the old credential until promotion is verified
-  Automatically return traffic to the last healthy revision
 ```
 
-An active policy version is selected when a credential is created or reconfigured. The credential
-stores that exact version so a run cannot silently inherit changed controls. Broader environment,
-application, or credential-type defaults may be added later, but they must resolve to one pinned
-version before a run starts.
+FireKey adds the invariant execution checks, protected destructive actions, and rollback branches
+that users should not have to repeat in every form. Saving creates an immutable Controls version
+and pins it to the credential, so an in-progress run cannot silently inherit later changes.
 
 ### Playbooks
 
@@ -434,7 +414,7 @@ Playbook    → how to perform browser actions on a platform
 Connection  → which platform FireKey can access and how it is authorised
 Credential  → which provider credential and secret resource FireKey manages
 Application → which runtime services consume it
-Policy      → triggers, approvals, probes, rollout, observation, and recovery
+Controls    → triggers, approvals, probes, rollout, observation, and recovery for this credential
 ```
 
 A published Playbook version attaches to a browser provider connection, not directly to a
@@ -517,9 +497,9 @@ actions:
 ```
 
 The stored format declares deterministic selectors, expected page states, timeouts, retry limits,
-safe checkpoints, outputs, and evidence checks. Policy marks operations as protected when approval
-is required. Verification, runtime deployment, rollout, observation, and recovery remain policy
-and coordinator concerns; they are not browser instructions hidden inside a Playbook.
+safe checkpoints, outputs, and evidence checks. Credential controls mark operations as protected
+when approval is required. Verification, runtime deployment, rollout, observation, and recovery
+remain controls and coordinator concerns; they are not browser instructions hidden inside a Playbook.
 
 #### Teaching and activation flow
 
@@ -527,7 +507,7 @@ and coordinator concerns; they are not browser instructions hidden inside a Play
 flowchart LR
     A["Video, recorded walkthrough, text, or link"] --> B["Playbook Builder Agent"]
     B --> C["Structured draft"]
-    C --> D["Security and policy validation"]
+    C --> D["Structural and security validation"]
     D --> E["Author review"]
     E --> F["Publish immutable version"]
     F --> G["Attach to browser connection"]
@@ -552,9 +532,12 @@ records the exact Playbook version inherited from the provider connection.
 
 During Computer Use execution, FireKey compares the current interface with the approved checkpoints. Minor layout changes can be handled by the Console Operator Agent. Missing controls, unexpected domains, new permission choices, substantially different flows, or unrecognised security prompts cause the run to pause and the playbook to become `Review required`.
 
-### Agent Fleet
+### Internal agent runtime
 
-Agent Fleet is the organisation's catalogue of FireKey's four institutional agents. It is backed by Google Agent Registry and shows each agent's version, owner, registered skills, deployment region, runtime status, identity, approved callers, tool access, recent traces, and linked playbook or run activity.
+FireKey's four institutional agents are registered and governed in Google Agent Registry. They are
+an internal execution subsystem, not a customer setup page. Runtime status, identity, approved
+callers, tool access, traces, and linked activity are surfaced only where they affect a rotation,
+connection, playbook, incident, or audit record.
 
 | Agent | Registered skills | Cross-department value |
 | --- | --- | --- |
@@ -563,7 +546,7 @@ Agent Fleet is the organisation's catalogue of FireKey's four institutional agen
 | Playbook Builder Agent | `build_playbook`, `analyse_walkthrough`, `validate_playbook` | Operations enablement and service owners turn institutional knowledge into reviewable browser procedures |
 | Console Operator Agent | `execute_console_playbook`, `detect_interface_drift` | Operations and legacy-system owners reuse governed console procedures without granting a general administrator agent |
 
-These are four separately deployed and registered agents, not four labels inside one general-purpose prompt. Departments discover approved capabilities in the Registry-backed Fleet view and request them through the FireKey API; Cloud Workflows invokes the selected agent endpoint. Discovering an agent never grants broader production permissions. Google Agent Identity, IAM policy, Agent Gateway, the FireKey Tool Broker, and the run's policy continue to constrain every call.
+These are four separately deployed and registered agents, not four labels inside one general-purpose prompt. Cloud Workflows invokes the selected agent endpoint, and relevant decisions appear on the rotation, connection, playbook, incident, or audit record. Agent discovery never grants broader production permissions. Google Agent Identity, IAM policy, Agent Gateway, the FireKey Tool Broker, and the run's pinned controls continue to constrain every call.
 
 ### Connections
 
@@ -671,11 +654,11 @@ Audit is the permanent record of every security-relevant action, decision, and s
 
 An audit record contains:
 
-- Actor: human, policy, agent, connector, or external source.
+- Actor: human, agent, connector, service, or external source.
 - Action and reason.
 - Credential, application, environment, and run identifiers.
 - Before and after references without plaintext secrets.
-- Policy version and approval records.
+- Controls version and approval records.
 - Tool invocation and redacted result.
 - Verification results and timestamps.
 - Failure, retry, recovery, and rollback events.
@@ -754,7 +737,7 @@ Application and environment
         ↕
 Every consumer service
         ↕
-Rotation policy
+Credential controls
 ```
 
 For a browser provider connection, readiness also requires a compatible published Playbook and a
@@ -774,16 +757,16 @@ FireKey accepts:
 
 | Trigger | Example | Typical response |
 | --- | --- | --- |
-| Manual | Operator clicks `Rotate` | Start under the assigned policy |
+| Manual | Operator clicks `Rotate` | Start under the credential's controls |
 | FireKey schedule | Credential reaches its 90-day due date | Routine rotation |
 | Secret-store schedule | Google Secret Manager emits `SECRET_ROTATE` | Routine rotation |
 | Repository leak alert | GitHub secret scanning creates or reopens an alert | Emergency triage and rotation |
 | Cloud security finding | Security Command Center publishes an active finding | Correlate and contain |
 | Provider signal | Provider reports expiry, disablement, abuse, or compromise | Emergency or recovery flow |
-| FireKey observation | Scheduled metadata scan finds expiry, scope drift, disablement, or a stale runtime binding | Exact credential incident and policy response |
-| SIEM/SOAR webhook | Splunk, Chronicle, or another platform sends a finding | Policy-based triage |
+| FireKey observation | Scheduled metadata scan finds expiry, scope drift, disablement, or a stale runtime binding | Exact credential incident and controls response |
+| SIEM/SOAR webhook | Splunk, Chronicle, or another platform sends a finding | Controls-based triage |
 | FireKey telemetry | Authentication errors spike or old-key use continues | Pause, recover, or escalate |
-| FireKey API | An authorised internal system submits a request | Policy-based rotation |
+| FireKey API | An authorised internal system submits a request | Controls-based rotation |
 
 Google Secret Manager can publish a `SECRET_ROTATE` message to Pub/Sub at a configured rotation time. Security Command Center can publish new and updated findings to Pub/Sub in near real time. GitHub exposes secret-scanning alerts through webhooks and APIs.
 
@@ -817,7 +800,7 @@ flowchart LR
     C --> D["Normalise event"]
     D --> E["Deduplicate and persist"]
     E --> F["Correlate to credential and consumers"]
-    F --> G["Policy and risk decision"]
+    F --> G["Controls and risk decision"]
     G -->|"High confidence and authorised"| H["Create rotation run"]
     G -->|"Uncertain or approval required"| I["Create incident and notify"]
     G -->|"Invalid or irrelevant"| J["Dismiss with audit reason"]
@@ -874,16 +857,16 @@ The Inventory and Exposure Agent and deterministic indexes compare the event wit
 - Existing credential incidents and runs.
 - Provider status or validity checks where available.
 
-Correlation returns candidates with reasons and confidence. When there is one verified match, policy may allow automatic response. When several credentials could match, FireKey asks an authorised person to confirm the affected credential.
+Correlation returns candidates with reasons and confidence. When there is one verified match, the credential's controls may allow automatic response. When several credentials could match, FireKey asks an authorised person to confirm the affected credential.
 
 #### 5. Decide and notify
 
-The policy engine determines the permitted action:
+The controls engine determines the permitted action:
 
 | Condition | FireKey behaviour |
 | --- | --- |
 | Scheduled and credential is healthy | Start routine rotation |
-| Verified leak, exact credential match, emergency policy enabled | Notify immediately and start emergency rotation |
+| Verified leak, exact credential match, emergency response enabled in controls | Notify immediately and start emergency rotation |
 | High-risk incident but revocation could cause an outage | Prepare replacement, test it, request containment decision |
 | Multiple possible credential matches | Create incident and request mapping confirmation |
 | Low-confidence finding | Notify and hold for triage |
@@ -910,11 +893,11 @@ Validate incident
 → determine exposure and blast radius
 → create replacement immediately where authorised
 → migrate the highest-risk consumers first
-→ revoke as soon as the emergency policy permits
+→ revoke as soon as the emergency controls permit
 → verify containment
 ```
 
-If a compromised credential is actively being abused, leaving it valid for a long observation window may be more dangerous than a short interruption. FireKey makes that trade-off explicit through the emergency policy and human approval rules; an agent does not silently choose it.
+If a compromised credential is actively being abused, leaving it valid for a long observation window may be more dangerous than a short interruption. FireKey makes that trade-off explicit through the credential's emergency controls and human approval rules; an agent does not silently choose it.
 
 ## Rotation strategies
 
@@ -963,7 +946,7 @@ production-mailer-key
 └── invoice-worker
 ```
 
-FireKey creates one dependency plan and tracks every consumer separately. The old key cannot be revoked until all required consumers have migrated or an emergency containment policy explicitly accepts the impact.
+FireKey creates one dependency plan and tracks every consumer separately. The old key cannot be revoked until all required consumers have migrated or the credential's emergency controls explicitly accept the impact.
 
 ### Provider execution paths
 
@@ -1035,7 +1018,7 @@ FireKey records:
 - Source event and reason.
 - Requested urgency.
 - Credential, application, and environment hints.
-- Applicable policy version.
+- Pinned controls version.
 
 It authenticates the request, deduplicates it, checks for an existing active run, and obtains the credential's renewable lease and fencing token.
 
@@ -1049,7 +1032,7 @@ Preflight confirms that FireKey has enough information and authority to act:
 - Provider and secret-store connections match the credential and are healthy.
 - If the provider connection is browser-based, it pins a compatible published Playbook and its browser session is authenticated.
 - Secret-store connection is healthy.
-- Consumer list is complete enough for the policy.
+- Consumer list is complete enough for the configured controls.
 - Runtime deployment and rollback controls are available.
 - Functional verification is configured.
 - Required human approvers exist.
@@ -1062,10 +1045,10 @@ If zero-downtime rotation is not feasible, FireKey stops before creating a destr
 ### Stage 3: Build and bind the rotation plan
 
 The Rotation Planning and Recovery Agent loads the credential, connections, consumer bindings,
-policy, and optional browser Playbook, then produces one typed plan:
+controls, and optional browser Playbook, then produces one typed plan:
 
 ```text
-Management connection: Acme SendGrid Admin
+Connection: Acme SendGrid Admin
 Provider interface: API
 Provider operation: Create a second SendGrid key
 Required scope: mail.send
@@ -1078,7 +1061,7 @@ Revocation: Human approval required
 Recovery: Restore old revision and retain old key
 ```
 
-The deterministic policy engine validates the bound plan. Scope expansion, a missing consumer,
+The deterministic controls engine validates the bound plan. Scope expansion, a missing consumer,
 unavailable rollback, forbidden tool, unauthenticated connection, omitted approval, or an
 unpublished/mismatched browser Playbook causes rejection.
 
@@ -1136,14 +1119,14 @@ The runtime connector also injects `FIREKEY_GENERATION_ID=gen_8` and the equival
 
 ### Stage 7: Pre-live verification
 
-The deterministic Verification Service executes the configured probes and evaluates their typed results against policy. It does not ask an agent to decide whether its own mutation succeeded. Before production switches, FireKey must pass all applicable gates:
+The deterministic Verification Service executes the configured probes and evaluates their typed results against the pinned controls. It does not ask an agent to decide whether its own mutation succeeded. Before production switches, FireKey must pass all applicable gates:
 
 1. **Provider gate** — the new credential exists, is enabled, and has no unexpected permission expansion.
 2. **Secret-store gate** — the new version exists and the correct consumer identity can access it.
 3. **Deployment gate** — the candidate is running with the intended version, not a cached or previous value.
 4. **Functional gate** — the candidate completes the real credential-dependent job.
 5. **Result gate** — the downstream effect is confirmed, not merely accepted asynchronously.
-6. **Telemetry gate** — logs, metrics, traces, latency, retries, and authentication failures are within policy.
+6. **Telemetry gate** — logs, metrics, traces, latency, retries, and authentication failures are within the configured thresholds.
 7. **Coverage gate** — every required consumer is included in the plan.
 8. **Rollback gate** — the previous healthy revision and old credential remain available.
 
@@ -1162,7 +1145,7 @@ The rollout mechanism depends on the runtime:
 | VM service | Blue/green process, safe reload, or approved restart procedure |
 | CI/CD pipeline | Test workflow with new secret, update the protected environment, then wait for in-flight jobs |
 
-At every stage FireKey compares actual results with policy thresholds. A detected regression stops promotion and starts recovery.
+At every stage FireKey compares actual results with controls thresholds. A detected regression stops promotion and starts recovery.
 
 ### Stage 9: Observation
 
@@ -1178,7 +1161,7 @@ At 100% rollout, FireKey observes:
 
 Every candidate deployment also emits a non-secret `FIREKEY_GENERATION_ID` in logs, traces, and verification events. FireKey uses that signal with the explicit runtime binding and functional probe to prove which credential generation served the request. Secret-store access logs alone are supporting evidence: a long-running process may already hold a credential in memory and make no new secret-store read during the observation window.
 
-The observation period can be shortened under an emergency policy or extended when traffic is too low to provide confidence.
+The observation period can be shortened by emergency controls or extended when traffic is too low to provide confidence.
 
 ### Stage 10: Revocation approval
 
@@ -1224,7 +1207,7 @@ Audit contains the full operation and approvals
 
 ## Agentic system
 
-FireKey uses four bounded institutional agents built with Gemini and Google's Agent Development Kit. Each agent is separately deployed to Agent Runtime, automatically catalogued in Agent Registry, and assigned its own Agent Identity and registered skills. Four is sufficient because each boundary represents a genuinely different kind of adaptive reasoning; deterministic orchestration, policy, verification, and mutation execution are services rather than agents.
+FireKey uses four bounded institutional agents built with Gemini and Google's Agent Development Kit. Each agent is separately deployed to Agent Runtime, automatically catalogued in Agent Registry, and assigned its own Agent Identity and registered skills. Four is sufficient because each boundary represents a genuinely different kind of adaptive reasoning; deterministic orchestration, controls evaluation, verification, and mutation execution are services rather than agents.
 
 Cloud Workflows is the authoritative coordinator. It selects eligible stages, dispatches bounded tasks, waits for callbacks and timers, enforces leases, and resumes long-running runs from Firestore. Removing a Coordinator Agent avoids a second, competing state machine.
 
@@ -1242,14 +1225,14 @@ The Inventory and Exposure Agent:
 - Explains correlation confidence, urgency, ambiguity, and likely blast radius.
 - Refuses to declare coverage complete while material relationships remain unresolved.
 
-It cannot revoke a credential merely because a model labels an incident critical. Deterministic policy and human authority decide what action is permitted.
+It cannot revoke a credential merely because a model labels an incident critical. Deterministic controls and human authority decide what action is permitted.
 
 ### Rotation Planning and Recovery Agent
 
 Registered skills: `plan_rotation`, `select_strategy`, `bind_playbook`, `diagnose_failed_stage`, and `recommend_authorised_recovery`.
 
 The Rotation Planning and Recovery Agent reasons across the credential, provider and secret-store
-connections, application bindings, current evidence, policy, and the optional Playbook inherited
+connections, application bindings, current evidence, controls, and the optional Playbook inherited
 from a browser connection. It:
 
 - Selects parallel, dual-slot, immediate-invalidation, or manual strategy.
@@ -1258,9 +1241,9 @@ from a browser connection. It:
 - Builds the candidate test, rollout, observation, rollback, and revocation plan.
 - Adapts the plan to routine or emergency conditions.
 - Diagnoses ambiguous failures from redacted evidence.
-- Recommends only retry, rollback, roll-forward, or escalation branches already authorised by policy.
+- Recommends only retry, rollback, roll-forward, or escalation branches already authorised by controls.
 
-It produces a typed plan or recovery recommendation. The policy engine validates it and Cloud Workflows executes only eligible transitions.
+It produces a typed plan or recovery recommendation. The controls engine validates it and Cloud Workflows executes only eligible transitions.
 
 ### Playbook Builder Agent
 
@@ -1330,7 +1313,7 @@ The agents are not free-running administrators. The following controls remain de
 
 - Identity and access control.
 - Organisation and tenant boundaries.
-- Policy evaluation.
+- Credential controls evaluation.
 - Allowed tools and parameters.
 - Workflow stage transitions, timers, leases, and fencing tokens.
 - Connector retry and compensation semantics.
@@ -1413,7 +1396,7 @@ flowchart TB
 
 ### Dashboard and API
 
-The dashboard and authenticated API run on Cloud Run. They provide tenant-aware access to Inventory, Incidents, Rotations, Approvals, Policies, Playbooks, Agent Fleet, Connections, and Audit.
+The dashboard and authenticated API run on Cloud Run. They provide tenant-aware access to Inventory, Incidents, Rotations, Approvals, credential Controls, Playbooks, Connections, and Audit.
 
 ### Ingestion Gateway and Pub/Sub
 
@@ -1437,15 +1420,15 @@ FireKey deliberately uses three state layers:
 
 | Layer | Purpose | Must not contain |
 | --- | --- | --- |
-| Firestore | Authoritative runs, stages, leases, plans, approvals, policy versions, generation bindings, and terminal results | Plaintext secrets |
+| Firestore | Authoritative runs, stages, leases, plans, approvals, credential controls versions, generation bindings, and terminal results | Plaintext secrets |
 | Agent Platform Sessions | Redacted chronological context for one bounded agent interaction or run task | Authority to advance a workflow |
 | Memory Bank | Approved, non-sensitive cross-run knowledge such as provider quirks, stale-mapping patterns, playbook lessons, and organisation preferences | Secrets, session tokens, approval capability, or unverified operational state |
 
 Session and memory retrieval are tenant-, region-, agent-, and purpose-scoped. A memory is advisory
 context with provenance and expiry; it cannot override Firestore, live connector evidence, a
-pinned browser Playbook version, or current policy.
+pinned browser Playbook version, or current credential controls.
 
-A run that lasts for weeks does not keep a model process alive. Cloud Workflows waits on timers or callbacks, Firestore retains the authoritative checkpoint and lease state, and the next bounded agent invocation receives a newly constructed redacted context plus only relevant, policy-eligible memories. This makes long-running continuity reproducible instead of depending on an indefinitely open conversation.
+A run that lasts for weeks does not keep a model process alive. Cloud Workflows waits on timers or callbacks, Firestore retains the authoritative checkpoint and lease state, and the next bounded agent invocation receives a newly constructed redacted context plus only relevant, controls-eligible memories. This makes long-running continuity reproducible instead of depending on an indefinitely open conversation.
 
 ### Data sovereignty and regional deployment
 
@@ -1461,7 +1444,7 @@ Firestore stores tenant-scoped metadata and operational state:
 - Connections and capability metadata.
 - Applications, environments, services, and mappings.
 - Managed credentials, provider identities, credential generations, secret references, and per-consumer generation bindings.
-- Policies and policy versions.
+- Immutable controls versions nested under each managed credential.
 - Playbooks, immutable versions, browser-connection attachments, and publication state.
 - Incidents and correlation results.
 - Rotation runs, stages, leases, fencing tokens, connector attempts, and retry or compensation state.
@@ -1498,7 +1481,7 @@ telemetry.queryHealth
 telemetry.queryCredentialUsage
 ```
 
-The broker enforces tenant and connection scope, caller identity, the workflow's current stage and fencing token, active plan and action digest, policy, parameter schemas, provider capability and mutation semantics, rate limits, redaction, and audit before and after execution. It returns typed results and opaque secret references. Model output alone cannot mint a valid broker capability.
+The broker enforces tenant and connection scope, caller identity, the workflow's current stage and fencing token, active plan and action digest, pinned controls, parameter schemas, provider capability and mutation semantics, rate limits, redaction, and audit before and after execution. It returns typed results and opaque secret references. Model output alone cannot mint a valid broker capability.
 
 ### Playbook service and Builder
 
@@ -1537,7 +1520,8 @@ Computer Use is a controlled fallback for provider consoles that lack an adequat
 - A fresh dedicated browser profile and ephemeral encrypted boot disk.
 - No public IP address and no public RDP or noVNC endpoint.
 - Private access to required Google APIs and egress through a regional next-hop Secure Web Proxy. The proxy matches the browser worker service identity and exact approved provider domains. Cloud Run uses a separate Direct VPC source subnet and a fixed Google and connector-domain list because Secure Web Proxy cannot recover service-account identity from Direct VPC egress. Unmatched HTTP/S traffic is denied, and DNS is limited to the Google metadata resolver.
-- Per-run service identity, firewall policy, step budget, and automatic teardown.
+- Per-run encrypted secret-store authorisation, firewall policy, step budget, and automatic
+  teardown. The shared browser worker identity cannot impersonate customer workload identities.
 - Restricted clipboard, download, upload, popup, and navigation behaviour.
 - Prompt-injection detection, DOM and screenshot redaction, and protected-action confirmation.
 
@@ -1549,7 +1533,7 @@ The stream is brokered by a Browser Session Gateway on Cloud Run. It authenticat
 
 Production replay is a sanitised operational record, not raw continuous video. It contains redacted checkpoint screenshots, executed action metadata, URLs, timestamps, safety decisions, and human-takeover markers. Raw secret-bearing frames are never persisted. Teaching walkthroughs use disposable non-production credentials and may be recorded for Playbook Builder only after the same redaction pipeline; the sanitised recording is stored in protected regional Cloud Storage under access and retention policy.
 
-Gemini Computer Use is Preview and is not FireKey's authority for critical decisions or irreversible actions. In production console runs it operates human-on-the-loop: an authorised operator can watch continuously, and the model must stop at authentication, secret-transfer, scope changes, credential creation, revocation, deletion, unexpected security prompts, and interface drift. The policy engine and action-bound approval decide whether the step is allowed; for the final protected commit, the deterministic client validates the declared control and executes only after the required real-time human confirmation. Organisations can disable Computer Use entirely and require an API connector for an automated playbook.
+Gemini Computer Use is Preview and is not FireKey's authority for critical decisions or irreversible actions. In production console runs it operates human-on-the-loop: an authorised operator can watch continuously, and the model must stop at authentication, secret-transfer, scope changes, credential creation, revocation, deletion, unexpected security prompts, and interface drift. The controls engine and action-bound approval decide whether the step is allowed; for the final protected commit, the deterministic client validates the declared control and executes only after the required real-time human confirmation. Organisations can disable Computer Use entirely and require an API connector for an automated playbook.
 
 ### Observability
 
@@ -1563,7 +1547,7 @@ FireKey records:
 - Connector health and rate-limit status.
 - Candidate and production health signals.
 - Rollback and recovery outcomes.
-- Secret-redaction and policy-denial events.
+- Secret-redaction and controls-denial events.
 
 Agent prompts and responses are handled under data-minimisation rules. Secret payloads, OAuth tokens, browser session tokens, and sensitive form fields are excluded or redacted.
 
@@ -1649,14 +1633,14 @@ Every published Playbook declares:
 
 The connection declares interface, authorisation, capabilities, and resource boundaries. The
 credential declares provider and secret-store mappings. The application bindings declare runtime
-targets. Policy declares triggers, approvals, probes, rollout, observation, and recovery.
+targets. Credential controls declare triggers, approvals, probes, rollout, observation, and recovery.
 
 ## Security model
 
 ### Metadata-only inventory
 
 Credential Inventory stores provider identifiers, scopes, provider and secret-store connection
-references, consumer mappings, policy, state, and audit metadata. Browser Playbook identity is
+references, consumer mappings, controls, state, and audit metadata. Browser Playbook identity is
 stored on the browser connection, not copied into the credential. Inventory does not store
 existing plaintext workload credentials.
 
@@ -1702,7 +1686,7 @@ FireKey stops and requests attention when:
 - Scope would expand unexpectedly.
 - Consumer coverage is incomplete.
 - Candidate verification cannot exercise the real dependency.
-- Rollback is unavailable where policy requires it.
+- Rollback is unavailable where controls require it.
 - Required approval expires or is denied.
 - Secret redaction cannot be guaranteed.
 - A playbook is unapproved, stale, or incompatible with the current provider interface.
@@ -1720,7 +1704,7 @@ Provider consoles, logs, repository text, and incident descriptions are untruste
 - Uses typed tools instead of free-form shell or HTTP execution.
 - Grounds browser actions in an approved playbook and expected page states.
 - Allowlists actions, domains, and resource identifiers.
-- Uses policy checks before tool execution.
+- Uses controls checks before tool execution.
 - Prevents retrieved content from changing approval or identity rules.
 - Enables Computer Use prompt-injection detection.
 - Requires human confirmation for protected browser actions.
@@ -1731,7 +1715,7 @@ FireKey plans compensation before making the first change.
 
 | Failure | Safe response |
 | --- | --- |
-| New provider key creation fails | Leave production unchanged; retry within policy or escalate |
+| New provider key creation fails | Leave production unchanged; retry within controls or escalate |
 | Provider creates key but response is lost | Apply the connector's declared mutation mode: query native request status, deterministically reconcile, or stop and quarantine/revoke the possible orphan before a new attempt; never infer idempotency from a display name or run tag |
 | New key created but secret-store write fails | Keep old key live; retry storage or revoke the unused replacement |
 | Secret version created but candidate deployment fails | Keep production on old revision; disable unused new version if required |
@@ -1761,8 +1745,8 @@ Permission: mail.send
 Secret store: Google Secret Manager
 Secret reference: sendgrid-api-key / version 7
 Environment variable: SENDGRID_API_KEY
-Policy: Production SaaS Keys
-Management connection: Acme SendGrid Admin
+Controls: expiry, drift, verified exposure; 30-minute observation
+Connection: Acme SendGrid Admin
 Provider interface: API with typed credential operations
 ```
 
@@ -1781,7 +1765,7 @@ The `notification-worker` is the credential consumer because it makes the SendGr
 
 ### Routine rotation run
 
-1. The 90-day policy creates `ROT-2026-0812-0042`.
+1. The credential's 90-day controls create `ROT-2026-0812-0042`.
 2. FireKey obtains the renewable lease and fencing token for `production-password-emailer` so a concurrent or stale worker cannot mutate it.
 3. Preflight confirms the SendGrid, Google Secret Manager, and Cloud Run connections and obtains scoped provider authorisation from the Auth Broker.
 4. The Inventory and Exposure Agent confirms that `notification-worker` is the only required consumer.
@@ -1809,7 +1793,7 @@ Suppose GitHub secret scanning reports a SendGrid-shaped secret in `acme/store-a
 3. The event is normalised without placing the exposed value in an agent prompt or log.
 4. The incident is linked to the Acme Store application and SendGrid provider.
 5. FireKey correlates the repository, production environment, secret reference, and consumer mapping.
-6. If the exact credential match is verified, the emergency policy creates a rotation run and notifies the security team.
+6. If the exact credential match is verified, the credential's emergency controls create a rotation run and notify the security team.
 7. If the match remains ambiguous, FireKey presents the candidate credentials and asks an authorised user to confirm.
 8. Rotation follows the same create, store, candidate-test, rollout, observe, approve, revoke, and verify lifecycle, with emergency timing and approval rules.
 9. When the old key is revoked and the new key is healthy, FireKey marks the incident contained and then resolved.
@@ -1826,7 +1810,7 @@ An internal vendor portal has no supported credential-management API. Acme teach
 4. The author demonstrates how to open credential settings, create a restricted test key, identify the one-time secret field, inspect the new key's permissions, and delete the test key.
 5. The author adds written browser requirements for naming, scope, page checkpoints, and expected outputs.
 6. The Playbook Builder Agent turns the demonstration and text into `Internal Vendor Key Rotation v1` as a structured draft.
-7. FireKey declares the secret output as a Secure Capture field and restricts navigation to the vendor domain; the assigned Policy separately decides which tools require approval.
+7. FireKey declares the secret output as a Secure Capture field and restricts navigation to the vendor domain; credential controls separately decide which tools require approval.
 8. The author reviews the ordered actions, selectors, expected screen states, and Secure Capture boundary.
 9. FireKey performs structural domain, selector, checkpoint, and Secure Capture validation. The author may also run the draft against a disposable sandbox account when one exists.
 10. An authorised reviewer publishes immutable version 1 and attaches it to the Internal Vendor browser connection.
@@ -1839,8 +1823,8 @@ Credential: internal-vendor-production-key
 Provider: Internal Vendor Portal
 Consumer: order-worker
 Secret reference: internal-vendor-key / version 4
-Policy: Production SaaS Keys
-Management connection: Acme Vendor Admin Session
+Controls: expiry, drift, verified exposure; 30-minute observation
+Connection: Acme Vendor Admin Session
 Browser Playbook: inherited from the management connection
 ```
 
@@ -1849,9 +1833,9 @@ When rotation starts:
 1. FireKey validates that the browser connection is ready and its pinned published Playbook is compatible with the platform and domains.
 2. The Auth Broker attaches an authenticated vendor session to a fresh one-run Compute Engine browser VM with no public IP.
 3. The Console Operator Agent follows the approved playbook and adapts to harmless layout differences while remaining inside its domain and action allowlists; authorised operators can watch the redacted live view.
-4. FireKey requests confirmation immediately before creating the credential if required by policy or Computer Use safety controls.
+4. FireKey requests confirmation immediately before creating the credential if required by its controls or Computer Use safety controls.
 5. Secure Capture writes the new one-time value directly to the configured secret-store version and returns only its reference.
-6. FireKey updates and verifies the candidate `order-worker`, promotes it under policy, and observes production.
+6. FireKey updates and verifies the candidate `order-worker`, promotes it under the pinned controls, and observes production.
 7. After revocation approval, the Console Operator Agent reopens the vendor console, locates the old key by its provider ID, and stops at the protected delete action.
 8. FireKey executes the approved deletion; the deterministic Verification Service proves the old key is rejected and the replacement remains healthy, then FireKey disables the old secret-store version.
 
@@ -1868,21 +1852,21 @@ adequate API connector; otherwise that provider operation cannot be automated sa
 
 | Entity | Important relationships |
 | --- | --- |
-| Organisation | Owns users, settings, connections, applications, credentials, policies, and playbooks |
+| Organisation | Owns users, settings, connections, applications, credentials, and playbooks |
 | Connection | Belongs to an organisation; exposes one or more provider, store, runtime, telemetry, or incident capabilities |
 | Application | Belongs to an organisation; contains environments |
 | Environment | Belongs to an application; contains service deployments and runtime mappings |
 | Service | Belongs to an application and environment; consumes zero or more credentials |
-| Managed credential | Stable logical identity belonging to an organisation; maps provider and secret-store connections, a secret resource, consumers, and a policy |
+| Managed credential | Stable logical identity belonging to an organisation; maps provider and secret-store connections, a secret resource, consumers, and its current controls version |
 | Credential generation | One provider-side credential instance in the managed credential's lineage; records provider ID, scope, state, fingerprint, creation attempt, secret reference, and predecessor or successor |
 | Secret reference | Belongs to a credential generation and secret-store connection; points to a secret resource and explicit version state |
 | Consumer binding | Joins a managed credential to a service, environment, runtime binding, currently deployed generation, target generation, and functional verification definition |
-| Policy | Versioned rules assigned to credentials or scopes |
+| Controls version | Immutable triggers, approvals, probes, rollout, observation, and recovery rules owned by one credential |
 | Playbook | Reusable browser procedure for a platform without an adequate management API |
 | Playbook version | Immutable published browser-action definition with structural validation and compatibility state |
 | Teaching material | Protected video, walkthrough, instructions, and redaction metadata used to build a playbook draft |
 | Incident | Originates from an ingestion source; correlates to credentials and rotation runs |
-| Rotation run | Executes one credential change under one policy version; owns the current phase, lease, fencing token, plan hash, and generation transition |
+| Rotation run | Executes one credential change under one pinned controls version; owns the current phase, lease, fencing token, plan hash, and generation transition |
 | Run step | Records stage input, redacted output, status, retry, and compensation state |
 | Approval | Protects one action digest; records evidence hash, approver, decision, expiry, and one-shot callback consumption |
 | Agent registration | Registry-backed agent identity, version, skills, deployment region, owner, approved callers, and governed tool destinations |
@@ -1918,7 +1902,7 @@ FireKey enters **The Fortified Enterprise Fleet**. The submission should make th
 | Architectural discipline and tech stack — 30% | Four separately catalogued agents, durable pause and resume, safe cross-run context, generation-aware state, governed tools, human-on-the-loop Computer Use, compensation, and immutable audit | Agent Registry, Agent Runtime, Sessions, Memory Bank, Agent Identity, Agent Gateway, Model Armor, Workflows, Firestore, Pub/Sub, IAM, regional resources, and OpenTelemetry traces |
 | Demo and production readiness — 30% | One continuous, understandable dashboard flow shows Google Cloud execution, real external effects, rollback state, exact approval evidence, positive and negative verification, and a sanitised browser replay or live takeover | Hosted URL, Google Cloud project proof, public or shared repository, architecture diagram, and complete spin-up instructions |
 
-The approximately four-minute video uses a demo-tenant policy with a short observation window and controlled inbox, while exercising the same 12-stage workflow and security boundaries used by longer production policies. It should show the Agent Fleet catalogue first, then one uninterrupted incident-triggered SendGrid rotation, and finish on generation-aware verification and the locked audit evidence. A short browser-console segment can demonstrate the separate Computer Use safety path without replacing the primary API-driven E2E run.
+The approximately four-minute video uses credential controls with a short observation window and controlled inbox, while exercising the same 12-stage workflow and security boundaries used by longer production settings. It should show the incident queue first, then one uninterrupted incident-triggered SendGrid rotation, and finish on generation-aware verification and the locked audit evidence. A short browser-console segment can demonstrate the separate Computer Use safety path without replacing the primary API-driven E2E run.
 
 ## End-to-end acceptance criteria
 
@@ -1926,7 +1910,7 @@ A complete FireKey flow demonstrates all of the following:
 
 - A credential enters Inventory through provider import or manual configuration.
 - The credential is mapped to a real secret reference and consumer service.
-- A policy defines triggers, verification, rollout, recovery, and approvals.
+- Credential controls define triggers, verification, rollout, recovery, and approvals.
 - API provider connections execute typed connector operations without a Playbook.
 - A custom browser Playbook can be built from video, text, a walkthrough, or links; structurally validated; versioned; published; and attached to a browser connection.
 - Browser authentication and reauthentication occur inside the isolated browser without exposing passwords, cookies, MFA, or session material to the dashboard or agents.

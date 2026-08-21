@@ -17,6 +17,7 @@ capability_public="$(get firekey-capability-public)"
 evidence="$(get firekey-evidence)"
 region="$(get firekey-region)"
 image="$(get firekey-worker-image)"
+model_armor_template="$(get firekey-model-armor-template)"
 setup="$(maybe firekey-setup)"
 
 docker-credential-gcr configure-docker --registries="${region}-docker.pkg.dev"
@@ -32,6 +33,7 @@ args=(
   --env "FIREKEY_CAPABILITY_PUBLIC_KEY=$capability_public"
   --env "FIREKEY_EVIDENCE_BUCKET=$evidence"
   --env "FIREKEY_REGION=$region"
+  --env "FIREKEY_MODEL_ARMOR_TEMPLATE=$model_armor_template"
   --env FIREKEY_TELEMETRY_ENABLED=true
 )
 if [[ "$setup" == "true" ]]; then

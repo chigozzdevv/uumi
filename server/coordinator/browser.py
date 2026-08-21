@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 from broker.capability import CapabilityClaims, CapabilitySigner, request_digest
 from browser.compute import BrowserVmManager
+from browser.secret import SecretAccessInstaller
 from browser.service import BrowserService
 from contracts import (
     Approval,
@@ -26,6 +27,7 @@ from contracts import (
     RotationRun,
 )
 from core.errors import ResourceNotFoundError
+from core.ids import new_id
 from core.storage.catalog import FirestoreCatalog
 from core.storage.paths import FirestorePaths
 from policy import digest
@@ -45,12 +47,14 @@ class BrowserStepExecutor:
         vms: BrowserVmManager,
         signer: CapabilitySigner,
         http: httpx.AsyncClient | None = None,
+        secret_access: SecretAccessInstaller | None = None,
     ) -> None:
         self._catalog = catalog
         self._sessions = sessions
         self._vms = vms
         self._signer = signer
         self._http = http or httpx.AsyncClient(timeout=60)
+        self._secret_access = secret_access
 
     async def execute(
         self,
@@ -116,6 +120,10 @@ class BrowserStepExecutor:
                     },
                 )
             execute_payload = {"action_id": action["id"], "confirmed": approval is not None}
+            if step.secure_field is not None:
+                if self._secret_access is None:
+                    raise RuntimeError("browser secure capture authorization is unavailable")
+                await self._secret_access.install(run, session)
             result = await self._post(
                 run,
                 session,
@@ -182,7 +190,7 @@ class BrowserStepExecutor:
             and session.status is not BrowserStatus.TERMINATED
             and session.policy.protected_tools != protected_tools
         ):
-            raise RuntimeError("browser session policy differs from the pinned rotation policy")
+            raise RuntimeError("browser session restrictions differ from the pinned controls")
         if session is None or session.status is BrowserStatus.TERMINATED:
             now = datetime.now(UTC)
             if (
@@ -298,7 +306,7 @@ class BrowserStepExecutor:
                 request_digest=request_digest(tool, payload),
                 action_digest=action_digest,
                 expires_at=int((datetime.now(UTC) + timedelta(minutes=2)).timestamp()),
-                nonce=f"{session.id}-{session.step_count}",
+                nonce=new_id("browsercap"),
                 approval_id=approval.id if approval is not None else None,
             )
         )

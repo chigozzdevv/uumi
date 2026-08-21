@@ -1,3 +1,3 @@
-from core.inventory.service import InventoryRepository, InventoryService
+from core.inventory.service import InventoryRepository, InventoryService, ProviderMetadataLister
 
-__all__ = ["InventoryRepository", "InventoryService"]
+__all__ = ["InventoryRepository", "InventoryService", "ProviderMetadataLister"]

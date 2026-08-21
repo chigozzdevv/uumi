@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Protocol
 
 from browser.driver import BrowserDriver
+from connectors.base import SecretValue
 from connectors.secrets import SecretManagerConnector
 from contracts import (
     Connection,
@@ -20,9 +21,15 @@ MASK = "••••••••"
 
 
 class CaptureError(Exception):
-    def __init__(self, message: str, secret_reference: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        secret_reference: str | None = None,
+        cleanup_required: bool = False,
+    ) -> None:
         super().__init__(message)
         self.secret_reference = secret_reference
+        self.cleanup_required = cleanup_required
 
 
 class CaptureConnections(Protocol):
@@ -53,6 +60,7 @@ class SecureCapture:
         checkpoint: PageCheckpoint,
         sink_connection_id: str,
         secret_resource: str,
+        access_token: SecretValue | None = None,
     ) -> SecureCaptureResult:
         await self._checkpoint(checkpoint)
         locator = await self._driver.locator(field.selector)
@@ -73,6 +81,7 @@ class SecureCapture:
             raw,
             provider_id,
             locator,
+            access_token,
         )
 
     async def transfer_supplied(
@@ -85,6 +94,7 @@ class SecureCapture:
         supplied: bytearray,
         sink_connection_id: str,
         secret_resource: str,
+        access_token: SecretValue | None = None,
     ) -> SecureCaptureResult:
         await self._checkpoint(checkpoint)
         locator = await self._driver.locator(field.selector)
@@ -108,6 +118,7 @@ class SecureCapture:
             raw,
             provider_id,
             locator,
+            access_token,
         )
 
     async def _store_and_mask(
@@ -121,12 +132,12 @@ class SecureCapture:
         raw: str,
         provider_id: str,
         locator: Locator,
+        access_token: SecretValue | None,
     ) -> SecureCaptureResult:
         secret_bytes = bytearray(raw.encode())
         secret_reference: str | None = None
+        connection: Connection | None = None
         try:
-            from connectors.base import SecretValue
-
             value = SecretValue(secret_bytes)
             try:
                 connection = await self._connections.get_connection(
@@ -141,7 +152,11 @@ class SecureCapture:
                     raise CaptureError(
                         "secure capture sink is not an assigned Secret Manager connection"
                     )
-                stored = await self._secrets.add_version_for(connection, secret_resource, value)
+                if access_token is None:
+                    raise CaptureError("secure capture has no ephemeral secret-store authorization")
+                stored = await self._secrets.add_version_for(
+                    connection, secret_resource, value, access_token
+                )
             finally:
                 value.clear()
             secret_reference = _string(stored.get("secret_reference"), "secret reference")
@@ -166,14 +181,38 @@ class SecureCapture:
                 masked_value_digest=hashlib.sha256(masked_markup.encode()).hexdigest(),
                 captured_at=self._clock(),
             )
-        except CaptureError:
+        except CaptureError as error:
+            await self._reconcile_failed_version(connection, secret_reference, access_token, error)
             raise
         except Exception as error:
-            raise CaptureError("secure capture transfer failed", secret_reference) from error
+            failure = CaptureError("secure capture transfer failed", secret_reference)
+            await self._reconcile_failed_version(
+                connection, secret_reference, access_token, failure
+            )
+            raise failure from error
         finally:
             for index in range(len(secret_bytes)):
                 secret_bytes[index] = 0
             raw = ""
+
+    async def _reconcile_failed_version(
+        self,
+        connection: Connection | None,
+        secret_reference: str | None,
+        access_token: SecretValue | None,
+        failure: CaptureError,
+    ) -> None:
+        if connection is None or secret_reference is None:
+            return
+        try:
+            await self._secrets.disable_for(connection, secret_reference, access_token)
+        except Exception as cleanup_error:
+            failure.cleanup_required = True
+            raise CaptureError(
+                "secure capture failed and the stored version requires reconciliation",
+                secret_reference,
+                cleanup_required=True,
+            ) from cleanup_error
 
     async def _checkpoint(self, checkpoint: PageCheckpoint) -> None:
         if not fnmatch.fnmatchcase(self._page.url, checkpoint.url_pattern):

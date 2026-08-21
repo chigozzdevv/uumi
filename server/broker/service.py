@@ -15,9 +15,9 @@ from contracts import (
     ConnectionInterface,
     ConnectionRole,
     ConsumerBinding,
+    ControlVersion,
     Evidence,
     ManagedCredential,
-    PolicyVersion,
     ProtectedAction,
     RotationRun,
     ToolAttempt,
@@ -79,7 +79,9 @@ class BrokerRepository(Protocol):
         self, organisation_id: str, credential_id: str
     ) -> tuple[ConsumerBinding, ...]: ...
 
-    async def policy(self, organisation_id: str, version_id: str) -> PolicyVersion: ...
+    async def controls(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion: ...
 
     async def approval(self, organisation_id: str, approval_id: str) -> Approval: ...
 
@@ -156,23 +158,24 @@ class BrokerService:
     async def execute(self, request: ToolRequest, capability: str | None) -> ToolResult:
         request_hash = request_digest(request.tool, request.payload)
         previous = await self._repository.attempt(request, request_hash)
-        if previous is not None and previous.status is not ToolAttemptStatus.RUNNING:
-            if previous.result is None:
-                raise RuntimeError("terminal tool attempt has no result")
-            return previous.result
-
         run = await self._repository.run(request.organisation_id, request.run_id)
         connection = await self._repository.connection(
             request.organisation_id, request.connection_id
         )
         credential = await self._repository.credential(request.organisation_id, run.credential_id)
         bindings = await self._repository.bindings(request.organisation_id, run.credential_id)
-        policy = await self._repository.policy(request.organisation_id, run.policy_version)
-        validate_request(request, run, connection, credential, bindings, policy)
+        controls = await self._repository.controls(
+            request.organisation_id, run.credential_id, run.control_version
+        )
+        now = self._clock()
+        validate_request(request, run, connection, credential, bindings, controls, now)
         if request.tool not in READ_TOOLS:
             await self._authorize_mutation(request, run, request_hash, capability)
+        if previous is not None and previous.status is not ToolAttemptStatus.RUNNING:
+            if previous.result is None:
+                raise RuntimeError("terminal tool attempt has no result")
+            return previous.result
 
-        now = self._clock()
         context = ConnectorContext(
             request_id=request.id,
             agent_id=request.agent_id,

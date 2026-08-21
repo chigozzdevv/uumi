@@ -20,6 +20,7 @@ class PublishResponse(BaseModel):
     claimed: int
     published: int
     failed: int
+    dead_lettered: int
 
 
 class PublisherRuntime:
@@ -54,6 +55,7 @@ class PublisherRuntime:
             claimed=result.claimed,
             published=result.published,
             failed=result.failed,
+            dead_lettered=result.dead_lettered,
         )
         record(
             "event.publish",

@@ -14,7 +14,7 @@ from contracts import (
     ManagedCredential,
 )
 from ingestion.detection import DetectionService
-from testkit import make_http_provider_api, make_policy_version
+from testkit import make_control_version, make_http_provider_api
 
 NOW = datetime(2026, 8, 19, 12, tzinfo=UTC)
 
@@ -38,7 +38,7 @@ async def test_detection_records_expiry_and_reports_provider_and_runtime_drift()
     )
     service = DetectionService(
         inventory,
-        Policies(),
+        Controls(),
         provider,
         {"google-cloud-run": Runtime(generation_id="generation-old")},
         lambda: NOW,
@@ -61,7 +61,7 @@ async def test_detection_records_expiry_and_reports_provider_and_runtime_drift()
 async def test_detection_treats_missing_provider_identifier_as_disabled() -> None:
     service = DetectionService(
         Inventory(include_binding=False),
-        Policies(require_runtime_alignment=False),
+        Controls(require_runtime_alignment=False),
         Provider(()),
         {},
         lambda: NOW,
@@ -117,7 +117,7 @@ async def test_detection_uses_stored_metadata_for_browser_managed_credentials() 
     provider = Provider(())
     service = DetectionService(
         inventory,
-        Policies(require_runtime_alignment=False),
+        Controls(require_runtime_alignment=False),
         provider,
         {},
         lambda: NOW,
@@ -146,7 +146,7 @@ class Inventory:
             scopes=frozenset({"mail.send"}),
             consumer_ids=("service_one",) if include_binding else (),
             active_generation_id="generation_one",
-            policy_version="policy_one",
+            control_version="policy_one",
             created_at=NOW,
             updated_at=NOW,
         )
@@ -265,16 +265,19 @@ class Runtime:
         }
 
 
-class Policies:
+class Controls:
     def __init__(self, require_runtime_alignment: bool = True) -> None:
-        policy = make_policy_version(now=NOW)
-        self.value = policy.model_copy(
+        controls = make_control_version(credential_id="credential_one", now=NOW)
+        self.value = controls.model_copy(
             update={
-                "definition": policy.definition.model_copy(
+                "definition": controls.definition.model_copy(
                     update={"require_runtime_alignment": require_runtime_alignment}
                 )
             }
         )
 
-    async def get_version(self, organisation_id: str, version_id: str) -> Any:
+    async def get_control_version(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> Any:
+        assert credential_id == self.value.credential_id
         return self.value

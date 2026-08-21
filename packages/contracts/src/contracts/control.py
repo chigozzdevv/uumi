@@ -1,5 +1,3 @@
-from enum import StrEnum
-
 from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
@@ -8,13 +6,20 @@ from contracts.recovery import RecoveryBranch, RecoveryMode
 from contracts.state import Stage
 
 
-class PolicyState(StrEnum):
-    DRAFT = "draft"
-    ACTIVE = "active"
-    SUPERSEDED = "superseded"
+class ControlPreferences(Contract):
+    automatic_triggers: frozenset[str] = Field(min_length=1)
+    rotate_before_expiry_seconds: int = Field(ge=300, le=7776000)
+    maximum_observation_seconds: int = Field(ge=60, le=604800)
+
+    @model_validator(mode="after")
+    def validate_triggers(self) -> "ControlPreferences":
+        supported = {"expiry", "drift", "verified-exposure"}
+        if not self.automatic_triggers.issubset(supported):
+            raise ValueError("controls contain an unsupported automatic trigger")
+        return self
 
 
-class PolicyDefinition(Contract):
+class ControlDefinition(Contract):
     required_checks: dict[Stage, frozenset[str]] = Field(min_length=12)
     allowed_tools: frozenset[str] = Field(min_length=1)
     protected_tools: frozenset[str] = frozenset()
@@ -33,47 +38,41 @@ class PolicyDefinition(Contract):
     recovery: dict[Stage, RecoveryBranch] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_coverage(self) -> "PolicyDefinition":
+    def validate_coverage(self) -> "ControlDefinition":
         if set(self.required_checks) != set(Stage):
-            raise ValueError("policy must define checks for all twelve stages")
+            raise ValueError("controls must define checks for all twelve stages")
+        from policy.rules import REQUIRED_CHECKS
+
+        mandatory = dict(REQUIRED_CHECKS)
+        if not self.require_functional_probe:
+            mandatory[Stage.VERIFY] = mandatory[Stage.VERIFY].difference(
+                {"functional-valid", "downstream-valid"}
+            )
+        if not self.require_generation_telemetry:
+            mandatory[Stage.VERIFY] = mandatory[Stage.VERIFY].difference({"telemetry-healthy"})
+            mandatory[Stage.OBSERVE] = mandatory[Stage.OBSERVE].difference(
+                {"telemetry-healthy", "old-use-clear"}
+            )
+        for stage, checks in mandatory.items():
+            missing = checks.difference(self.required_checks[stage])
+            if missing:
+                names = ", ".join(sorted(missing))
+                raise ValueError(f"controls omit mandatory {stage.value} checks: {names}")
         if not self.protected_tools.issubset(self.allowed_tools):
             raise ValueError("protected tools must also be allowed")
         if self.require_generation_telemetry and "verification.run" not in self.allowed_tools:
-            raise ValueError("generation telemetry policy requires verification.run")
+            raise ValueError("generation telemetry controls require verification.run")
         if not self.emergency_triggers.issubset(self.automatic_triggers):
             raise ValueError("emergency triggers must also be automatic triggers")
         return self
 
 
-class PolicyVersion(Contract):
+class ControlVersion(Contract):
     id: Identifier
     organisation_id: Identifier
-    policy_id: Identifier
+    credential_id: Identifier
     number: int = Field(gt=0)
-    definition: PolicyDefinition
+    definition: ControlDefinition
     digest: str = Field(pattern=r"^[a-f0-9]{64}$")
-    state: PolicyState
     created_by: Identifier
     created_at: AwareDatetime
-    approved_by: Identifier | None = None
-    approved_at: AwareDatetime | None = None
-
-    @model_validator(mode="after")
-    def validate_activation(self) -> "PolicyVersion":
-        approved = self.approved_by is not None and self.approved_at is not None
-        if (self.approved_by is None) != (self.approved_at is None):
-            raise ValueError("policy approval identity and time must be set together")
-        if self.state is PolicyState.ACTIVE and not approved:
-            raise ValueError("active policy versions require approval")
-        return self
-
-
-class Policy(Contract):
-    id: Identifier
-    organisation_id: Identifier
-    name: str = Field(min_length=1, max_length=160)
-    latest_version: int = Field(default=0, ge=0)
-    active_version_id: Identifier | None = None
-    created_at: AwareDatetime
-    updated_at: AwareDatetime
-    revision: int = Field(default=0, ge=0)

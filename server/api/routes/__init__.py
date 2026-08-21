@@ -9,7 +9,6 @@ from api.routes.inventory import router as inventory_router
 from api.routes.notifications import router as notifications_router
 from api.routes.overview import router as overview_router
 from api.routes.playbooks import router as playbooks_router
-from api.routes.policies import router as policies_router
 from api.routes.probes import router as probes_router
 from api.routes.runs import router as runs_router
 from api.routes.walkthroughs import router as walkthroughs_router
@@ -26,7 +25,6 @@ __all__ = [
     "notifications_router",
     "overview_router",
     "playbooks_router",
-    "policies_router",
     "probes_router",
     "runs_router",
     "walkthroughs_router",

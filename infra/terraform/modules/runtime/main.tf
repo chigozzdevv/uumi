@@ -451,6 +451,11 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
+        name  = "FIREKEY_MODEL_ARMOR_TEMPLATE"
+        value = var.model_armor_template
+      }
+
+      env {
         name  = "FIREKEY_CAPABILITY_PUBLIC_KEY"
         value = var.capability_public_key
       }
@@ -796,6 +801,10 @@ resource "google_cloud_run_v2_service" "coordinator" {
       env {
         name  = "FIREKEY_BROWSER_IMAGE"
         value = var.browser_image
+      }
+      env {
+        name  = "FIREKEY_MODEL_ARMOR_TEMPLATE"
+        value = var.model_armor_template
       }
       env {
         name  = "FIREKEY_OIDC_AUDIENCE"

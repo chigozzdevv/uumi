@@ -7,6 +7,7 @@ from google.cloud.firestore_v1.async_transaction import AsyncTransaction, async_
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 from core.errors import PlaybookError, ResourceConflictError, ResourceNotFoundError
+from core.storage.catalog import FirestoreCatalog
 from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 
@@ -14,6 +15,29 @@ from core.storage.paths import FirestorePaths
 class FirestorePlaybookRepository:
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
+        self._catalog = FirestoreCatalog(client)
+
+    async def get(self, organisation_id: str, playbook_id: str) -> Playbook:
+        return await self._catalog.get(
+            FirestorePaths.playbook(organisation_id, playbook_id), Playbook
+        )
+
+    async def replace(self, value: Playbook, expected_revision: int) -> Playbook:
+        def change(current: Playbook) -> Playbook:
+            if (
+                current.id != value.id
+                or current.organisation_id != value.organisation_id
+                or current.created_at != value.created_at
+            ):
+                raise PlaybookError("playbook replacement changed immutable identity")
+            return value
+
+        return await self._catalog.replace(
+            FirestorePaths.playbook(value.organisation_id, value.id),
+            Playbook,
+            expected_revision,
+            change,
+        )
 
     async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]:
         path = f"{FirestorePaths.organisation(organisation_id)}/playbooks"
@@ -46,12 +70,15 @@ class FirestorePlaybookRepository:
                 raise ResourceConflictError(f"playbook version {version_id} already exists")
             if root_snapshot.exists:
                 root = Playbook.model_validate(_data(root_snapshot))
+                if root.archived_at is not None:
+                    raise PlaybookError("archived playbooks cannot receive new versions")
                 if root.platform != definition.platform or root.name != definition.name:
                     raise PlaybookError("playbook identity cannot change across versions")
                 number = root.latest_version + 1
                 changed = root.model_copy(
                     update={
                         "latest_version": number,
+                        "latest_version_id": version_id,
                         "updated_at": created_at,
                         "revision": root.revision + 1,
                     }
@@ -64,6 +91,7 @@ class FirestorePlaybookRepository:
                     name=definition.name,
                     platform=definition.platform,
                     latest_version=number,
+                    latest_version_id=version_id,
                     created_at=created_at,
                     updated_at=created_at,
                 )
@@ -119,6 +147,8 @@ class FirestorePlaybookRepository:
                 raise ResourceNotFoundError("playbook publication inputs are incomplete")
             root = Playbook.model_validate(_data(root_snapshot))
             version = PlaybookVersion.model_validate(_data(version_snapshot))
+            if root.archived_at is not None:
+                raise PlaybookError("archived playbooks cannot publish versions")
             if version.state is PlaybookState.PUBLISHED:
                 return version
             if version.state is not PlaybookState.DRAFT:

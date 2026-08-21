@@ -9,7 +9,7 @@ from core.storage import FirestoreRunRepository
 from core.storage.paths import FirestorePaths
 from core.workflow import RunWorkflow
 from google.cloud.firestore_v1 import AsyncClient
-from testkit import make_policy_version
+from testkit import make_control_version
 
 if "FIRESTORE_EMULATOR_HOST" not in os.environ:
     pytest.skip("Firestore emulator is not running", allow_module_level=True)
@@ -32,10 +32,10 @@ async def test_transactions_persist_and_deduplicate_run_commands() -> None:
     create_id = f"cmd_create_{suffix}"
     start_id = f"cmd_start_{suffix}"
     client = AsyncClient(project="firekey-test")
-    policy = make_policy_version(organisation_id, now=NOW)
-    await client.document(FirestorePaths.policy_version(organisation_id, policy.id)).set(
-        policy.model_dump(mode="json")
-    )
+    controls = make_control_version(organisation_id, credential_id=credential_id, now=NOW)
+    await client.document(
+        FirestorePaths.control_version(organisation_id, credential_id, controls.id)
+    ).set(controls.model_dump(mode="json"))
     repository = FirestoreRunRepository(client)
     workflow = RunWorkflow(
         repository,
@@ -46,7 +46,7 @@ async def test_transactions_persist_and_deduplicate_run_commands() -> None:
         id=create_id,
         organisation_id=organisation_id,
         credential_id=credential_id,
-        policy_version=policy.id,
+        control_version=controls.id,
         trigger=Trigger(
             source="schedule",
             event_id=f"event-{suffix}",

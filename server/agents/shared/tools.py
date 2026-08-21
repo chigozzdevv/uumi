@@ -70,7 +70,7 @@ async def plan_rotation(tool_context: ToolContext) -> dict[str, Any]:
 
 
 async def select_strategy(tool_context: ToolContext) -> dict[str, Any]:
-    """Return policy, inventory, and the optional browser procedure for a run."""
+    """Return controls, inventory, and the optional browser procedure for a run."""
     context = AgentContext(tool_context)
     run = await context.run()
     credential = await context.document(
@@ -79,8 +79,12 @@ async def select_strategy(tool_context: ToolContext) -> dict[str, Any]:
     connection = await context.document(
         FirestorePaths.connection(context.organisation_id, _string(credential, "connection_id"))
     )
-    policy = await context.document(
-        FirestorePaths.policy_version(context.organisation_id, _string(run, "policy_version"))
+    controls = await context.document(
+        FirestorePaths.control_version(
+            context.organisation_id,
+            _string(run, "credential_id"),
+            _string(run, "control_version"),
+        )
     )
     version = None
     playbook_id = connection.get("playbook_id")
@@ -96,7 +100,7 @@ async def select_strategy(tool_context: ToolContext) -> dict[str, Any]:
     return {
         "credential": credential,
         "provider_connection": connection,
-        "policy": policy,
+        "controls": controls,
         "browser_playbook": version,
     }
 

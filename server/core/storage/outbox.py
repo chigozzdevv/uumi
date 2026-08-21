@@ -66,6 +66,8 @@ class FirestoreOutboxRepository:
             snapshot = await reference.get(transaction=transaction)
             cursor = await cursor_ref.get(transaction=transaction)
             current = OutboxEvent.model_validate(_required_data(snapshot))
+            if current.dead_lettered_at is not None:
+                raise OutboxLeaseError(f"event {current.event.id} is dead-lettered")
             if current.published_at is not None:
                 if current.publisher_message_id == message_id:
                     return
@@ -99,6 +101,57 @@ class FirestoreOutboxRepository:
 
         await apply(self._client.transaction(max_attempts=5))
 
+    async def mark_dead_letter(
+        self,
+        claim: OutboxClaim,
+        owner_id: str,
+        error: str,
+        dead_lettered_at: datetime,
+    ) -> None:
+        reference = self._client.document(claim.path)
+        cursor_ref = self._client.document(
+            FirestorePaths.delivery(
+                claim.outbox.event.organisation_id,
+                claim.outbox.event.run_id,
+            )
+        )
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> None:
+            snapshot = await reference.get(transaction=transaction)
+            cursor = await cursor_ref.get(transaction=transaction)
+            current = OutboxEvent.model_validate(_required_data(snapshot))
+            if current.dead_lettered_at is not None:
+                return
+            if current.published_at is not None:
+                raise OutboxLeaseError(f"event {current.event.id} is already published")
+            _owned(current, owner_id)
+            if _published_revision(cursor) != current.event.revision - 1:
+                raise OutboxLeaseError(f"event {current.event.id} is not next for its run")
+            changed = current.model_copy(
+                update={
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "dead_lettered_at": dead_lettered_at,
+                    "dead_letter_reason": error,
+                    "last_error": error,
+                }
+            )
+            transaction.set(reference, encode(changed))
+            transaction.set(
+                cursor_ref,
+                {
+                    "organisation_id": current.event.organisation_id,
+                    "run_id": current.event.run_id,
+                    "published_revision": current.event.revision,
+                    "event_id": current.event.id,
+                    "dead_lettered_at": dead_lettered_at,
+                    "last_error": error,
+                },
+            )
+
+        await apply(self._client.transaction(max_attempts=5))
+
     async def mark_failed(
         self,
         claim: OutboxClaim,
@@ -112,7 +165,7 @@ class FirestoreOutboxRepository:
         async def apply(transaction: AsyncTransaction) -> None:
             snapshot = await reference.get(transaction=transaction)
             current = OutboxEvent.model_validate(_required_data(snapshot))
-            if current.published_at is not None:
+            if current.published_at is not None or current.dead_lettered_at is not None:
                 return
             _owned(current, owner_id)
             failed = current.model_copy(
@@ -147,7 +200,11 @@ class FirestoreOutboxRepository:
                 )
             )
             cursor = await cursor_ref.get(transaction=transaction)
-            if current.published_at is not None or current.available_at > now:
+            if (
+                current.published_at is not None
+                or current.dead_lettered_at is not None
+                or current.available_at > now
+            ):
                 return None
             if current.lease_expires_at is not None and current.lease_expires_at > now:
                 return None

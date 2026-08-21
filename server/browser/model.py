@@ -20,6 +20,7 @@ class ComputerUseClient:
         self,
         client: GoogleRestClient,
         project_id: str,
+        model_armor_template: str,
         model: str = "gemini-3.7-flash",
         location: str = "global",
     ) -> None:
@@ -27,6 +28,7 @@ class ComputerUseClient:
         self._project = project_id
         self._model = model
         self._location = location
+        self._model_armor_template = model_armor_template
         self._contents: list[dict[str, Any]] = []
 
     async def propose(
@@ -72,6 +74,10 @@ class ComputerUseClient:
             json={
                 "contents": self._contents,
                 "generationConfig": {"candidateCount": 1},
+                "modelArmorConfig": {
+                    "promptTemplateName": self._model_armor_template,
+                    "responseTemplateName": self._model_armor_template,
+                },
                 "tools": [
                     {
                         "computerUse": {
@@ -128,9 +134,11 @@ def _proposal(response: dict[str, Any]) -> ComputerProposal | None:
         raise ConnectorError("computer-use-action", "Gemini proposed an unsupported browser action")
     safety = arguments.get("safety_decision") or arguments.get("safetyDecision")
     decision = safety.get("decision") if isinstance(safety, dict) else None
-    explanation = safety.get("explanation") if isinstance(safety, dict) else None
-    if explanation is not None and not isinstance(explanation, str):
-        explanation = None
+    explanation = (
+        "Provider safety policy requires confirmation"
+        if decision == "require_confirmation"
+        else None
+    )
     return ComputerProposal(
         name=name,
         arguments=arguments,

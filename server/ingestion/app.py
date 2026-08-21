@@ -31,7 +31,6 @@ from core.storage import (
     FirestoreIncidentRepository,
     FirestoreInventoryRepository,
     FirestoreNotificationRepository,
-    FirestorePolicyRepository,
     FirestoreRunRepository,
 )
 from core.workflow import RunWorkflow
@@ -75,7 +74,6 @@ class Runtime:
         self.github = FirestoreGitHubRepository(firestore)
         self.tokens = GoogleTokenVerifier(settings.oidc_audience)
         inventory = FirestoreInventoryRepository(firestore)
-        policies = FirestorePolicyRepository(firestore)
         notifications = NotificationService(FirestoreNotificationRepository(firestore), _now)
         audit = AuditWriter(FirestoreAuditRepository(firestore), settings.region, _now)
         self.incidents = IncidentService(
@@ -89,12 +87,12 @@ class Runtime:
         self.automation = IncidentAutomation(
             self.incidents,
             inventory,
-            policies,
+            inventory,
         )
         cloudrun = CloudRunConnector(google)
         self.detection = DetectionService(
             inventory,
-            policies,
+            inventory,
             HttpProviderConnector(self.secrets),
             {"cloud-run": cloudrun, "google-cloud-run": cloudrun},
             _now,

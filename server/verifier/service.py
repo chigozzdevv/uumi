@@ -53,8 +53,15 @@ class VerificationService:
             connection = await self._repository.connection(
                 organisation_id, definition.connection_id
             )
+            secret_connection = (
+                await self._repository.connection(organisation_id, definition.secret_connection_id)
+                if definition.secret_connection_id is not None
+                else None
+            )
             results.append(
-                await self._executor.execute(definition, connection, context, self._clock)
+                await self._executor.execute(
+                    definition, connection, context, self._clock, secret_connection
+                )
             )
         statuses = {result.status for result in results}
         status = (

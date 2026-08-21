@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from contracts import (
     AgentKind,
@@ -16,7 +17,7 @@ from core.errors import PlaybookError
 from fastapi import APIRouter, Query, Request, status
 from pydantic import Field
 
-from api.deps import IdempotencyKey, Identity, command_id, required, services
+from api.deps import ApiServices, IdempotencyKey, Identity, command_id, required, services
 
 router = APIRouter(
     prefix="/v1/organisations/{organisation_id}/playbooks",
@@ -50,6 +51,22 @@ class AttachRequest(Contract):
     expected_revision: int = Field(ge=0)
 
 
+class PlaybookDetail(Contract):
+    playbook: Playbook
+    active_version: PlaybookVersion | None = None
+    latest_version: PlaybookVersion | None = None
+
+
+class RenamePlaybookRequest(Contract):
+    expected_revision: int = Field(ge=0)
+    name: str = Field(min_length=1, max_length=160)
+
+
+class ArchivePlaybookRequest(Contract):
+    expected_revision: int = Field(ge=0)
+    cascade: bool = False
+
+
 @router.get("", response_model=tuple[Playbook, ...])
 async def list_playbooks(
     organisation_id: Identifier,
@@ -60,6 +77,71 @@ async def list_playbooks(
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.PLAYBOOK_READ)
     return await required(api.playbooks, "playbooks").list_playbooks(organisation_id, limit)
+
+
+@router.get("/{playbook_id}", response_model=PlaybookDetail)
+async def get_playbook(
+    organisation_id: Identifier,
+    playbook_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> PlaybookDetail:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_READ)
+    service = required(api.playbooks, "playbooks")
+    playbook = await service.get(organisation_id, playbook_id)
+    active = (
+        await service.get_version(organisation_id, playbook_id, playbook.active_version_id)
+        if playbook.active_version_id is not None
+        else None
+    )
+    latest_id = playbook.latest_version_id or playbook.active_version_id
+    latest = (
+        active
+        if latest_id is not None and active is not None and latest_id == active.id
+        else await service.get_version(organisation_id, playbook_id, latest_id)
+        if latest_id is not None
+        else None
+    )
+    return PlaybookDetail(playbook=playbook, active_version=active, latest_version=latest)
+
+
+@router.patch("/{playbook_id}", response_model=Playbook)
+async def rename_playbook(
+    organisation_id: Identifier,
+    playbook_id: Identifier,
+    body: RenamePlaybookRequest,
+    identity: Identity,
+    request: Request,
+) -> Playbook:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    changed = await required(api.playbooks, "playbooks").rename(
+        organisation_id, playbook_id, body.expected_revision, body.name
+    )
+    await _audit_change(
+        api, organisation_id, identity.actor_id, "playbook.updated", playbook_id, changed.revision
+    )
+    return changed
+
+
+@router.post("/{playbook_id}/archive", response_model=Playbook)
+async def archive_playbook(
+    organisation_id: Identifier,
+    playbook_id: Identifier,
+    body: ArchivePlaybookRequest,
+    identity: Identity,
+    request: Request,
+) -> Playbook:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    changed = await required(api.playbooks, "playbooks").archive(
+        organisation_id, playbook_id, body.expected_revision, body.cascade
+    )
+    await _audit_change(
+        api, organisation_id, identity.actor_id, "playbook.archived", playbook_id, changed.revision
+    )
+    return changed
 
 
 @router.post(
@@ -189,4 +271,24 @@ async def attach(
         body.expected_revision,
         playbook_id,
         version_id,
+    )
+
+
+async def _audit_change(
+    api: ApiServices,
+    organisation_id: str,
+    actor_id: str,
+    kind: str,
+    playbook_id: str,
+    revision: int,
+) -> None:
+    if api.audit is None:
+        return
+    await api.audit.append(
+        f"audit_{uuid4().hex}",
+        organisation_id,
+        kind,
+        actor_id,
+        f"playbooks/{playbook_id}",
+        {"revision": revision},
     )

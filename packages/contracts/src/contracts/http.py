@@ -71,6 +71,8 @@ class HttpProviderApi(Contract):
     list_credentials: HttpOperation
     create_credential: HttpOperation
     revoke_credential: HttpOperation
+    test_credential: HttpOperation | None = None
+    credential_auth: HttpAuth | None = None
 
     @model_validator(mode="after")
     def validate_api(self) -> "HttpProviderApi":
@@ -100,6 +102,10 @@ class HttpProviderApi(Contract):
             raise ValueError("list must declare the provider ID field")
         if "{provider_id}" not in self.revoke_credential.path:
             raise ValueError("revoke path must include {provider_id}")
+        if (self.test_credential is None) != (self.credential_auth is None):
+            raise ValueError(
+                "credential authentication requires both a test operation and auth scheme"
+            )
         return self
 
 
@@ -109,6 +115,7 @@ _METADATA_FIELDS = frozenset(
         "disabled",
         "expires_at",
         "last_used_at",
+        "kind",
         "scopes",
         "status",
     }

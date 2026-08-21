@@ -255,7 +255,7 @@ class IncidentService:
         incident_id: str,
         command_id: str,
         actor_id: str,
-        policy_version: str,
+        control_version: str,
         reason: str,
         urgency: str,
         received_at: datetime,
@@ -276,7 +276,7 @@ class IncidentService:
                 id=command_id,
                 organisation_id=organisation_id,
                 credential_id=incident.credential_id,
-                policy_version=policy_version,
+                control_version=control_version,
                 run_id=run_id,
                 trigger=Trigger(
                     source="incident",

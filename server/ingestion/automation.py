@@ -3,12 +3,11 @@ from typing import Protocol
 
 from contracts import (
     Confidence,
+    ControlVersion,
     Incident,
     IncidentStatus,
     IngestionEvent,
     ManagedCredential,
-    PolicyState,
-    PolicyVersion,
 )
 from core.errors import ResourceConflictError
 from core.incident import IncidentService
@@ -18,8 +17,10 @@ class CredentialReader(Protocol):
     async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]: ...
 
 
-class PolicyReader(Protocol):
-    async def get_version(self, organisation_id: str, version_id: str) -> PolicyVersion: ...
+class ControlReader(Protocol):
+    async def get_control_version(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion: ...
 
 
 class IncidentAutomation:
@@ -27,11 +28,11 @@ class IncidentAutomation:
         self,
         incidents: IncidentService,
         inventory: CredentialReader,
-        policies: PolicyReader,
+        controls: ControlReader,
     ) -> None:
         self._incidents = incidents
         self._inventory = inventory
-        self._policies = policies
+        self._controls = controls
 
     async def ingest(self, event: IngestionEvent) -> tuple[Incident, bool]:
         incident_id = _identifier("incident", event.id)
@@ -41,10 +42,10 @@ class IncidentAutomation:
         if incident.status is IncidentStatus.CORRELATING and len(incident.candidates) == 1:
             candidate = incident.candidates[0]
             credential = await self._credential(event.organisation_id, candidate.credential_id)
-            policy = await self._policies.get_version(
-                event.organisation_id, credential.policy_version
+            controls = await self._controls.get_control_version(
+                event.organisation_id, credential.id, credential.control_version
             )
-            if self._automatic(policy, event, candidate.confidence):
+            if self._automatic(controls, event, candidate.confidence):
                 incident = await self._incidents.confirm(
                     event.organisation_id,
                     incident.id,
@@ -54,10 +55,12 @@ class IncidentAutomation:
         if incident.status is not IncidentStatus.ACTION or incident.credential_id is None:
             return incident, applied
         credential = await self._credential(event.organisation_id, incident.credential_id)
-        policy = await self._policies.get_version(event.organisation_id, credential.policy_version)
-        if not self._automatic(policy, event, Confidence.VERIFIED):
+        controls = await self._controls.get_control_version(
+            event.organisation_id, credential.id, credential.control_version
+        )
+        if not self._automatic(controls, event, Confidence.VERIFIED):
             return incident, applied
-        urgency = "emergency" if event.kind in policy.definition.emergency_triggers else "routine"
+        urgency = "emergency" if event.kind in controls.definition.emergency_triggers else "routine"
         command_id = _identifier("command", event.id)
         try:
             linked, _, _ = await self._incidents.start_rotation(
@@ -65,8 +68,8 @@ class IncidentAutomation:
                 incident.id,
                 command_id,
                 "firekey_ingestion",
-                policy.id,
-                f"automatic policy response to {event.kind}",
+                controls.id,
+                f"automatic controls response to {event.kind}",
                 urgency,
                 event.observed_at,
             )
@@ -79,7 +82,7 @@ class IncidentAutomation:
 
     def _automatic(
         self,
-        policy: PolicyVersion,
+        controls: ControlVersion,
         event: IngestionEvent,
         confidence: Confidence,
     ) -> bool:
@@ -90,9 +93,8 @@ class IncidentAutomation:
             Confidence.VERIFIED: 3,
         }
         return (
-            policy.state is PolicyState.ACTIVE
-            and event.kind in policy.definition.automatic_triggers
-            and levels[confidence] >= levels[policy.definition.minimum_automatic_confidence]
+            event.kind in controls.definition.automatic_triggers
+            and levels[confidence] >= levels[controls.definition.minimum_automatic_confidence]
         )
 
     async def _credential(self, organisation_id: str, credential_id: str) -> ManagedCredential:

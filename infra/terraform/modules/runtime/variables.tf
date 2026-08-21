@@ -336,6 +336,16 @@ variable "browser_zone" {
   type        = string
 }
 
+variable "model_armor_template" {
+  description = "Model Armor template applied to browser Computer Use prompts and responses."
+  type        = string
+
+  validation {
+    condition     = can(regex("^projects/[a-z0-9-]+/locations/[a-z0-9-]+/templates/[A-Za-z0-9_-]+$", var.model_armor_template))
+    error_message = "model_armor_template must be a full Model Armor template resource name."
+  }
+}
+
 variable "network" {
   description = "VPC network used by coordinator and browser workers."
   type        = string

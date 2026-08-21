@@ -32,7 +32,7 @@ class ConfirmRequest(Contract):
 
 
 class RotationRequest(Contract):
-    policy_version: Identifier
+    control_version: Identifier
     reason: str = Field(min_length=1, max_length=1024)
     urgency: str = Field(min_length=1, max_length=32)
     received_at: AwareDatetime
@@ -128,7 +128,7 @@ async def rotate(
         incident_id,
         command_id(identity, organisation_id, key),
         identity.actor_id,
-        body.policy_version,
+        body.control_version,
         body.reason,
         body.urgency,
         body.received_at,

@@ -67,27 +67,16 @@ main:
         except:
           as: error
           steps:
-            - fail_run:
-                call: http.post
-                args:
-                  url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/fail"}
-                  auth:
-                    type: OIDC
-                    audience: ${audience}
-                  headers:
-                    Idempotency-Key: ${current.body.id + "-" + current.body.stage + "-fail-" + string(current.body.revision)}
-                  body:
-                    expected_revision: ${current.body.revision}
-                    fencing_token: ${current.body.fencing_token}
-                    failure:
-                      code: stage-execution-failed
-                      message: ${text.substring(json.encode_to_string(error), 0, 1000)}
-                      retryable: false
-                      evidence_ids: []
-                result: failed_run
-                retry: ${http.default_retry}
-            - failed:
-                return: ${failed_run.body.run}
+            - bind_execution_error:
+                assign:
+                  - execution:
+                      body:
+                        id: ${current.body.id + "-" + current.body.stage + "-exception-" + string(current.body.revision)}
+                        status: failed
+                        reason: ${text.substring(json.encode_to_string(error), 0, 1000)}
+                        retryable: true
+                        evidence_ids: []
+                next: recovery_check
     - execution_status:
         switch:
           - condition: ${execution.body.status == "paused"}
@@ -101,7 +90,7 @@ main:
         next: fail_unexpected
     - recovery_check:
         switch:
-          - condition: ${current.body.status != "recovering" and current.body.stage in ["create", "store", "deploy", "verify", "rollout", "observe", "revoke"]}
+          - condition: ${current.body.status != "recovering" and current.body.stage in ["deploy", "verify", "rollout", "observe"]}
             next: cleanup_stage
         next: fail_stage
     - cleanup_stage:
@@ -230,7 +219,36 @@ main:
         assign:
           - current:
               body: ${advanced.body.run}
+        next: observation_check
+    - observation_check:
+        switch:
+          - condition: ${execution.body.stage == "rollout"}
+            next: extend_observation_lease
         next: terminal_check
+    - extend_observation_lease:
+        call: http.post
+        args:
+          url: ${api_url + "/v1/organisations/" + current.body.organisation_id + "/runs/" + current.body.id + "/renew"}
+          auth:
+            type: OIDC
+            audience: ${audience}
+          headers:
+            Idempotency-Key: ${execution.body.id + "-observation-lease"}
+          body:
+            expected_revision: ${current.body.revision}
+            fencing_token: ${current.body.fencing_token}
+            expires_at: ${time.format(sys.now() + execution.body.output.observation_seconds + 300)}
+        result: observation_lease
+        retry: ${http.default_retry}
+    - bind_observation_lease:
+        assign:
+          - current:
+              body: ${observation_lease.body.run}
+    - wait_for_observation:
+        call: sys.sleep
+        args:
+          seconds: ${execution.body.output.observation_seconds}
+        next: execute_stage
     - terminal_check:
         switch:
           - condition: ${current.body.status == "completed"}

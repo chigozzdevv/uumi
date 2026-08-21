@@ -1,3 +1,4 @@
+import base64
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -5,6 +6,8 @@ import pytest
 from broker import ConnectorRegistry
 from connectors import ConnectorContext
 from connectors.google import GoogleRestClient
+from connectors.http import HttpProviderConnector
+from connectors.secrets import SecretManagerConnector
 from contracts import (
     Connection,
     ConnectionAuthorization,
@@ -22,7 +25,7 @@ from contracts import (
     VerificationStatus,
 )
 from google.oauth2.credentials import Credentials
-from testkit import make_run
+from testkit import make_http_provider_api, make_run
 from verifier import ProbeExecutor
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -227,6 +230,110 @@ async def test_telemetry_probe_binds_generation_and_thresholds() -> None:
     assert "telemetry-generation-bound" in result.checks
 
 
+@pytest.mark.anyio
+async def test_negative_telemetry_probe_only_passes_when_old_generation_has_no_use() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"entries": []})
+
+    sink = EvidenceSink()
+    google = GoogleRestClient(
+        credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    google._connection_credentials["verifier@project-one.iam.gserviceaccount.com"] = Credentials(
+        token="token"
+    )  # type: ignore[no-untyped-call]
+    executor = ProbeExecutor(sink, google, ConnectorRegistry())  # type: ignore[arg-type]
+    definition = ProbeDefinition(
+        id="probe_old_use",
+        organisation_id="org_one",
+        kind=ProbeKind.TELEMETRY,
+        connection_id="telemetry_one",
+        target="projects/project-one",
+        expected_generation_id="generation_old",
+        generation_binding=GenerationBinding.CURRENT,
+        telemetry=TelemetryThresholds(minimum_count=1, window_seconds=300),
+        negative=True,
+    )
+
+    result = await executor.execute(definition, _connection(), _context(), lambda: NOW)
+
+    assert result.status is VerificationStatus.PASSED
+    assert "telemetry-no-old-use" in result.checks
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("negative", "status", "check"),
+    [
+        (False, 200, "credential-accepted"),
+        (True, 401, "credential-rejected"),
+    ],
+)
+async def test_credential_probe_authenticates_the_bound_secret_without_persisting_it(
+    negative: bool,
+    status: int,
+    check: str,
+) -> None:
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/versions/1:access")
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"workload-secret").decode()}},
+        )
+
+    def provider_handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer workload-secret"
+        return httpx.Response(status)
+
+    google = GoogleRestClient(
+        credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
+    )
+    secret_credentials = Credentials(token="token")  # type: ignore[no-untyped-call]
+    google._connection_credentials["secret-reader@project-one.iam.gserviceaccount.com"] = (
+        secret_credentials
+    )
+    secrets = SecretManagerConnector(google)
+    registry = ConnectorRegistry()
+    registry.register(
+        ConnectionRole.PROVIDER,
+        ConnectionInterface.API,
+        "vendor",
+        HttpProviderConnector(
+            secrets,
+            httpx.AsyncClient(transport=httpx.MockTransport(provider_handler)),
+        ),
+    )
+    sink = EvidenceSink()
+    executor = ProbeExecutor(sink, google, registry)  # type: ignore[arg-type]
+    definition = ProbeDefinition(
+        id="probe_credential",
+        organisation_id="org_one",
+        kind=ProbeKind.CREDENTIAL,
+        connection_id="provider_one",
+        target="provider-key-one",
+        secret_reference="projects/project-one/secrets/workload/versions/1",
+        secret_connection_id="secret_one",
+        expected_generation_id="generation_old" if negative else "generation_new",
+        generation_binding=(GenerationBinding.CURRENT if negative else GenerationBinding.TARGET),
+        negative=negative,
+    )
+
+    result = await executor.execute(
+        definition,
+        _provider_connection(),
+        _context(),
+        lambda: NOW,
+        _secret_connection(),
+    )
+
+    assert result.status is VerificationStatus.PASSED
+    assert result.checks == frozenset({check})
+    assert all(b"workload-secret" not in value for value in sink.values)
+    await google.close()
+
+
 def _google() -> GoogleRestClient:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
@@ -255,6 +362,47 @@ def _connection() -> Connection:
         ),
         capabilities=frozenset({"telemetry.queryHealth"}),
         allowed_resources=("service.example.com",),
+        status=ConnectionStatus.READY,
+        region="us-east1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def _provider_connection() -> Connection:
+    return Connection(
+        id="provider_one",
+        organisation_id="org_one",
+        platform="vendor",
+        display_name="Vendor",
+        roles=frozenset({ConnectionRole.PROVIDER}),
+        interface=ConnectionInterface.API,
+        authorization=ConnectionAuthorization.API_KEY,
+        authorization_reference="projects/project-one/secrets/admin/versions/1",
+        capabilities=frozenset({"provider.testCredential"}),
+        allowed_resources=("vendor-account-one",),
+        http=make_http_provider_api("https://api.vendor.example/v1"),
+        status=ConnectionStatus.READY,
+        region="us-east1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def _secret_connection() -> Connection:
+    return Connection(
+        id="secret_one",
+        organisation_id="org_one",
+        platform="google-secret-manager",
+        display_name="Secret Manager",
+        roles=frozenset({ConnectionRole.SECRET_STORE}),
+        interface=ConnectionInterface.API,
+        authorization=ConnectionAuthorization.WORKLOAD_IDENTITY,
+        authorization_reference=(
+            "workload-identity://secret-reader@project-one.iam.gserviceaccount.com"
+        ),
+        capabilities=frozenset({"secretStore.getVersion"}),
+        allowed_resources=("projects/project-one/secrets/workload",),
         status=ConnectionStatus.READY,
         region="us-east1",
         created_at=NOW,

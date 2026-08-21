@@ -32,6 +32,7 @@ class Outbox:
         self.claims = claims
         self.logged: list[str] = []
         self.failed: list[str] = []
+        self.dead_lettered: list[str] = []
 
     async def claim(
         self,
@@ -60,6 +61,15 @@ class Outbox:
         available_at: datetime,
     ) -> None:
         self.failed.append(error)
+
+    async def mark_dead_letter(
+        self,
+        claim: AuditClaim,
+        owner_id: str,
+        error: str,
+        dead_lettered_at: datetime,
+    ) -> None:
+        self.dead_lettered.append(error)
 
 
 async def test_cloud_logging_uses_event_hash_as_deterministic_insert_id() -> None:
@@ -102,6 +112,34 @@ async def test_audit_publisher_drains_ordered_claims() -> None:
 
     assert summary.logged == 1
     assert repository.logged == [HASH]
+
+
+async def test_audit_publisher_dead_letters_a_poison_event() -> None:
+    claim = AuditClaim(
+        "organisations/org_one/audit-outbox/audit_one",
+        AuditOutbox(
+            event=_event(),
+            available_at=NOW,
+            attempts=10,
+            lease_owner="auditlog_one",
+            lease_expires_at=NOW + timedelta(minutes=1),
+        ),
+    )
+    repository = Outbox([claim])
+
+    class Transport:
+        async def write(self, event: AuditEvent) -> str:
+            raise ValueError("invalid event")
+
+    summary = await AuditPublisher(
+        repository,
+        Transport(),
+        "auditlog_one",
+        lambda: NOW,
+    ).drain()
+
+    assert summary.dead_lettered == 1
+    assert repository.dead_lettered == ["ValueError"]
 
 
 def _event() -> AuditEvent:

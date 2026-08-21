@@ -47,7 +47,7 @@ router = APIRouter(
 
 class CreateRunRequest(Contract):
     credential_id: Identifier
-    policy_version: Identifier
+    control_version: Identifier
     source: str = Field(min_length=1, max_length=64)
     event_id: str = Field(min_length=1, max_length=256)
     reason: str = Field(min_length=1, max_length=1024)
@@ -104,6 +104,13 @@ class MutationResponse(Contract):
     applied: bool
 
 
+class ReapResponse(Contract):
+    scanned: int = Field(ge=0)
+    restarted: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    runs: tuple[RotationRun, ...]
+
+
 OrganisationId = Identifier
 RunId = Identifier
 
@@ -127,7 +134,7 @@ async def create_run(
         id=command_id(identity, organisation_id, key),
         organisation_id=organisation_id,
         credential_id=body.credential_id,
-        policy_version=body.policy_version,
+        control_version=body.control_version,
         trigger=Trigger(
             source=body.source,
             event_id=body.event_id,
@@ -154,6 +161,23 @@ async def list_runs(
     await api.access.require(identity, organisation_id, Permission.RUN_READ)
     statuses = frozenset(run_status) if run_status is not None else None
     return await api.workflow.list_runs(organisation_id, statuses, limit)
+
+
+@router.post("/reap", response_model=ReapResponse)
+async def reap_runs(
+    organisation_id: OrganisationId,
+    identity: Identity,
+    request: Request,
+) -> ReapResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.RUN_WRITE)
+    result = await api.workflow.reap_expired(organisation_id, identity.actor_id)
+    return ReapResponse(
+        scanned=result.scanned,
+        restarted=result.restarted,
+        failed=result.failed,
+        runs=result.runs,
+    )
 
 
 @router.get("/{run_id}", response_model=RotationRun)

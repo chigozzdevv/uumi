@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -6,9 +7,10 @@ from contracts import (
     Connection,
     ConnectionRole,
     ConsumerBinding,
+    ControlVersion,
     ManagedCredential,
-    PolicyVersion,
     RotationRun,
+    RunStatus,
     Stage,
     ToolRequest,
 )
@@ -21,6 +23,7 @@ READ_TOOLS = frozenset(
         "provider.listCredentialMetadata",
         "provider.getCredentialStatus",
         "secretStore.getVersion",
+        "secretStore.testConsumerAccess",
         "runtime.inspectSecretBindings",
         "telemetry.queryHealth",
         "telemetry.queryCredentialUsage",
@@ -38,7 +41,13 @@ STAGE_TOOLS: dict[Stage, frozenset[str]] = {
     ),
     Stage.PLAN: frozenset({"provider.listCredentialMetadata", "runtime.inspectSecretBindings"}),
     Stage.CREATE: frozenset({"provider.createCredential", "provider.getCredentialStatus"}),
-    Stage.STORE: frozenset({"secretStore.getVersion"}),
+    Stage.STORE: frozenset(
+        {
+            "secretStore.getVersion",
+            "secretStore.testConsumerAccess",
+            "runtime.inspectSecretBindings",
+        }
+    ),
     Stage.DEPLOY: frozenset({"runtime.deployCandidate", "runtime.rollback"}),
     Stage.VERIFY: frozenset(
         {
@@ -72,11 +81,24 @@ def validate_request(
     connection: Connection,
     credential: ManagedCredential,
     bindings: tuple[ConsumerBinding, ...],
-    policy: PolicyVersion,
+    controls: ControlVersion,
+    now: datetime,
 ) -> None:
     if request.organisation_id != run.organisation_id or request.run_id != run.id:
         raise CapabilityError("tool request does not belong to its run")
-    if request.fencing_token != run.fencing_token or run.lease is None:
+    if (
+        controls.organisation_id != run.organisation_id
+        or controls.credential_id != run.credential_id
+        or controls.id != run.control_version
+    ):
+        raise CapabilityError("credential controls do not belong to the run")
+    if (
+        run.status is not RunStatus.RUNNING
+        or request.fencing_token != run.fencing_token
+        or run.lease is None
+        or run.lease.fencing_token != run.fencing_token
+        or run.lease.expires_at <= now
+    ):
         raise CapabilityError("tool request does not hold the current run fence")
     if request.connection_id != connection.id or connection.organisation_id != run.organisation_id:
         raise CapabilityError("tool connection does not belong to the run organisation")
@@ -91,8 +113,8 @@ def validate_request(
         binding.runtime_connection_id for binding in bindings
     }:
         raise CapabilityError("runtime tool is not using a declared consumer binding")
-    if request.tool not in policy.definition.allowed_tools:
-        raise CapabilityError("tool is not allowed by the active policy")
+    if request.tool not in controls.definition.allowed_tools:
+        raise CapabilityError("tool is not allowed by the credential controls")
     if request.tool not in connection.capabilities:
         raise CapabilityError("connection does not declare the requested capability")
     if request.tool not in STAGE_TOOLS[run.stage]:

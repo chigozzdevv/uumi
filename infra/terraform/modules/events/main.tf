@@ -9,6 +9,11 @@ locals {
   secrets   = var.ingestion_uri == null ? toset([]) : var.secret_sources
   schedules = var.ingestion_uri == null ? {} : var.rotation_schedules
   detection = var.ingestion_uri == null ? toset([]) : var.detection_organisations
+  reapers = (
+    var.api_uri == null || var.reaper_service_account == null
+    ? toset([])
+    : var.reaper_organisations
+  )
   notification = (
     var.notification_name == null || var.notification_uri == null
     ? {}
@@ -554,6 +559,40 @@ resource "google_cloud_scheduler_job" "detection" {
 
     oidc_token {
       service_account_email = var.event_service_account
+      audience              = var.oidc_audience
+    }
+  }
+}
+
+resource "google_cloud_scheduler_job" "run_reaper" {
+  for_each = local.reapers
+
+  project          = var.project_id
+  region           = var.region
+  name             = "firekey-run-reaper-${replace(each.value, "_", "-")}"
+  description      = "Recovers expired run leases and interrupted cleanup transitions."
+  schedule         = "* * * * *"
+  time_zone        = "Etc/UTC"
+  attempt_deadline = "300s"
+  deletion_policy  = "PREVENT"
+
+  retry_config {
+    retry_count          = 3
+    min_backoff_duration = "5s"
+    max_backoff_duration = "60s"
+    max_doublings        = 3
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "${var.api_uri}/v1/organisations/${each.value}/runs/reap"
+    body        = base64encode("{}")
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    oidc_token {
+      service_account_email = var.reaper_service_account
       audience              = var.oidc_audience
     }
   }

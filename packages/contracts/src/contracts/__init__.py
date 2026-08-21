@@ -20,6 +20,10 @@ from contracts.browser import (
     BrowserActionRecord,
     BrowserActionStatus,
     BrowserPolicy,
+    BrowserSecretAccessEnvelope,
+    BrowserSecretAccessReceipt,
+    BrowserSecretKey,
+    BrowserSecretKeyRequest,
     BrowserSession,
     BrowserStatus,
     ConnectionWaiter,
@@ -42,12 +46,13 @@ from contracts.command import (
     StageBindings,
     StartRunCommand,
 )
+from contracts.control import ControlDefinition, ControlPreferences, ControlVersion
 from contracts.coordinator import (
     StageExecutionRequest,
     StageExecutionResult,
     StageExecutionStatus,
 )
-from contracts.credential import ManagedCredential
+from contracts.credential import ManagedCredential, SecretResourceMetadata, SecretVersionMetadata
 from contracts.event import EventKind, OutboxEvent, RunEvent
 from contracts.evidence import StageProof
 from contracts.generation import CredentialGeneration
@@ -79,6 +84,7 @@ from contracts.inventory import (
     ConnectionStatus,
     ConsumerService,
     Environment,
+    FunctionalVerification,
 )
 from contracts.notification import (
     Notification,
@@ -95,6 +101,7 @@ from contracts.playbook import (
     PageCheckpoint,
     Playbook,
     PlaybookDraft,
+    PlaybookEffect,
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
@@ -103,8 +110,12 @@ from contracts.playbook import (
     SelectorKind,
     StepOutput,
 )
-from contracts.policy import Policy, PolicyDefinition, PolicyState, PolicyVersion
-from contracts.provider import ConnectorCapabilities, MutationMode, MutationSemantics
+from contracts.provider import (
+    ConnectorCapabilities,
+    MutationMode,
+    MutationSemantics,
+    ProviderCredentialMetadata,
+)
 from contracts.recovery import (
     RecoveryAction,
     RecoveryBranch,
@@ -158,6 +169,10 @@ __all__ = [
     "BrowserActionRecord",
     "BrowserActionStatus",
     "BrowserPolicy",
+    "BrowserSecretAccessEnvelope",
+    "BrowserSecretAccessReceipt",
+    "BrowserSecretKey",
+    "BrowserSecretKeyRequest",
     "BrowserSession",
     "BrowserStatus",
     "CleanupRunCommand",
@@ -174,6 +189,9 @@ __all__ = [
     "ConsumerBinding",
     "ConsumerService",
     "Contract",
+    "ControlDefinition",
+    "ControlPreferences",
+    "ControlVersion",
     "CorrelationCandidate",
     "CreateRunCommand",
     "CredentialGeneration",
@@ -183,6 +201,7 @@ __all__ = [
     "Evidence",
     "FailRunCommand",
     "Failure",
+    "FunctionalVerification",
     "GenerationBinding",
     "GenerationState",
     "GitHubInstallation",
@@ -218,13 +237,10 @@ __all__ = [
     "PauseRunCommand",
     "Playbook",
     "PlaybookDraft",
+    "PlaybookEffect",
     "PlaybookState",
     "PlaybookStep",
     "PlaybookVersion",
-    "Policy",
-    "PolicyDefinition",
-    "PolicyState",
-    "PolicyVersion",
     "Probe",
     "ProbeDefinition",
     "ProbeKind",
@@ -232,6 +248,7 @@ __all__ = [
     "ProbeState",
     "ProbeVersion",
     "ProtectedAction",
+    "ProviderCredentialMetadata",
     "RecoverRunCommand",
     "RecoveryAction",
     "RecoveryBranch",
@@ -249,6 +266,8 @@ __all__ = [
     "RunStatus",
     "RunStep",
     "RuntimeDeployment",
+    "SecretResourceMetadata",
+    "SecretVersionMetadata",
     "SecureCaptureResult",
     "SecureField",
     "Selector",

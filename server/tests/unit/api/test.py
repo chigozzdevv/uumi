@@ -17,6 +17,7 @@ from contracts import (
     ConnectionStatus,
     ConsumerBinding,
     ConsumerService,
+    ControlVersion,
     CredentialGeneration,
     Environment,
     Incident,
@@ -26,8 +27,7 @@ from contracts import (
     Playbook,
     PlaybookDraft,
     PlaybookVersion,
-    Policy,
-    PolicyVersion,
+    ProbeVersion,
     SetupSession,
     SetupStatus,
     Severity,
@@ -42,15 +42,14 @@ from core.auth import (
     PrincipalGrant,
     Role,
 )
-from core.errors import AuthenticationError
+from core.errors import AuthenticationError, ResourceNotFoundError
 from core.incident import IncidentService
 from core.inventory import InventoryService
 from core.overview import OverviewService
 from core.playbook import PlaybookService
-from core.policy import PolicyService
 from core.workflow import RunWorkflow
 from fastapi import FastAPI
-from testkit import MemoryRunRepository, make_http_provider_api
+from testkit import MemoryRunRepository, make_control_version, make_http_provider_api
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 IDENTITY = AuthenticatedIdentity(
@@ -178,47 +177,24 @@ class ApprovalRepository:
         raise AssertionError("not used")
 
 
-class PolicyRepository:
-    def __init__(self) -> None:
-        self.policies = (
-            _policy_record("policy_one", NOW),
-            _policy_record("policy_two", NOW + timedelta(minutes=5)),
-        )
-
-    async def list_policies(self, organisation_id: str, limit: int) -> tuple[Policy, ...]:
-        return self.policies[:limit]
-
-    async def create(self, policy: Policy) -> Policy:
-        raise AssertionError("not used")
-
-    async def create_version(
-        self,
-        organisation_id: str,
-        policy_id: str,
-        factory: object,
-    ) -> PolicyVersion:
-        raise AssertionError("not used")
-
-    async def activate(
-        self,
-        organisation_id: str,
-        policy_id: str,
-        version_id: str,
-        actor_id: str,
-        now: datetime,
-    ) -> PolicyVersion:
-        raise AssertionError("not used")
-
-
 class PlaybookRepository:
     def __init__(self) -> None:
-        self.playbooks = (
+        self.playbooks: tuple[Playbook, ...] = (
             _playbook("playbook_one", NOW),
             _playbook("playbook_two", NOW + timedelta(minutes=5)),
         )
 
     async def list_playbooks(self, organisation_id: str, limit: int) -> tuple[Playbook, ...]:
         return self.playbooks[:limit]
+
+    async def get(self, organisation_id: str, playbook_id: str) -> Playbook:
+        return next(playbook for playbook in self.playbooks if playbook.id == playbook_id)
+
+    async def replace(self, value: Playbook, expected_revision: int) -> Playbook:
+        self.playbooks = tuple(
+            value if playbook.id == value.id else playbook for playbook in self.playbooks
+        )
+        return value
 
     async def add_version(
         self,
@@ -254,7 +230,7 @@ class PlaybookRepository:
 
 class AuditRepository:
     def __init__(self) -> None:
-        self.events = (
+        self.events: tuple[AuditEvent, ...] = (
             _audit_event("audit_one", 0, "run.created", "0" * 64, NOW, run_id="run_one"),
             _audit_event(
                 "audit_two",
@@ -283,12 +259,28 @@ class AuditRepository:
         occurred_at: datetime,
         region: str,
     ) -> AuditEvent:
-        raise AssertionError("not used")
+        event = AuditEvent(
+            id=event_id,
+            organisation_id=organisation_id,
+            sequence=len(self.events),
+            kind=kind,
+            actor_id=actor_id,
+            resource=resource,
+            run_id=run_id,
+            payload=payload,
+            evidence_ids=evidence_ids,
+            previous_hash=self.events[-1].event_hash if self.events else "0" * 64,
+            event_hash="f" * 64,
+            occurred_at=occurred_at,
+            region=region,
+        )
+        self.events = (*self.events, event)
+        return event
 
 
 class InventoryRepository:
     def __init__(self) -> None:
-        self.stored_connections = (
+        self.stored_connections: tuple[Connection, ...] = (
             Connection(
                 id="connection_one",
                 organisation_id="org_one",
@@ -307,7 +299,7 @@ class InventoryRepository:
                 updated_at=NOW,
             ),
         )
-        self.stored_applications = (
+        self.stored_applications: tuple[Application, ...] = (
             Application(
                 id="application_one",
                 organisation_id="org_one",
@@ -316,7 +308,7 @@ class InventoryRepository:
                 updated_at=NOW,
             ),
         )
-        self.stored_environments = (
+        self.stored_environments: tuple[Environment, ...] = (
             Environment(
                 id="environment_one",
                 organisation_id="org_one",
@@ -326,6 +318,28 @@ class InventoryRepository:
                 region="us-east1",
                 created_at=NOW,
                 updated_at=NOW,
+            ),
+        )
+        self.stored_credentials: tuple[ManagedCredential, ...] = (
+            ManagedCredential(
+                id="credential_one",
+                organisation_id="org_one",
+                connection_id="connection_one",
+                secret_store_connection_id="connection_secret",
+                secret_reference="projects/org-one/secrets/sendgrid",
+                provider="sendgrid",
+                kind="api-key",
+                display_name="production-password-emailer",
+                control_version="control_version_one",
+                created_at=NOW,
+                updated_at=NOW,
+            ),
+        )
+        self.stored_controls: tuple[ControlVersion, ...] = (
+            make_control_version(
+                version_id="control_version_one",
+                credential_id="credential_one",
+                now=NOW,
             ),
         )
 
@@ -359,16 +373,67 @@ class InventoryRepository:
         raise AssertionError("not used")
 
     async def get_application(self, organisation_id: str, resource_id: str) -> Application:
-        raise AssertionError("not used")
+        return next(item for item in self.stored_applications if item.id == resource_id)
 
     async def get_environment(self, organisation_id: str, resource_id: str) -> Environment:
-        raise AssertionError("not used")
+        return next(item for item in self.stored_environments if item.id == resource_id)
 
     async def get_service(self, organisation_id: str, resource_id: str) -> ConsumerService:
         raise AssertionError("not used")
 
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
-        raise AssertionError("not used")
+        return next(item for item in self.stored_connections if item.id == resource_id)
+
+    async def get_credential(self, organisation_id: str, resource_id: str) -> ManagedCredential:
+        return next(item for item in self.stored_credentials if item.id == resource_id)
+
+    async def get_control_version(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion:
+        return next(
+            item
+            for item in self.stored_controls
+            if item.credential_id == credential_id and item.id == version_id
+        )
+
+    async def get_playbook_version(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        version_id: str,
+    ) -> PlaybookVersion:
+        raise ResourceNotFoundError("playbook version not found")
+
+    async def replace_connection(self, value: Connection, expected_revision: int) -> Connection:
+        self.stored_connections = tuple(
+            value if item.id == value.id else item for item in self.stored_connections
+        )
+        return value
+
+    async def replace_application(self, value: Application, expected_revision: int) -> Application:
+        self.stored_applications = tuple(
+            value if item.id == value.id else item for item in self.stored_applications
+        )
+        return value
+
+    async def replace_environment(self, value: Environment, expected_revision: int) -> Environment:
+        self.stored_environments = tuple(
+            value if item.id == value.id else item for item in self.stored_environments
+        )
+        return value
+
+    async def replace_service(
+        self, value: ConsumerService, expected_revision: int
+    ) -> ConsumerService:
+        return value
+
+    async def replace_credential(
+        self, value: ManagedCredential, expected_revision: int
+    ) -> ManagedCredential:
+        self.stored_credentials = tuple(
+            value if item.id == value.id else item for item in self.stored_credentials
+        )
+        return value
 
     async def attach_playbook(
         self,
@@ -397,28 +462,57 @@ class InventoryRepository:
         credential: ManagedCredential,
         generation: CredentialGeneration,
         bindings: tuple[ConsumerBinding, ...],
+        controls: ControlVersion,
+        probes: tuple[ProbeVersion, ...],
     ) -> ManagedCredential:
         raise AssertionError("not used")
 
-    async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]:
-        return (
-            ManagedCredential(
-                id="credential_one",
-                organisation_id="org_one",
-                connection_id="connection_one",
-                secret_store_connection_id="connection_secret",
-                secret_reference="projects/org-one/secrets/sendgrid",
-                provider="sendgrid",
-                kind="api-key",
-                display_name="production-password-emailer",
-                policy_version="policy_version_one",
-                created_at=NOW,
-                updated_at=NOW,
-            ),
+    async def replace_controls(
+        self,
+        credential: ManagedCredential,
+        expected_revision: int,
+        controls: ControlVersion,
+    ) -> tuple[ManagedCredential, ControlVersion]:
+        self.stored_credentials = tuple(
+            credential if item.id == credential.id else item for item in self.stored_credentials
         )
+        self.stored_controls = (*self.stored_controls, controls)
+        return credential, controls
+
+    async def archive_inventory(
+        self,
+        resources: tuple[
+            Connection | Application | Environment | ConsumerService | ManagedCredential, ...
+        ],
+        bindings: tuple[ConsumerBinding, ...],
+    ) -> None:
+        for resource in resources:
+            if isinstance(resource, Connection):
+                self.stored_connections = tuple(
+                    resource if item.id == resource.id else item for item in self.stored_connections
+                )
+            elif isinstance(resource, Application):
+                self.stored_applications = tuple(
+                    resource if item.id == resource.id else item
+                    for item in self.stored_applications
+                )
+            elif isinstance(resource, Environment):
+                self.stored_environments = tuple(
+                    resource if item.id == resource.id else item
+                    for item in self.stored_environments
+                )
+            elif isinstance(resource, ManagedCredential):
+                self.stored_credentials = tuple(
+                    resource if item.id == resource.id else item for item in self.stored_credentials
+                )
+
+    async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]:
+        return self.stored_credentials
 
     async def count_credentials(self, organisation_id: str) -> int:
-        return len(await self.credentials(organisation_id))
+        return sum(
+            credential.archived_at is None for credential in await self.credentials(organisation_id)
+        )
 
     async def services(self, organisation_id: str) -> tuple[ConsumerService, ...]:
         return ()
@@ -446,7 +540,6 @@ def app(role: Role = Role.OPERATOR) -> FastAPI:
         playbooks=PlaybookService(PlaybookRepository(), clock=lambda: NOW),
         approvals=ApprovalService(approvals, clock=lambda: NOW),
         incidents=IncidentService(incidents, clock=lambda: NOW),
-        policies=PolicyService(PolicyRepository(), clock=lambda: NOW),
         audit=AuditWriter(AuditRepository(), "us-east1", lambda: NOW),
         overview=OverviewService(inventory, repository, incidents, approvals),
         browser_setup=BrowserSetup(),
@@ -563,7 +656,7 @@ def headers(key: str = "request-one") -> dict[str, str]:
 def create_body() -> dict[str, str]:
     return {
         "credential_id": "cred_one",
-        "policy_version": "policy_one",
+        "control_version": "policy_one",
         "source": "schedule",
         "event_id": "event-one",
         "reason": "routine rotation",
@@ -614,16 +707,6 @@ def _approval(
         expires_at=created_at + timedelta(hours=1),
         created_at=created_at,
         decided_at=created_at if decided else None,
-    )
-
-
-def _policy_record(policy_id: str, created_at: datetime) -> Policy:
-    return Policy(
-        id=policy_id,
-        organisation_id="org_one",
-        name=f"Production SaaS Keys {policy_id}",
-        created_at=created_at,
-        updated_at=created_at,
     )
 
 
@@ -846,20 +929,14 @@ async def test_list_approvals_filters_decision_newest_first() -> None:
 
 
 @pytest.mark.anyio
-async def test_list_policies_and_playbooks_newest_first() -> None:
+async def test_list_playbooks_newest_first() -> None:
     transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        policies = await client.get(
-            "/v1/organisations/org_one/policies",
-            headers=headers(),
-        )
         playbooks = await client.get(
             "/v1/organisations/org_one/playbooks",
             headers=headers(),
         )
 
-    assert policies.status_code == 200
-    assert [item["id"] for item in policies.json()] == ["policy_two", "policy_one"]
     assert playbooks.status_code == 200
     assert [item["id"] for item in playbooks.json()] == ["playbook_two", "playbook_one"]
 
@@ -880,6 +957,18 @@ async def test_list_inventory_collections() -> None:
             "/v1/organisations/org_one/inventory/environments",
             headers=headers(),
         )
+        services = await client.get(
+            "/v1/organisations/org_one/inventory/services",
+            headers=headers(),
+        )
+        credentials = await client.get(
+            "/v1/organisations/org_one/inventory/credentials",
+            headers=headers(),
+        )
+        credential = await client.get(
+            "/v1/organisations/org_one/inventory/credentials/credential_one",
+            headers=headers(),
+        )
 
     assert connections.status_code == 200
     assert [item["id"] for item in connections.json()] == ["connection_one"]
@@ -890,6 +979,126 @@ async def test_list_inventory_collections() -> None:
     assert [item["id"] for item in applications.json()] == ["application_one"]
     assert environments.status_code == 200
     assert [item["id"] for item in environments.json()] == ["environment_one"]
+    assert services.status_code == 200
+    assert services.json() == []
+    assert credentials.status_code == 200
+    assert [item["id"] for item in credentials.json()] == ["credential_one"]
+    assert credential.status_code == 200
+    assert credential.json()["display_name"] == "production-password-emailer"
+
+
+@pytest.mark.anyio
+async def test_credential_controls_are_versioned_atomically_and_previous_version_remains() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.ADMINISTRATOR),
+        raise_app_exceptions=False,
+    )
+    controls = {
+        "automatic_triggers": ["expiry", "drift"],
+        "rotate_before_expiry_seconds": 604800,
+        "maximum_observation_seconds": 1800,
+    }
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        previous = await client.get(
+            "/v1/organisations/org_one/inventory/credentials/credential_one/controls/control_version_one",
+            headers=headers(),
+        )
+        changed = await client.post(
+            "/v1/organisations/org_one/inventory/credentials/credential_one/controls",
+            headers=headers(),
+            json={
+                "expected_revision": 0,
+                "version_id": "control_version_two",
+                "controls": controls,
+            },
+        )
+        stale = await client.post(
+            "/v1/organisations/org_one/inventory/credentials/credential_one/controls",
+            headers=headers(),
+            json={
+                "expected_revision": 0,
+                "version_id": "control_version_three",
+                "controls": controls,
+            },
+        )
+        retained = await client.get(
+            "/v1/organisations/org_one/inventory/credentials/credential_one/controls/control_version_one",
+            headers=headers(),
+        )
+
+    assert previous.status_code == 200
+    assert previous.json()["credential_id"] == "credential_one"
+    assert changed.status_code == 201
+    assert changed.json()["credential"]["control_version"] == "control_version_two"
+    assert changed.json()["credential"]["revision"] == 1
+    assert changed.json()["controls"]["number"] == 2
+    assert stale.status_code == 409
+    assert retained.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_inventory_metadata_update_is_revision_fenced_and_archivable() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.ADMINISTRATOR),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        changed = await client.patch(
+            "/v1/organisations/org_one/inventory/credentials/credential_one",
+            headers=headers(),
+            json={"expected_revision": 0, "display_name": "renamed-credential"},
+        )
+        stale = await client.patch(
+            "/v1/organisations/org_one/inventory/credentials/credential_one",
+            headers=headers(),
+            json={"expected_revision": 0, "display_name": "stale-name"},
+        )
+        archived = await client.post(
+            "/v1/organisations/org_one/inventory/credentials/credential_one/archive",
+            headers=headers(),
+            json={"expected_revision": 1},
+        )
+        blocked_application = await client.post(
+            "/v1/organisations/org_one/inventory/applications/application_one/archive",
+            headers=headers(),
+            json={"expected_revision": 0},
+        )
+        listed = await client.get(
+            "/v1/organisations/org_one/inventory/credentials",
+            headers=headers(),
+        )
+
+    assert changed.status_code == 200
+    assert changed.json()["display_name"] == "renamed-credential"
+    assert changed.json()["revision"] == 1
+    assert stale.status_code == 409
+    assert archived.status_code == 200
+    assert archived.json()["archived_at"] is not None
+    assert blocked_application.status_code == 409
+    assert listed.json() == []
+
+
+@pytest.mark.anyio
+async def test_playbook_details_support_root_renames() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.ADMINISTRATOR),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        playbook_detail = await client.get(
+            "/v1/organisations/org_one/playbooks/playbook_one",
+            headers=headers(),
+        )
+        playbook = await client.patch(
+            "/v1/organisations/org_one/playbooks/playbook_one",
+            headers=headers(),
+            json={"expected_revision": 0, "name": "Renamed playbook"},
+        )
+
+    assert playbook_detail.status_code == 200
+    assert playbook_detail.json()["active_version"] is None
+    assert playbook.status_code == 200
+    assert playbook.json()["name"] == "Renamed playbook"
 
 
 @pytest.mark.anyio
@@ -902,7 +1111,6 @@ async def test_viewer_reads_lists_but_cannot_mutate() -> None:
         runs = await client.get("/v1/organisations/org_one/runs", headers=headers())
         incidents = await client.get("/v1/organisations/org_one/incidents", headers=headers())
         approvals = await client.get("/v1/organisations/org_one/approvals", headers=headers())
-        policies = await client.get("/v1/organisations/org_one/policies", headers=headers())
         playbooks = await client.get("/v1/organisations/org_one/playbooks", headers=headers())
         create = await client.post(
             "/v1/organisations/org_one/runs",
@@ -913,7 +1121,6 @@ async def test_viewer_reads_lists_but_cannot_mutate() -> None:
     assert runs.status_code == 200
     assert incidents.status_code == 200
     assert approvals.status_code == 200
-    assert policies.status_code == 200
     assert playbooks.status_code == 200
     assert create.status_code == 403
 
@@ -1095,7 +1302,6 @@ async def test_setup_without_browser_runtime_is_a_conflict() -> None:
         playbooks=PlaybookService(PlaybookRepository(), clock=lambda: NOW),
         approvals=ApprovalService(ApprovalRepository(), clock=lambda: NOW),
         incidents=IncidentService(IncidentRepository(), clock=lambda: NOW),
-        policies=PolicyService(PolicyRepository(), clock=lambda: NOW),
         audit=AuditWriter(AuditRepository(), "us-east1", lambda: NOW),
         overview=OverviewService(inventory, repository, IncidentRepository(), ApprovalRepository()),
     )

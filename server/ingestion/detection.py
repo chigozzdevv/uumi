@@ -11,11 +11,11 @@ from contracts import (
     ConnectionRole,
     ConnectionStatus,
     ConsumerBinding,
+    ControlVersion,
     CredentialGeneration,
     GenerationState,
     IngestionEvent,
     ManagedCredential,
-    PolicyVersion,
     Severity,
     SourceResource,
 )
@@ -43,8 +43,10 @@ class DetectionInventory(Protocol):
     ) -> ManagedCredential: ...
 
 
-class DetectionPolicies(Protocol):
-    async def get_version(self, organisation_id: str, version_id: str) -> PolicyVersion: ...
+class DetectionControls(Protocol):
+    async def get_control_version(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion: ...
 
 
 class ProviderMetadata(Protocol):
@@ -59,13 +61,13 @@ class DetectionService:
     def __init__(
         self,
         inventory: DetectionInventory,
-        policies: DetectionPolicies,
+        controls: DetectionControls,
         provider: ProviderMetadata,
         runtimes: Mapping[str, RuntimeMetadata],
         clock: Callable[[], datetime],
     ) -> None:
         self._inventory = inventory
-        self._policies = policies
+        self._controls = controls
         self._provider = provider
         self._runtimes = runtimes
         self._clock = clock
@@ -134,7 +136,9 @@ class DetectionService:
                     )
                 )
                 continue
-            policy = await self._policies.get_version(organisation_id, credential.policy_version)
+            controls = await self._controls.get_control_version(
+                organisation_id, credential.id, credential.control_version
+            )
             if connection.interface is ConnectionInterface.API:
                 if connection.id not in provider_cache:
                     indexed: dict[str, dict[str, Any]] = {}
@@ -154,13 +158,13 @@ class DetectionService:
                         credential,
                         generation,
                         item,
-                        policy,
+                        controls,
                         observed_at,
                     )
                 )
             else:
-                events.extend(_stored_events(credential, generation, policy, observed_at))
-            if policy.definition.require_runtime_alignment:
+                events.extend(_stored_events(credential, generation, controls, observed_at))
+            if controls.definition.require_runtime_alignment:
                 for binding in bindings.get(credential.id, []):
                     runtime_connection = connections.get(binding.runtime_connection_id)
                     inspector = (
@@ -201,7 +205,7 @@ class DetectionService:
         credential: ManagedCredential,
         generation: CredentialGeneration,
         metadata: dict[str, Any] | None,
-        policy: PolicyVersion,
+        policy: ControlVersion,
         observed_at: datetime,
     ) -> tuple[IngestionEvent, ...]:
         if metadata is None:
@@ -289,7 +293,7 @@ class DetectionService:
 def _stored_events(
     credential: ManagedCredential,
     generation: CredentialGeneration,
-    policy: PolicyVersion,
+    policy: ControlVersion,
     observed_at: datetime,
 ) -> tuple[IngestionEvent, ...]:
     events: list[IngestionEvent] = []

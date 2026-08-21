@@ -15,6 +15,12 @@ class PlaybookState(StrEnum):
     REVIEW = "review-required"
 
 
+class PlaybookEffect(StrEnum):
+    NONE = "none"
+    CREATE_CREDENTIAL = "create-credential"
+    REVOKE_CREDENTIAL = "revoke-credential"
+
+
 class SelectorKind(StrEnum):
     ROLE = "role"
     LABEL = "label"
@@ -49,6 +55,7 @@ class StepOutput(Contract):
 
 
 class PlaybookStep(OperationStep):
+    effect: PlaybookEffect = PlaybookEffect.NONE
     selectors: tuple[Selector, ...] = ()
     checkpoint: PageCheckpoint | None = None
     secure_field: SecureField | None = None
@@ -58,8 +65,18 @@ class PlaybookStep(OperationStep):
 
     @model_validator(mode="after")
     def validate_capture(self) -> "PlaybookStep":
-        if self.secure_field is not None and self.tool != "browser.secure-capture":
-            raise ValueError("secure fields can only be handled by browser.secure-capture")
+        if self.effect is PlaybookEffect.CREATE_CREDENTIAL and (
+            self.stage is not Stage.CREATE
+            or self.tool != "browser.secure-capture"
+            or self.secure_field is None
+        ):
+            raise ValueError("credential creation must use secure capture in the create stage")
+        if self.secure_field is not None and self.effect is not PlaybookEffect.CREATE_CREDENTIAL:
+            raise ValueError("secure fields require the create-credential effect")
+        if self.effect is PlaybookEffect.REVOKE_CREDENTIAL and (
+            self.stage is not Stage.REVOKE or self.secure_field is not None
+        ):
+            raise ValueError("credential revocation must be an unprivileged revoke-stage step")
         if self.tool.startswith("browser.") and self.operation != "navigate" and not self.selectors:
             raise ValueError("browser actions require deterministic selectors")
         if self.tool.startswith("browser.") and len(self.selectors) > 1:
@@ -96,11 +113,32 @@ class PlaybookDraft(Contract):
         if any(not step.tool.startswith("browser.") for step in self.steps):
             raise ValueError("playbooks contain browser steps only")
         if any(step.protected for step in self.steps):
-            raise ValueError("playbooks cannot declare approvals; policy protects operations")
-        if not any(step.stage is Stage.CREATE and step.secure_field for step in self.steps):
-            raise ValueError("browser playbooks require a secure capture step in create")
-        if not any(step.stage is Stage.REVOKE for step in self.steps):
-            raise ValueError("browser playbooks require revoke steps")
+            raise ValueError(
+                "playbooks cannot declare approvals; credential controls protect operations"
+            )
+        creation = tuple(
+            index
+            for index, step in enumerate(self.steps)
+            if step.effect is PlaybookEffect.CREATE_CREDENTIAL
+        )
+        if len(creation) != 1:
+            raise ValueError("browser playbooks require exactly one protected credential creation")
+        if any(step.stage is Stage.CREATE for step in self.steps[creation[0] + 1 :]):
+            raise ValueError("secure credential creation must be the final create-stage step")
+        revocation = tuple(
+            step for step in self.steps if step.effect is PlaybookEffect.REVOKE_CREDENTIAL
+        )
+        if len(revocation) != 1:
+            raise ValueError("browser playbooks require exactly one credential revocation")
+        secure = self.steps[creation[0]].secure_field
+        if secure is None:
+            raise ValueError("browser playbooks require secure credential capture")
+        if self.steps[creation[0]].outputs:
+            raise ValueError("secure credential creation cannot extract step outputs")
+        if any(
+            output.selector == secure.selector for step in self.steps for output in step.outputs
+        ):
+            raise ValueError("playbook outputs cannot target the secure credential field")
         if tuple(dict.fromkeys(step.id for step in self.steps)) != tuple(
             step.id for step in self.steps
         ):
@@ -138,7 +176,9 @@ class Playbook(Contract):
     name: str = Field(min_length=1, max_length=160)
     platform: str = Field(min_length=1, max_length=64)
     latest_version: int = Field(default=0, ge=0)
+    latest_version_id: Identifier | None = None
     active_version_id: Identifier | None = None
     created_at: AwareDatetime
     updated_at: AwareDatetime
+    archived_at: AwareDatetime | None = None
     revision: int = Field(default=0, ge=0)

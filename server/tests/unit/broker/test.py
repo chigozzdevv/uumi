@@ -27,8 +27,9 @@ from contracts import (
     ConnectionRole,
     ConnectionStatus,
     ConsumerBinding,
+    ControlVersion,
+    Lease,
     ManagedCredential,
-    PolicyVersion,
     ProtectedAction,
     RunStatus,
     Stage,
@@ -40,7 +41,7 @@ from contracts import (
 from core.audit import AuditWriter
 from core.errors import CapabilityError
 from google.oauth2.credentials import Credentials
-from testkit import make_policy_version, make_run
+from testkit import make_control_version, make_run
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
@@ -93,11 +94,11 @@ class Repository:
             update={
                 "status": RunStatus.RUNNING,
                 "stage": Stage.CREATE,
-                "lease": {
-                    "owner_id": "worker_one",
-                    "fencing_token": 1,
-                    "expires_at": NOW + timedelta(minutes=5),
-                },
+                "lease": Lease(
+                    owner_id="worker_one",
+                    fencing_token=1,
+                    expires_at=NOW + timedelta(minutes=5),
+                ),
                 "fencing_token": 1,
             }
         )
@@ -119,19 +120,19 @@ class Repository:
             provider="provider",
             kind="api-key",
             display_name="Production credential",
-            policy_version=self.run_value.policy_version,
+            control_version=self.run_value.control_version,
             created_at=NOW,
             updated_at=NOW,
         )
-        policy = make_policy_version(now=NOW)
-        definition = policy.definition.model_copy(
+        controls = make_control_version(now=NOW)
+        definition = controls.definition.model_copy(
             update={
                 "allowed_tools": frozenset(
                     {"provider.createCredential", "provider.revokeCredential", "verification.run"}
                 )
             }
         )
-        self.policy_value = policy.model_copy(update={"definition": definition})
+        self.control_value = controls.model_copy(update={"definition": definition})
 
     async def attempt(self, request: ToolRequest, request_hash: str) -> ToolAttempt | None:
         value = self.results.get(request.id)
@@ -233,8 +234,12 @@ class Repository:
     ) -> tuple[ConsumerBinding, ...]:
         return ()
 
-    async def policy(self, organisation_id: str, version_id: str) -> PolicyVersion:
-        return self.policy_value
+    async def controls(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion:
+        assert credential_id == self.control_value.credential_id
+        assert version_id == self.control_value.id
+        return self.control_value
 
     async def approval(self, organisation_id: str, approval_id: str) -> Approval:
         raise AssertionError("automatic creation requires no approval")
@@ -643,6 +648,7 @@ def test_mcp_broker_exposes_only_capability_scoped_connector_tools() -> None:
         "provider.createCredential",
         "provider.revokeCredential",
         "secretStore.getVersion",
+        "secretStore.testConsumerAccess",
         "secretStore.disableVersion",
         "secretStore.destroyVersion",
         "runtime.inspectSecretBindings",
@@ -680,7 +686,8 @@ def test_provider_resource_boundary_uses_connection_platform_and_credential_id()
         connection,
         repository.credential_value,
         (),
-        repository.policy_value,
+        repository.control_value,
+        NOW,
     )
 
     with pytest.raises(CapabilityError, match="resource boundary"):
@@ -692,5 +699,6 @@ def test_provider_resource_boundary_uses_connection_platform_and_credential_id()
             ),
             repository.credential_value,
             (),
-            repository.policy_value,
+            repository.control_value,
+            NOW,
         )

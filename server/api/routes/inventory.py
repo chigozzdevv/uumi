@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from browser.setup import BrowserSetupApi
 from contracts import (
     Application,
@@ -5,16 +7,22 @@ from contracts import (
     ConsumerBinding,
     ConsumerService,
     Contract,
+    ControlPreferences,
+    ControlVersion,
     CredentialGeneration,
     Environment,
+    FunctionalVerification,
     Identifier,
     ManagedCredential,
+    ProviderCredentialMetadata,
+    SecretResourceMetadata,
+    SecretVersionMetadata,
     SetupSession,
 )
 from core.auth import Permission
 from core.errors import ResourceConflictError
-from fastapi import APIRouter, Request, Response, status
-from pydantic import AwareDatetime, Field
+from fastapi import APIRouter, Query, Request, Response, status
+from pydantic import AwareDatetime, Field, model_validator
 
 from api.deps import ApiServices, Identity, required, services
 
@@ -28,6 +36,7 @@ class ImportCredentialRequest(Contract):
     credential: ManagedCredential
     generation: CredentialGeneration
     bindings: tuple[ConsumerBinding, ...]
+    controls: ControlPreferences
 
 
 class InventoryGraph(Contract):
@@ -73,6 +82,76 @@ class CompleteSetupResponse(Contract):
 
 class AbortSetupRequest(Contract):
     expected_revision: int = Field(ge=0)
+
+
+class RevisionRequest(Contract):
+    expected_revision: int = Field(ge=0)
+
+
+class ArchiveRequest(RevisionRequest):
+    cascade: bool = False
+
+
+class ConnectionUpdateRequest(RevisionRequest):
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    capabilities: frozenset[str] | None = Field(default=None, min_length=1)
+    allowed_resources: tuple[str, ...] | None = Field(default=None, min_length=1)
+    region: str | None = Field(default=None, min_length=3, max_length=32)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ConnectionUpdateRequest":
+        return _changed(self)
+
+
+class ApplicationUpdateRequest(RevisionRequest):
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    repository_ids: tuple[str, ...] | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ApplicationUpdateRequest":
+        return _changed(self)
+
+
+class EnvironmentUpdateRequest(RevisionRequest):
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    production: bool | None = None
+    region: str | None = Field(default=None, min_length=3, max_length=32)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "EnvironmentUpdateRequest":
+        return _changed(self)
+
+
+class ServiceUpdateRequest(RevisionRequest):
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    runtime_connection_id: Identifier | None = None
+    telemetry_connection_ids: tuple[Identifier, ...] | None = None
+    runtime_resource: str | None = Field(default=None, min_length=1, max_length=512)
+    verification: FunctionalVerification | None = None
+    repository: str | None = Field(default=None, min_length=1, max_length=256)
+    identity: str | None = Field(default=None, min_length=1, max_length=512)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ServiceUpdateRequest":
+        return _changed(self)
+
+
+class CredentialUpdateRequest(RevisionRequest):
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "CredentialUpdateRequest":
+        return _changed(self)
+
+
+class ControlsUpdateRequest(RevisionRequest):
+    version_id: Identifier
+    controls: ControlPreferences
+
+
+class CredentialControlsResponse(Contract):
+    credential: ManagedCredential
+    controls: ControlVersion
 
 
 @router.post("/connections", response_model=Connection, status_code=status.HTTP_201_CREATED)
@@ -167,7 +246,7 @@ async def import_credential(
     for binding in body.bindings:
         _organisation(binding.organisation_id, organisation_id)
     result = await required(api.inventory, "inventory").import_credential(
-        body.credential, body.generation, body.bindings
+        body.credential, body.generation, body.bindings, body.controls, identity.actor_id
     )
     response.status_code = status.HTTP_201_CREATED
     return result
@@ -184,6 +263,124 @@ async def list_connections(
     return await required(api.inventory, "inventory").list_connections(organisation_id)
 
 
+@router.get("/connections/{connection_id}", response_model=Connection)
+async def get_connection(
+    organisation_id: Identifier,
+    connection_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> Connection:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").get_connection(organisation_id, connection_id)
+
+
+@router.get(
+    "/connections/{connection_id}/credential-metadata",
+    response_model=tuple[ProviderCredentialMetadata, ...],
+)
+async def list_provider_credentials(
+    organisation_id: Identifier,
+    connection_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> tuple[ProviderCredentialMetadata, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").list_provider_credentials(
+        organisation_id, connection_id
+    )
+
+
+@router.get(
+    "/connections/{connection_id}/secret-resources",
+    response_model=tuple[SecretResourceMetadata, ...],
+)
+async def list_secret_resources(
+    organisation_id: Identifier,
+    connection_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> tuple[SecretResourceMetadata, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").list_secret_resources(
+        organisation_id, connection_id
+    )
+
+
+@router.get(
+    "/connections/{connection_id}/secret-versions",
+    response_model=tuple[SecretVersionMetadata, ...],
+)
+async def list_secret_versions(
+    organisation_id: Identifier,
+    connection_id: Identifier,
+    identity: Identity,
+    request: Request,
+    secret: str = Query(min_length=1, max_length=1024),
+) -> tuple[SecretVersionMetadata, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").list_secret_versions(
+        organisation_id, connection_id, secret
+    )
+
+
+@router.patch("/connections/{connection_id}", response_model=Connection)
+async def update_connection(
+    organisation_id: Identifier,
+    connection_id: Identifier,
+    body: ConnectionUpdateRequest,
+    identity: Identity,
+    request: Request,
+) -> Connection:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").update_connection(
+        organisation_id,
+        connection_id,
+        body.expected_revision,
+        display_name=body.display_name,
+        capabilities=body.capabilities,
+        allowed_resources=body.allowed_resources,
+        region=body.region,
+    )
+    await _audit_change(
+        api,
+        organisation_id,
+        identity.actor_id,
+        "connection.updated",
+        connection_id,
+        changed.revision,
+    )
+    return changed
+
+
+@router.post("/connections/{connection_id}/archive", response_model=Connection)
+async def archive_connection(
+    organisation_id: Identifier,
+    connection_id: Identifier,
+    body: ArchiveRequest,
+    identity: Identity,
+    request: Request,
+) -> Connection:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").archive_connection(
+        organisation_id, connection_id, body.expected_revision, body.cascade
+    )
+    await _audit_change(
+        api,
+        organisation_id,
+        identity.actor_id,
+        "connection.archived",
+        connection_id,
+        changed.revision,
+    )
+    return changed
+
+
 @router.get("/applications", response_model=tuple[Application, ...])
 async def list_applications(
     organisation_id: Identifier,
@@ -195,6 +392,72 @@ async def list_applications(
     return await required(api.inventory, "inventory").list_applications(organisation_id)
 
 
+@router.get("/applications/{application_id}", response_model=Application)
+async def get_application(
+    organisation_id: Identifier,
+    application_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> Application:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").get_application(
+        organisation_id, application_id
+    )
+
+
+@router.patch("/applications/{application_id}", response_model=Application)
+async def update_application(
+    organisation_id: Identifier,
+    application_id: Identifier,
+    body: ApplicationUpdateRequest,
+    identity: Identity,
+    request: Request,
+) -> Application:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").update_application(
+        organisation_id,
+        application_id,
+        body.expected_revision,
+        display_name=body.display_name,
+        repository_ids=body.repository_ids,
+    )
+    await _audit_change(
+        api,
+        organisation_id,
+        identity.actor_id,
+        "application.updated",
+        application_id,
+        changed.revision,
+    )
+    return changed
+
+
+@router.post("/applications/{application_id}/archive", response_model=Application)
+async def archive_application(
+    organisation_id: Identifier,
+    application_id: Identifier,
+    body: ArchiveRequest,
+    identity: Identity,
+    request: Request,
+) -> Application:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").archive_application(
+        organisation_id, application_id, body.expected_revision, body.cascade
+    )
+    await _audit_change(
+        api,
+        organisation_id,
+        identity.actor_id,
+        "application.archived",
+        application_id,
+        changed.revision,
+    )
+    return changed
+
+
 @router.get("/environments", response_model=tuple[Environment, ...])
 async def list_environments(
     organisation_id: Identifier,
@@ -204,6 +467,268 @@ async def list_environments(
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
     return await required(api.inventory, "inventory").list_environments(organisation_id)
+
+
+@router.get("/environments/{environment_id}", response_model=Environment)
+async def get_environment(
+    organisation_id: Identifier,
+    environment_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> Environment:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").get_environment(
+        organisation_id, environment_id
+    )
+
+
+@router.patch("/environments/{environment_id}", response_model=Environment)
+async def update_environment(
+    organisation_id: Identifier,
+    environment_id: Identifier,
+    body: EnvironmentUpdateRequest,
+    identity: Identity,
+    request: Request,
+) -> Environment:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").update_environment(
+        organisation_id,
+        environment_id,
+        body.expected_revision,
+        display_name=body.display_name,
+        production=body.production,
+        region=body.region,
+    )
+    await _audit_change(
+        api,
+        organisation_id,
+        identity.actor_id,
+        "environment.updated",
+        environment_id,
+        changed.revision,
+    )
+    return changed
+
+
+@router.post("/environments/{environment_id}/archive", response_model=Environment)
+async def archive_environment(
+    organisation_id: Identifier,
+    environment_id: Identifier,
+    body: ArchiveRequest,
+    identity: Identity,
+    request: Request,
+) -> Environment:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").archive_environment(
+        organisation_id, environment_id, body.expected_revision, body.cascade
+    )
+    await _audit_change(
+        api,
+        organisation_id,
+        identity.actor_id,
+        "environment.archived",
+        environment_id,
+        changed.revision,
+    )
+    return changed
+
+
+@router.get("/services", response_model=tuple[ConsumerService, ...])
+async def list_services(
+    organisation_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> tuple[ConsumerService, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").list_services(organisation_id)
+
+
+@router.get("/services/{service_id}", response_model=ConsumerService)
+async def get_service(
+    organisation_id: Identifier,
+    service_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> ConsumerService:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").get_service(organisation_id, service_id)
+
+
+@router.patch("/services/{service_id}", response_model=ConsumerService)
+async def update_service(
+    organisation_id: Identifier,
+    service_id: Identifier,
+    body: ServiceUpdateRequest,
+    identity: Identity,
+    request: Request,
+) -> ConsumerService:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").update_service(
+        organisation_id,
+        service_id,
+        body.expected_revision,
+        display_name=body.display_name,
+        runtime_connection_id=body.runtime_connection_id,
+        telemetry_connection_ids=body.telemetry_connection_ids,
+        runtime_resource=body.runtime_resource,
+        verification=body.verification,
+        repository=body.repository,
+        identity=body.identity,
+    )
+    await _audit_change(
+        api, organisation_id, identity.actor_id, "service.updated", service_id, changed.revision
+    )
+    return changed
+
+
+@router.post("/services/{service_id}/archive", response_model=ConsumerService)
+async def archive_service(
+    organisation_id: Identifier,
+    service_id: Identifier,
+    body: ArchiveRequest,
+    identity: Identity,
+    request: Request,
+) -> ConsumerService:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").archive_service(
+        organisation_id, service_id, body.expected_revision, body.cascade
+    )
+    await _audit_change(
+        api, organisation_id, identity.actor_id, "service.archived", service_id, changed.revision
+    )
+    return changed
+
+
+@router.get("/credentials", response_model=tuple[ManagedCredential, ...])
+async def list_credentials(
+    organisation_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> tuple[ManagedCredential, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").list_credentials(organisation_id)
+
+
+@router.get("/credentials/{credential_id}", response_model=ManagedCredential)
+async def get_credential(
+    organisation_id: Identifier,
+    credential_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> ManagedCredential:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").get_credential(organisation_id, credential_id)
+
+
+@router.patch("/credentials/{credential_id}", response_model=ManagedCredential)
+async def update_credential(
+    organisation_id: Identifier,
+    credential_id: Identifier,
+    body: CredentialUpdateRequest,
+    identity: Identity,
+    request: Request,
+) -> ManagedCredential:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").update_credential(
+        organisation_id,
+        credential_id,
+        body.expected_revision,
+        display_name=body.display_name,
+    )
+    await _audit_change(
+        api,
+        organisation_id,
+        identity.actor_id,
+        "credential.updated",
+        credential_id,
+        changed.revision,
+    )
+    return changed
+
+
+@router.get(
+    "/credentials/{credential_id}/controls/{version_id}",
+    response_model=ControlVersion,
+)
+async def get_credential_controls(
+    organisation_id: Identifier,
+    credential_id: Identifier,
+    version_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> ControlVersion:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").get_controls(
+        organisation_id, credential_id, version_id
+    )
+
+
+@router.post(
+    "/credentials/{credential_id}/controls",
+    response_model=CredentialControlsResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def update_credential_controls(
+    organisation_id: Identifier,
+    credential_id: Identifier,
+    body: ControlsUpdateRequest,
+    identity: Identity,
+    request: Request,
+) -> CredentialControlsResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    credential, controls = await required(api.inventory, "inventory").update_controls(
+        organisation_id,
+        credential_id,
+        body.expected_revision,
+        body.version_id,
+        body.controls,
+        identity.actor_id,
+    )
+    await _audit_change(
+        api,
+        organisation_id,
+        identity.actor_id,
+        "credential.controls.updated",
+        credential_id,
+        credential.revision,
+    )
+    return CredentialControlsResponse(credential=credential, controls=controls)
+
+
+@router.post("/credentials/{credential_id}/archive", response_model=ManagedCredential)
+async def archive_credential(
+    organisation_id: Identifier,
+    credential_id: Identifier,
+    body: ArchiveRequest,
+    identity: Identity,
+    request: Request,
+) -> ManagedCredential:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    changed = await required(api.inventory, "inventory").archive_credential(
+        organisation_id, credential_id, body.expected_revision, body.cascade
+    )
+    await _audit_change(
+        api,
+        organisation_id,
+        identity.actor_id,
+        "credential.archived",
+        credential_id,
+        changed.revision,
+    )
+    return changed
 
 
 @router.get("/graph", response_model=InventoryGraph)
@@ -314,3 +839,29 @@ def _setup(api: ApiServices) -> BrowserSetupApi:
     if api.browser_setup is None:
         raise ResourceConflictError("browser setup is not configured")
     return api.browser_setup
+
+
+def _changed[T: RevisionRequest](value: T) -> T:
+    if value.model_fields_set == {"expected_revision"}:
+        raise ValueError("at least one editable field is required")
+    return value
+
+
+async def _audit_change(
+    api: ApiServices,
+    organisation_id: str,
+    actor_id: str,
+    kind: str,
+    resource_id: str,
+    revision: int,
+) -> None:
+    if api.audit is None:
+        return
+    await api.audit.append(
+        f"audit_{uuid4().hex}",
+        organisation_id,
+        kind,
+        actor_id,
+        f"inventory/{resource_id}",
+        {"revision": revision},
+    )

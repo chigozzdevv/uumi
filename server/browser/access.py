@@ -17,6 +17,7 @@ from core.errors import ResourceConflictError
 from core.ids import new_id
 from core.storage.paths import FirestorePaths
 
+from browser.secret import SecretAccessInstaller
 from browser.service import BrowserService
 
 SignerLoader = Callable[[], Awaitable[CapabilitySigner]]
@@ -35,6 +36,7 @@ class BrowserAccessService:
         signer_loader: SignerLoader,
         gateway_url: str,
         clock: Callable[[], datetime],
+        secret_access: SecretAccessInstaller | None = None,
     ) -> None:
         self._catalog = catalog
         self._sessions = sessions
@@ -43,6 +45,7 @@ class BrowserAccessService:
         self._clock = clock
         self._signer: CapabilitySigner | None = None
         self._lock = asyncio.Lock()
+        self._secret_access = secret_access
 
     async def issue(
         self,
@@ -69,6 +72,9 @@ class BrowserAccessService:
                 session = await self._sessions.takeover(
                     organisation_id, session.id, session.revision, subject
                 )
+            if self._secret_access is None:
+                raise ResourceConflictError("browser secure capture authorization is unavailable")
+            await self._secret_access.install(run, session)
         expires_at = min(session.expires_at, now + timedelta(minutes=5))
         tool = f"browser.{mode.value}"
         payload = {"session_id": session.id, "subject": subject}

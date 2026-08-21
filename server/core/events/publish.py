@@ -18,6 +18,7 @@ class PublishSummary:
     claimed: int
     published: int
     failed: int
+    dead_lettered: int
 
 
 class OutboxRepository(Protocol):
@@ -45,6 +46,14 @@ class OutboxRepository(Protocol):
         available_at: datetime,
     ) -> None: ...
 
+    async def mark_dead_letter(
+        self,
+        claim: OutboxClaim,
+        owner_id: str,
+        error: str,
+        dead_lettered_at: datetime,
+    ) -> None: ...
+
 
 class EventTransport(Protocol):
     async def publish(self, event: RunEvent) -> str: ...
@@ -61,6 +70,7 @@ class EventPublisher:
         batch_size: int = 20,
         retry_base: timedelta = timedelta(seconds=5),
         retry_max: timedelta = timedelta(minutes=15),
+        maximum_attempts: int = 10,
     ) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be positive")
@@ -68,6 +78,8 @@ class EventPublisher:
             raise ValueError("lease_duration must be positive")
         if retry_base <= timedelta(0) or retry_max < retry_base:
             raise ValueError("retry delays are invalid")
+        if maximum_attempts < 1:
+            raise ValueError("maximum attempts must be positive")
         self._repository = repository
         self._transport = transport
         self._owner_id = owner_id
@@ -76,6 +88,7 @@ class EventPublisher:
         self._batch_size = batch_size
         self._retry_base = retry_base
         self._retry_max = retry_max
+        self._maximum_attempts = maximum_attempts
 
     async def drain(self, max_events: int = 100) -> PublishSummary:
         if max_events < 1:
@@ -83,6 +96,7 @@ class EventPublisher:
         claimed = 0
         published = 0
         failed = 0
+        dead_lettered = 0
 
         while claimed < max_events:
             batch = await self._repository.claim(
@@ -95,23 +109,38 @@ class EventPublisher:
                 break
             results = await asyncio.gather(*(self._deliver(item) for item in batch))
             claimed += len(batch)
-            published += sum(results)
-            failed += len(results) - sum(results)
+            published += sum(result == "published" for result in results)
+            failed += sum(result == "failed" for result in results)
+            dead_lettered += sum(result == "dead-lettered" for result in results)
 
-        return PublishSummary(claimed=claimed, published=published, failed=failed)
+        return PublishSummary(
+            claimed=claimed,
+            published=published,
+            failed=failed,
+            dead_lettered=dead_lettered,
+        )
 
-    async def _deliver(self, claim: OutboxClaim) -> bool:
+    async def _deliver(self, claim: OutboxClaim) -> str:
         try:
             message_id = await self._transport.publish(claim.outbox.event)
         except Exception as error:
             now = self._clock()
+            safe_error = _safe_error(error)
+            if claim.outbox.attempts >= self._maximum_attempts:
+                await self._repository.mark_dead_letter(
+                    claim,
+                    self._owner_id,
+                    safe_error,
+                    now,
+                )
+                return "dead-lettered"
             await self._repository.mark_failed(
                 claim,
                 self._owner_id,
-                _safe_error(error),
+                safe_error,
                 now + self._backoff(claim.outbox.attempts),
             )
-            return False
+            return "failed"
 
         await self._repository.mark_published(
             claim,
@@ -119,7 +148,7 @@ class EventPublisher:
             message_id,
             self._clock(),
         )
-        return True
+        return "published"
 
     def _backoff(self, attempts: int) -> timedelta:
         multiplier = 2 ** min(max(attempts - 1, 0), 16)

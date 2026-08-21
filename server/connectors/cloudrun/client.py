@@ -249,6 +249,7 @@ def _inspect(service: dict[str, Any]) -> dict[str, Any]:
         "traffic": service.get("trafficStatuses", []),
         "secret_bindings": bindings,
         "generation_id": generation_id,
+        "service_account": template.get("serviceAccount") if isinstance(template, dict) else None,
     }
 
 

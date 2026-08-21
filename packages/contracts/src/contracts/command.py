@@ -23,7 +23,7 @@ class CreateRunCommand(Contract):
     id: Identifier
     organisation_id: Identifier
     credential_id: Identifier
-    policy_version: Identifier
+    control_version: Identifier
     trigger: Trigger
     run_id: Identifier | None = None
 

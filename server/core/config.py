@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     browser_zone: str = ""
     browser_template: str = ""
     browser_worker_image: str = ""
+    model_armor_template: str = ""
     capability_public_key: str = ""
     evidence_bucket: str = ""
     github_app_slug: str = Field(default="", max_length=100)
@@ -74,6 +75,8 @@ class Settings(BaseSettings):
                 or callback.fragment
             ):
                 raise ValueError("GitHub callback URL must be an HTTPS URL without credentials")
+        if self.model_armor_template and not self.model_armor_template.startswith("projects/"):
+            raise ValueError("Model Armor template must be a full resource name")
         return self
 
 

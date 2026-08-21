@@ -28,6 +28,7 @@ class DrainResponse(Contract):
     claimed: int
     logged: int
     failed: int
+    dead_lettered: int
 
 
 class EventResponse(Contract):
@@ -64,6 +65,7 @@ class Runtime:
             claimed=summary.claimed,
             logged=summary.logged,
             failed=summary.failed,
+            dead_lettered=summary.dead_lettered,
         )
         record(
             "audit.deliver",

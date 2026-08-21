@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from contracts import PolicyDefinition, ProtectedAction, RecoveryMode, Stage, StageProof
+from contracts import ControlDefinition, ProtectedAction, RecoveryMode, Stage, StageProof
 from policy import REQUIRED_CHECKS, GatePolicy, PolicyViolationError, digest
 
 
@@ -15,6 +15,9 @@ def test_digest_is_stable_for_parameter_order() -> None:
         credential_id="cred_one",
         generation_id="generation_one",
         provider_id="key-one",
+        control_version="control_one",
+        plan_hash="a" * 64,
+        evidence_hash="b" * 64,
         parameters={"reason": "rotation", "force": False},
     )
     second = first.model_copy(update={"parameters": {"force": False, "reason": "rotation"}})
@@ -23,7 +26,7 @@ def test_digest_is_stable_for_parameter_order() -> None:
 
 
 def test_digest_is_stable_for_unordered_policy_values() -> None:
-    first = PolicyDefinition(
+    first = ControlDefinition(
         required_checks=REQUIRED_CHECKS,
         allowed_tools=frozenset({"provider.create", "verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK, RecoveryMode.RETRY}),
@@ -35,7 +38,7 @@ def test_digest_is_stable_for_unordered_policy_values() -> None:
     }
     payload["allowed_tools"] = list(reversed(payload["allowed_tools"]))
     payload["allowed_recovery_modes"] = list(reversed(payload["allowed_recovery_modes"]))
-    second = PolicyDefinition.model_validate(payload)
+    second = ControlDefinition.model_validate(payload)
 
     assert digest(first) == digest(second)
 
