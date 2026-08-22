@@ -11,7 +11,7 @@ const providerConnection = (id, platform, displayName) => ({
   interface: "api",
   authorization: "api-key",
   authorization_reference: `projects/acme-prod/secrets/${platform}-admin/versions/1`,
-  capabilities: ["provider.listCredentialMetadata", "provider.createCredential", "provider.getCredentialStatus", "provider.revokeCredential"],
+  capabilities: ["provider.listCredentialMetadata", "provider.createCredential", "provider.getCredentialStatus", "provider.revokeCredential", "provider.testCredential"],
   allowed_resources: [`${platform}:credentials:*`],
   http: {
     base_url: `https://api.${platform}.example`,
@@ -19,6 +19,8 @@ const providerConnection = (id, platform, displayName) => ({
     list_credentials: { method: "GET", path: "/credentials", success_statuses: [200], query: {}, body: {}, list_items: "items", provider_id_field: "id", secret_field: null, name_field: "name" },
     create_credential: { method: "POST", path: "/credentials", success_statuses: [201], query: {}, body: {}, list_items: null, provider_id_field: "id", secret_field: "secret", name_field: "name" },
     revoke_credential: { method: "DELETE", path: "/credentials/{provider_id}", success_statuses: [204], query: {}, body: {}, list_items: null, provider_id_field: null, secret_field: null, name_field: null },
+    test_credential: { method: "GET", path: "/credential", success_statuses: [200], query: {}, body: {}, list_items: null, provider_id_field: "id", secret_field: null, name_field: null },
+    credential_auth: { scheme: "bearer", header: "Authorization", prefix: "Bearer " },
   },
   playbook_id: null,
   playbook_version_id: null,
@@ -50,7 +52,7 @@ export const connections = [
     interface: "api",
     authorization: "api-key",
     authorization_reference: "projects/acme-prod/secrets/sendgrid-admin/versions/3",
-    capabilities: ["provider.listCredentialMetadata", "provider.createCredential", "provider.getCredentialStatus", "provider.revokeCredential"],
+    capabilities: ["provider.listCredentialMetadata", "provider.createCredential", "provider.getCredentialStatus", "provider.revokeCredential", "provider.testCredential"],
     allowed_resources: ["sendgrid:credentials:*"],
     http: {
       base_url: "https://api.sendgrid.com/v3",
@@ -58,6 +60,8 @@ export const connections = [
       list_credentials: { method: "GET", path: "/api_keys", success_statuses: [200], query: {}, body: {}, list_items: "result", provider_id_field: "api_key_id", secret_field: null, name_field: "name" },
       create_credential: { method: "POST", path: "/api_keys", success_statuses: [201], query: {}, body: { name: "${name}", scopes: "${scopes}" }, list_items: null, provider_id_field: "api_key_id", secret_field: "api_key", name_field: "name" },
       revoke_credential: { method: "DELETE", path: "/api_keys/{provider_id}", success_statuses: [204], query: {}, body: {}, list_items: null, provider_id_field: null, secret_field: null, name_field: null },
+      test_credential: { method: "GET", path: "/credential", success_statuses: [200], query: {}, body: {}, list_items: null, provider_id_field: "api_key_id", secret_field: null, name_field: null },
+      credential_auth: { scheme: "bearer", header: "Authorization", prefix: "Bearer " },
     },
     playbook_id: null,
     playbook_version_id: null,
@@ -254,14 +258,14 @@ export const runtimeResources = [
 ]
 
 export const credentials = [
-  { id: "cred_sendgrid", organisation_id: "org_acme", connection_id: "conn_sendgrid", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/sendgrid/versions/7", provider: "sendgrid", kind: "api-key", display_name: "production-password-emailer", provider_id: "sg_key_4902", scopes: ["mail.send"], consumer_ids: ["svc_notifications"], active_generation_id: "gen_sendgrid_7", control_version: "control_sendgrid_v1", created_at: "2026-05-18T10:00:00Z", updated_at: now, revision: 8 },
-  { id: "cred_stripe", organisation_id: "org_acme", connection_id: "conn_stripe", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/stripe/versions/5", provider: "stripe", kind: "api-key", display_name: "stripe-checkout-live", provider_id: "rk_live_8184", scopes: ["charges.write", "customers.read"], consumer_ids: ["svc_checkout", "svc_webhooks"], active_generation_id: "gen_stripe_5", control_version: "control_stripe_v1", created_at: "2026-06-14T10:00:00Z", updated_at: "2026-08-15T15:20:00Z", revision: 5 },
-  { id: "cred_vendor", organisation_id: "org_acme", connection_id: "conn_vendor", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/vendor/versions/3", provider: "internal-vendor", kind: "api-key", display_name: "vendor-order-export", provider_id: "vendor_key_942", scopes: ["orders.read", "orders.export"], consumer_ids: ["svc_orders"], active_generation_id: "gen_vendor_3", control_version: "control_vendor_v1", created_at: "2026-06-01T09:00:00Z", updated_at: "2026-08-10T11:00:00Z", revision: 3 },
-  { id: "cred_github", organisation_id: "org_acme", connection_id: "conn_github_provider", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/github/versions/4", provider: "github", kind: "fine-grained-token", display_name: "deployment-release-token", provider_id: "gh_pat_2841", scopes: ["contents:read", "deployments:write"], consumer_ids: ["svc_webhooks"], active_generation_id: "gen_github_4", control_version: "control_github_v1", created_at: "2026-04-01T09:00:00Z", updated_at: now, revision: 5 },
-  { id: "cred_billing", organisation_id: "org_acme", connection_id: "conn_stripe", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/billing/versions/9", provider: "stripe", kind: "restricted-key", display_name: "billing-subscriptions", provider_id: "rk_live_3172", scopes: ["subscriptions.write", "invoices.read"], consumer_ids: ["svc_billing"], active_generation_id: "gen_billing_9", control_version: "control_billing_v1", created_at: "2026-03-12T09:00:00Z", updated_at: "2026-08-12T10:00:00Z", revision: 9 },
-  { id: "cred_reconcile", organisation_id: "org_acme", connection_id: "conn_netsuite", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/reconcile/versions/2", provider: "netsuite", kind: "oauth-client", display_name: "finance-reconciliation", provider_id: "oauth_client_992", scopes: ["transactions.read"], consumer_ids: ["svc_reconcile"], active_generation_id: "gen_reconcile_2", control_version: "control_reconcile_v1", created_at: "2026-07-02T09:00:00Z", updated_at: "2026-08-02T10:00:00Z", revision: 2 },
-  { id: "cred_ingest", organisation_id: "org_acme", connection_id: "conn_segment", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/ingest/versions/6", provider: "segment", kind: "write-key", display_name: "production-event-ingest", provider_id: "segment_18f2", scopes: ["events.write"], consumer_ids: ["svc_ingest"], active_generation_id: "gen_ingest_6", control_version: "control_ingest_v1", created_at: "2026-02-10T09:00:00Z", updated_at: "2026-08-08T10:00:00Z", revision: 6 },
-  { id: "cred_exports", organisation_id: "org_acme", connection_id: "conn_snowflake", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/exports/versions/4", provider: "snowflake", kind: "key-pair", display_name: "warehouse-export-signer", provider_id: "snow_user_export", scopes: ["warehouse:use", "stage:write"], consumer_ids: ["svc_exports"], active_generation_id: "gen_exports_4", control_version: "control_exports_v1", created_at: "2026-01-12T09:00:00Z", updated_at: "2026-08-01T10:00:00Z", revision: 4 },
+  { id: "cred_sendgrid", organisation_id: "org_acme", connection_id: "conn_sendgrid", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/sendgrid", secret_reference: "projects/acme-prod/secrets/sendgrid/versions/7", provider: "sendgrid", kind: "api-key", display_name: "production-password-emailer", provider_id: "sg_key_4902", scopes: ["mail.send"], consumer_ids: ["svc_notifications"], active_generation_id: "gen_sendgrid_7", control_version: "control_sendgrid_v1", created_at: "2026-05-18T10:00:00Z", updated_at: now, revision: 8 },
+  { id: "cred_stripe", organisation_id: "org_acme", connection_id: "conn_stripe", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/stripe", secret_reference: "projects/acme-prod/secrets/stripe/versions/5", provider: "stripe", kind: "api-key", display_name: "stripe-checkout-live", provider_id: "rk_live_8184", scopes: ["charges.write", "customers.read"], consumer_ids: ["svc_checkout", "svc_webhooks"], active_generation_id: "gen_stripe_5", control_version: "control_stripe_v1", created_at: "2026-06-14T10:00:00Z", updated_at: "2026-08-15T15:20:00Z", revision: 5 },
+  { id: "cred_vendor", organisation_id: "org_acme", connection_id: "conn_vendor", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/vendor", secret_reference: "projects/acme-prod/secrets/vendor/versions/3", provider: "internal-vendor", kind: "api-key", display_name: "vendor-order-export", provider_id: "vendor_key_942", scopes: ["orders.read", "orders.export"], consumer_ids: ["svc_orders"], active_generation_id: "gen_vendor_3", control_version: "control_vendor_v1", created_at: "2026-06-01T09:00:00Z", updated_at: "2026-08-10T11:00:00Z", revision: 3 },
+  { id: "cred_github", organisation_id: "org_acme", connection_id: "conn_github_provider", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/github", secret_reference: "projects/acme-prod/secrets/github/versions/4", provider: "github", kind: "fine-grained-token", display_name: "deployment-release-token", provider_id: "gh_pat_2841", scopes: ["contents:read", "deployments:write"], consumer_ids: ["svc_webhooks"], active_generation_id: "gen_github_4", control_version: "control_github_v1", created_at: "2026-04-01T09:00:00Z", updated_at: now, revision: 5 },
+  { id: "cred_billing", organisation_id: "org_acme", connection_id: "conn_stripe", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/billing", secret_reference: "projects/acme-prod/secrets/billing/versions/9", provider: "stripe", kind: "restricted-key", display_name: "billing-subscriptions", provider_id: "rk_live_3172", scopes: ["subscriptions.write", "invoices.read"], consumer_ids: ["svc_billing"], active_generation_id: "gen_billing_9", control_version: "control_billing_v1", created_at: "2026-03-12T09:00:00Z", updated_at: "2026-08-12T10:00:00Z", revision: 9 },
+  { id: "cred_reconcile", organisation_id: "org_acme", connection_id: "conn_netsuite", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/reconcile", secret_reference: "projects/acme-prod/secrets/reconcile/versions/2", provider: "netsuite", kind: "oauth-client", display_name: "finance-reconciliation", provider_id: "oauth_client_992", scopes: ["transactions.read"], consumer_ids: ["svc_reconcile"], active_generation_id: "gen_reconcile_2", control_version: "control_reconcile_v1", created_at: "2026-07-02T09:00:00Z", updated_at: "2026-08-02T10:00:00Z", revision: 2 },
+  { id: "cred_ingest", organisation_id: "org_acme", connection_id: "conn_segment", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/ingest", secret_reference: "projects/acme-prod/secrets/ingest/versions/6", provider: "segment", kind: "write-key", display_name: "production-event-ingest", provider_id: "segment_18f2", scopes: ["events.write"], consumer_ids: ["svc_ingest"], active_generation_id: "gen_ingest_6", control_version: "control_ingest_v1", created_at: "2026-02-10T09:00:00Z", updated_at: "2026-08-08T10:00:00Z", revision: 6 },
+  { id: "cred_exports", organisation_id: "org_acme", connection_id: "conn_snowflake", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/exports", secret_reference: "projects/acme-prod/secrets/exports/versions/4", provider: "snowflake", kind: "key-pair", display_name: "warehouse-export-signer", provider_id: "snow_user_export", scopes: ["warehouse:use", "stage:write"], consumer_ids: ["svc_exports"], active_generation_id: "gen_exports_4", control_version: "control_exports_v1", created_at: "2026-01-12T09:00:00Z", updated_at: "2026-08-01T10:00:00Z", revision: 4 },
 ]
 
 export const providerCredentials = [
@@ -272,6 +276,17 @@ export const providerCredentials = [
   { connection_id: "conn_segment", provider_id: "segment_2711", name: "production-audit-events", kind: "write-key", scopes: ["events.write"], status: "active", disabled: false, created_at: "2026-07-22T09:00:00Z", last_used_at: "2026-08-16T11:00:00Z", expires_at: null },
   { connection_id: "conn_snowflake", provider_id: "snow_user_reports", name: "reporting-export", kind: "key-pair", scopes: ["warehouse:use", "stage:read"], status: "active", disabled: false, created_at: "2026-07-01T09:00:00Z", last_used_at: "2026-08-16T08:00:00Z", expires_at: null },
 ]
+
+export const credentialImports = providerCredentials.map((credential, index) => {
+  const name = credential.name.replaceAll("_", "-")
+  const secret_resource = `projects/acme-prod/secrets/${name}`
+  return {
+    connection_id: credential.connection_id,
+    provider_id: credential.provider_id,
+    secret_resource,
+    secret_reference: `${secret_resource}/versions/${index + 1}`,
+  }
+})
 
 export const bindings = credentials.flatMap((credential, credentialIndex) =>
   credential.consumer_ids.map((serviceId, consumerIndex) => {
@@ -471,5 +486,5 @@ export const notifications = [
 ]
 
 export function createStore() {
-  return structuredClone({ overview, connections, applications, environments, services, runtimeResources, credentials, providerCredentials, generations, bindings, runs, incidents, approvals, controlVersions, playbooks, playbookVersions, playbookSources, agents, audits, notifications, setups: [] })
+  return structuredClone({ overview, connections, applications, environments, services, runtimeResources, credentials, providerCredentials, credentialImports, generations, bindings, runs, incidents, approvals, controlVersions, playbooks, playbookVersions, playbookSources, agents, audits, notifications, setups: [] })
 }

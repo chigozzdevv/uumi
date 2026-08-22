@@ -35,6 +35,13 @@ try {
   assert.deepEqual(providerCredentials.body[0].scopes, ["mail.send"])
   assert.equal(Object.hasOwn(providerCredentials.body[0], "secret"), false)
 
+  const verifiedCredential = await request("/inventory/connections/conn_sendgrid/verify-credential", {
+    method: "POST",
+    body: JSON.stringify({ secret_store_connection_id: "conn_secrets", provider_id: "sg_key_7710", secret_reference: "projects/acme-prod/secrets/customer-notifications/versions/1" }),
+  })
+  assert.equal(verifiedCredential.response.status, 200)
+  assert.equal(verifiedCredential.body.verified, true)
+
   const runtimeResources = await request("/inventory/connections/conn_runtime/runtime-resources")
   assert.equal(runtimeResources.response.status, 200)
   assert(runtimeResources.body.some((entry) => entry.display_name === "inventory-reporter"))
@@ -83,11 +90,11 @@ try {
   const fixture = createStore()
   const service = fixture.services.find((entry) => entry.id === "svc_notifications")
   const createdAt = new Date().toISOString()
-  const secretReference = "projects/acme-prod/secrets/new-mailer/versions/1"
+  const secretReference = "projects/acme-prod/secrets/customer-notifications/versions/1"
   const imported = await request("/inventory/credentials", {
     method: "POST",
     body: JSON.stringify({
-      credential: { id: "cred_new_mailer", organisation_id: "org_acme", connection_id: "conn_sendgrid", secret_store_connection_id: "conn_secrets", secret_reference: secretReference, provider: "sendgrid", kind: "api-key", display_name: "new-mailer", provider_id: "sg_key_7710", scopes: ["mail.send"], consumer_ids: [service.id], active_generation_id: "gen_new_mailer", control_version: "control_new_mailer_v1", created_at: createdAt, updated_at: createdAt, revision: 0 },
+      credential: { id: "cred_new_mailer", organisation_id: "org_acme", connection_id: "conn_sendgrid", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/customer-notifications", secret_reference: secretReference, provider: "sendgrid", kind: "api-key", display_name: "new-mailer", provider_id: "sg_key_7710", scopes: ["mail.send"], consumer_ids: [service.id], active_generation_id: "gen_new_mailer", control_version: "control_new_mailer_v1", created_at: createdAt, updated_at: createdAt, revision: 0 },
       generation: { id: "gen_new_mailer", organisation_id: "org_acme", credential_id: "cred_new_mailer", provider_id: "sg_key_7710", fingerprint: null, scopes: ["mail.send"], state: "active", attempt_id: "attempt_new_mailer", secret_reference: secretReference, predecessor_id: null, successor_id: null, created_at: createdAt, revoked_at: null },
       bindings: [{ id: "binding_new_mailer", organisation_id: "org_acme", credential_id: "cred_new_mailer", service_id: service.id, environment_id: service.environment_id, runtime_connection_id: service.runtime_connection_id, runtime_resource: service.runtime_resource, runtime_secret_name: "NEW_MAILER_KEY", secret_reference: secretReference, current_generation_id: "gen_new_mailer", target_generation_id: null, verification_id: "verify_new_mailer", required: true, revision: 0 }],
       controls: { automatic_triggers: ["expiry", "drift"], rotate_before_expiry_seconds: 604800, maximum_observation_seconds: 1800 },

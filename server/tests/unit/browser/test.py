@@ -1947,6 +1947,7 @@ async def test_executor_binds_the_browser_connection() -> None:
         organisation_id="org_one",
         connection_id="connection_browser",
         secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
         secret_reference="projects/project-one/secrets/key",
         provider="internal-vendor",
         kind="api-key",

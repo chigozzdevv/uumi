@@ -195,7 +195,7 @@ export function CredentialsPage({ onNavigate, onNavigateRotation }: { onNavigate
       <PageHeader
         eyebrow="Inventory"
         title="Credentials"
-        actions={<Button onClick={() => setCreating(true)}><Plus className="size-3.5" /> Add credential</Button>}
+        actions={<Button onClick={() => setCreating(true)}><Plus className="size-3.5" /> Import credential</Button>}
       />
 
       <Toolbar

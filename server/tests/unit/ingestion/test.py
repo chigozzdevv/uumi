@@ -385,6 +385,7 @@ def _credential() -> ManagedCredential:
         organisation_id="org_one",
         connection_id="connection_one",
         secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/mailer",
         secret_reference="projects/project-one/secrets/mailer",
         provider="sendgrid",
         kind="api-key",

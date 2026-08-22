@@ -99,6 +99,32 @@ class HttpProviderConnector:
         response = await self._call(api, operation, headers, {})
         return response.status_code
 
+    async def credential_identity(
+        self,
+        connection: Connection,
+        secret_connection: Connection,
+        secret_reference: str,
+    ) -> str:
+        api = _api(connection)
+        operation = api.test_credential
+        auth = api.credential_auth
+        if operation is None or auth is None or operation.provider_id_field is None:
+            raise ConnectorError(
+                "credential-identity-unavailable",
+                "provider connection has no credential identity test",
+            )
+        with await self._secrets.access_for(secret_connection, secret_reference) as value:
+            response = await self._call(api, operation, _value_headers(value, auth), {})
+        _expected(response, set(operation.success_statuses))
+        payload = _object(response.json(), "credential identity")
+        identity = _dig(payload, operation.provider_id_field)
+        if not isinstance(identity, str) or not identity:
+            raise ConnectorError(
+                "invalid-provider-response",
+                "provider credential identity response has no credential identifier",
+            )
+        return identity
+
     async def prepare(
         self,
         tool: str,

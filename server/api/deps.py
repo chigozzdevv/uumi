@@ -88,6 +88,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
     )
     google = GoogleRestClient()
     secret_manager = SecretManagerConnector(google)
+    provider_connector = HttpProviderConnector(secret_manager)
 
     async def load_signer() -> CapabilitySigner:
         secret = await secret_manager.access(configured.capability_secret)
@@ -176,7 +177,8 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         inventory=InventoryService(
             inventory_repository,
             _now,
-            provider_metadata=HttpProviderConnector(secret_manager),
+            provider_metadata=provider_connector,
+            credential_verifier=provider_connector,
             secret_metadata=secret_manager,
             runtime_metadata=CloudRunConnector(google),
         ),

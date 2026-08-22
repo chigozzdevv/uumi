@@ -40,6 +40,16 @@ class ImportCredentialRequest(Contract):
     controls: ControlPreferences
 
 
+class VerifyCredentialPairRequest(Contract):
+    secret_store_connection_id: Identifier
+    provider_id: str = Field(min_length=1, max_length=512)
+    secret_reference: str = Field(min_length=1, max_length=1024)
+
+
+class VerifyCredentialPairResponse(Contract):
+    verified: bool
+
+
 class InventoryGraph(Contract):
     credentials: tuple[ManagedCredential, ...]
     services: tuple[ConsumerService, ...]
@@ -291,6 +301,29 @@ async def list_provider_credentials(
     return await required(api.inventory, "inventory").list_provider_credentials(
         organisation_id, connection_id
     )
+
+
+@router.post(
+    "/connections/{connection_id}/verify-credential",
+    response_model=VerifyCredentialPairResponse,
+)
+async def verify_credential_pair(
+    organisation_id: Identifier,
+    connection_id: Identifier,
+    body: VerifyCredentialPairRequest,
+    identity: Identity,
+    request: Request,
+) -> VerifyCredentialPairResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    await required(api.inventory, "inventory").verify_credential_pair(
+        organisation_id,
+        connection_id,
+        body.secret_store_connection_id,
+        body.provider_id,
+        body.secret_reference,
+    )
+    return VerifyCredentialPairResponse(verified=True)
 
 
 @router.get(

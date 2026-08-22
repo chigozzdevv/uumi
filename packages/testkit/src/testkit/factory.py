@@ -51,6 +51,7 @@ def make_http_provider_api(
             method="GET",
             path="/scopes",
             success_statuses=(200,),
+            provider_id_field="id",
         ),
         credential_auth=HttpAuth(scheme=HttpAuthScheme.BEARER),
     )

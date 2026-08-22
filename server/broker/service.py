@@ -461,7 +461,7 @@ class BrokerService:
             raise ConnectorError(
                 "secret-sink-not-assigned", "secret sink is not assigned to the credential"
             )
-        if secret_resource != credential.secret_reference:
+        if secret_resource != credential.secret_resource:
             raise ConnectorError(
                 "secret-sink-mismatch", "secret resource differs from the credential mapping"
             )

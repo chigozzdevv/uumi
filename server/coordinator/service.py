@@ -635,7 +635,7 @@ class StageCoordinator:
                         "name": credential.display_name,
                         "scopes": tuple(sorted(credential.scopes)),
                         "sink_connection_id": context.secret_store.id,
-                        "secret_resource": credential.secret_reference,
+                        "secret_resource": credential.secret_resource,
                     },
                     evidence_checks=frozenset({"provider-created", "secret-transferred"}),
                 ),

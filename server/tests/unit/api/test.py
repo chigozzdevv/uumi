@@ -326,6 +326,7 @@ class InventoryRepository:
                 organisation_id="org_one",
                 connection_id="connection_one",
                 secret_store_connection_id="connection_secret",
+                secret_resource="projects/org-one/secrets/sendgrid",
                 secret_reference="projects/org-one/secrets/sendgrid",
                 provider="sendgrid",
                 kind="api-key",

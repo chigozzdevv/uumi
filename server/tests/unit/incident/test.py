@@ -234,6 +234,7 @@ def _credential(credential_id: str, provider_id: str) -> ManagedCredential:
         organisation_id="org_one",
         connection_id="connection_one",
         secret_store_connection_id="secret_one",
+        secret_resource=f"projects/project-one/secrets/{credential_id}",
         secret_reference=f"projects/project-one/secrets/{credential_id}",
         provider="sendgrid",
         kind="api-key",

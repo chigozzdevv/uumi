@@ -95,6 +95,16 @@ export function CredentialSetup({
     queryFn: () => api.getSecretVersions(secretStoreId, secretResource),
     enabled: isOpen && Boolean(secretStoreId && secretResource),
   })
+  const credentialPairQuery = useQuery({
+    queryKey: ["credential-pair", connectionId, providerId, secretStoreId, secretReference],
+    queryFn: () => api.verifyCredentialPair(connectionId, {
+      secret_store_connection_id: secretStoreId,
+      provider_id: providerId,
+      secret_reference: secretReference,
+    }),
+    enabled: isOpen && Boolean(connectionId && providerId && secretStoreId && secretReference),
+    retry: false,
+  })
 
   function selectProviderCredential(nextProviderId: string) {
     setProviderId(nextProviderId)
@@ -139,7 +149,7 @@ export function CredentialSetup({
 
   function canContinue() {
     if (step === 0) return Boolean(connectionId && providerId && name.trim() && kind && connection?.status === "ready")
-    if (step === 1) return Boolean(secretStoreId && secretReference && selectedServices.length && selectedServices.every((service) => runtimeSecretNames[service.id]?.trim()))
+    if (step === 1) return Boolean(credentialPairQuery.data?.verified && selectedServices.length && selectedServices.every((service) => runtimeSecretNames[service.id]?.trim()))
     if (step === 2) return controlsAreValid(controls)
     return true
   }
@@ -165,6 +175,7 @@ export function CredentialSetup({
         organisation_id: "org_acme",
         connection_id: connection.id,
         secret_store_connection_id: secretStoreId,
+        secret_resource: secretResource,
         secret_reference: secretReference,
         provider: connection.platform,
         kind: kind.trim(),
@@ -254,30 +265,30 @@ export function CredentialSetup({
   return (
     <SetupPage
       eyebrow="Inventory / Credentials"
-      title="Add credential"
+      title="Import credential"
       steps={steps}
       current={step}
       onBack={() => setStep((value) => Math.max(0, value - 1))}
       onCancel={onClose}
-      error={error || providerCredentialsQuery.error?.message || secretResourcesQuery.error?.message || secretVersionsQuery.error?.message}
+      error={error || providerCredentialsQuery.error?.message || secretResourcesQuery.error?.message || secretVersionsQuery.error?.message || credentialPairQuery.error?.message}
       primary={step < steps.length - 1
         ? <Button onClick={next} disabled={!canContinue()}>Continue</Button>
-        : <Button onClick={submit} disabled={submitting}>{submitting ? "Adding credential…" : "Add credential"}</Button>}
+        : <Button onClick={submit} disabled={submitting}>{submitting ? "Importing…" : "Import credential"}</Button>}
     >
 
       {step === 0 && <div className="grid gap-4 sm:grid-cols-2">
-        <ResourceSelect label="Connection" value={connectionId} onChange={(value) => { setConnectionId(value); setProviderId(""); setName(""); setKind(""); setScopes("") }} addLabel="Add connection" onAdd={() => setDependency("connection")} className={field}><option value="">Select connection</option>{managementConnections.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect>
-        <Label title="Provider credential"><SelectControl className={field} value={providerId} onChange={(event) => selectProviderCredential(event.target.value)} disabled={providerCredentialsQuery.isLoading || !providerCredentials.length}><option value="">{providerCredentialsQuery.isLoading ? "Loading credentials…" : providerCredentials.length ? "Select credential" : "No available credentials"}</option>{providerCredentials.map((item) => <option key={item.provider_id} value={item.provider_id}>{item.name ? `${item.name} · ${item.provider_id}` : item.provider_id}</option>)}</SelectControl></Label>
-        <Label title="Credential name"><input className={field} value={name} onChange={(event) => setName(event.target.value)} placeholder="production-service-key" /></Label>
-        <Label title="Credential type"><SelectControl className={field} value={kind} onChange={(event) => setKind(event.target.value)}><option value="">Select type</option>{kind && !credentialKinds.some(([value]) => value === kind) && <option value={kind}>{titleCase(kind)}</option>}{credentialKinds.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectControl></Label>
+        <ResourceSelect label="Provider connection" value={connectionId} onChange={(value) => { setConnectionId(value); setProviderId(""); setName(""); setKind(""); setScopes("") }} addLabel="Add connection" onAdd={() => setDependency("connection")} className={field}><option value="">Select connection</option>{managementConnections.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect>
+        <Label title="Existing credential"><SelectControl className={field} value={providerId} onChange={(event) => selectProviderCredential(event.target.value)} disabled={providerCredentialsQuery.isLoading || !providerCredentials.length}><option value="">{providerCredentialsQuery.isLoading ? "Loading credentials…" : providerCredentials.length ? "Select credential" : "No available credentials"}</option>{providerCredentials.map((item) => <option key={item.provider_id} value={item.provider_id}>{item.name ? `${item.name} · ${item.provider_id}` : item.provider_id}</option>)}</SelectControl></Label>
+        <Label title="Name"><input className={field} value={name} onChange={(event) => setName(event.target.value)} placeholder="production-service-key" /></Label>
+        <Label title="Type"><SelectControl className={field} value={kind} onChange={(event) => setKind(event.target.value)}><option value="">Select type</option>{kind && !credentialKinds.some(([value]) => value === kind) && <option value={kind}>{titleCase(kind)}</option>}{credentialKinds.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectControl></Label>
         <div className="sm:col-span-2"><Label title="Scopes"><div className={`${field} flex h-auto min-h-11 items-center py-2.5`}>{scopes || "No scopes reported"}</div></Label></div>
       </div>}
 
       {step === 1 && <div>
         <Section title="Secret"><FormGrid>
-          <ResourceSelect label="Location" value={secretStoreId} onChange={(value) => { setSecretStoreId(value); setSecretResource(""); setSecretReference("") }} addLabel="Add connection" onAdd={() => setDependency("secret-location")} className={field}><option value="">Select location</option>{secretStores.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect>
-          <Label title="Secret"><SelectControl className={field} value={secretResource} onChange={(event) => { setSecretResource(event.target.value); setSecretReference("") }} disabled={!secretStoreId || secretResourcesQuery.isLoading}><option value="">{secretResourcesQuery.isLoading ? "Loading secrets…" : "Select secret"}</option>{secretResourcesQuery.data?.map((item) => <option key={item.reference} value={item.reference}>{item.display_name}</option>)}</SelectControl></Label>
-          <Label title="Version"><SelectControl className={field} value={secretReference} onChange={(event) => setSecretReference(event.target.value)} disabled={!secretResource || secretVersionsQuery.isLoading}><option value="">{secretVersionsQuery.isLoading ? "Loading versions…" : "Select enabled version"}</option>{secretVersionsQuery.data?.map((item) => <option key={item.reference} value={item.reference}>{item.reference.split("/").at(-1)}</option>)}</SelectControl></Label>
+          <ResourceSelect label="Secret store" value={secretStoreId} onChange={(value) => { setSecretStoreId(value); setSecretResource(""); setSecretReference("") }} addLabel="Add connection" onAdd={() => setDependency("secret-location")} className={field}><option value="">Select secret store</option>{secretStores.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect>
+          <Label title="Stored secret"><SelectControl className={field} value={secretResource} onChange={(event) => { setSecretResource(event.target.value); setSecretReference("") }} disabled={!secretStoreId || secretResourcesQuery.isLoading}><option value="">{secretResourcesQuery.isLoading ? "Loading secrets…" : "Select secret"}</option>{secretResourcesQuery.data?.map((item) => <option key={item.reference} value={item.reference}>{item.display_name}</option>)}</SelectControl></Label>
+          <Label title={`Current version${credentialPairQuery.isFetching ? " · Checking" : credentialPairQuery.data?.verified ? " · Verified" : ""}`}><SelectControl className={field} value={secretReference} onChange={(event) => setSecretReference(event.target.value)} disabled={!secretResource || secretVersionsQuery.isLoading}><option value="">{secretVersionsQuery.isLoading ? "Loading versions…" : "Select enabled version"}</option>{secretVersionsQuery.data?.map((item) => <option key={item.reference} value={item.reference}>{item.reference.split("/").at(-1)}</option>)}</SelectControl></Label>
         </FormGrid></Section>
         <Section title="Consumer"><FormGrid>
           <ResourceSelect label="Application service" value={serviceId} onChange={(value) => { setServiceId(value); setRuntimeSecretNames((current) => ({ ...current, [value]: current[value] || slug(name).replaceAll("-", "_").toUpperCase() })) }} addLabel="Add application" onAdd={() => setDependency("application")} className={field}><option value="">Select service</option>{applications.map((application) => {

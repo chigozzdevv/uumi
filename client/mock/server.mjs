@@ -311,6 +311,18 @@ createServer(async (request, response) => {
     return json(response, 200, store.providerCredentials.filter((entry) => entry.connection_id === connection.id).map(({ connection_id: _connectionId, ...entry }) => entry))
   }
 
+  const verifyCredentialMatch = path.match(/^\/inventory\/connections\/([a-z0-9_-]+)\/verify-credential$/)
+  if (request.method === "POST" && verifyCredentialMatch) {
+    const connection = item(store.connections, verifyCredentialMatch[1])
+    const input = await body(request)
+    if (!connection || connection.archived_at) return json(response, 404, { code: "not-found", message: "Connection not found" })
+    const secretStore = item(store.connections, input.secret_store_connection_id)
+    if (!secretStore?.roles.includes("secret-store") || !secretStore.allowed_resources.some((boundary) => input.secret_reference === boundary || input.secret_reference?.startsWith(`${boundary.replace(/\/$/, "")}/`))) return json(response, 409, { code: "conflict", message: "Credential secret reference escapes the secret store" })
+    const verified = store.credentialImports.some((entry) => entry.connection_id === connection.id && entry.provider_id === input.provider_id && entry.secret_reference === input.secret_reference)
+    if (!verified) return json(response, 409, { code: "conflict", message: "Stored secret does not authenticate as the selected provider credential" })
+    return json(response, 200, { verified: true })
+  }
+
   const runtimeResourcesMatch = path.match(/^\/inventory\/connections\/([a-z0-9_-]+)\/runtime-resources$/)
   if (request.method === "GET" && runtimeResourcesMatch) {
     const connection = item(store.connections, runtimeResourcesMatch[1])
@@ -325,7 +337,10 @@ createServer(async (request, response) => {
     const connection = item(store.connections, secretResourcesMatch[1])
     if (!connection || connection.archived_at) return json(response, 404, { code: "not-found", message: "Connection not found" })
     if (!connection.roles.includes("secret-store") || connection.interface !== "api" || connection.status !== "ready") return json(response, 409, { code: "conflict", message: "Secret discovery requires a ready secret-store connection" })
-    const resources = [...new Set(store.credentials.filter((entry) => entry.secret_store_connection_id === connection.id).map((entry) => entry.secret_reference.split("/versions/")[0]))]
+    const resources = [...new Set([
+      ...store.credentials.filter((entry) => entry.secret_store_connection_id === connection.id).map((entry) => entry.secret_resource),
+      ...store.credentialImports.map((entry) => entry.secret_resource),
+    ])]
     return json(response, 200, resources.map((reference) => ({ reference, display_name: reference.split("/").at(-1) })))
   }
 
@@ -335,7 +350,11 @@ createServer(async (request, response) => {
     const secret = url.searchParams.get("secret")
     if (!connection || connection.archived_at) return json(response, 404, { code: "not-found", message: "Connection not found" })
     if (!secret || !connection.allowed_resources.some((boundary) => secret === boundary || secret.startsWith(`${boundary.replace(/\/$/, "")}/`))) return json(response, 409, { code: "conflict", message: "Secret resource escapes the connection boundary" })
-    return json(response, 200, [{ reference: `${secret}/versions/1`, state: "ENABLED", created_at: new Date().toISOString() }])
+    const references = [
+      ...store.generations.map((entry) => entry.secret_reference),
+      ...store.credentialImports.map((entry) => entry.secret_reference),
+    ].filter((reference) => reference?.startsWith(`${secret}/versions/`))
+    return json(response, 200, [...new Set(references)].map((reference) => ({ reference, state: "ENABLED", created_at: new Date().toISOString() })))
   }
 
   const inventoryMatch = path.match(/^\/inventory\/(connections|applications|environments|services|credentials)\/([a-z0-9_-]+)(\/archive)?$/)
@@ -422,7 +441,14 @@ createServer(async (request, response) => {
     if (!connection?.id || connection.organisation_id !== "org_acme" || !Array.isArray(connection.roles) || !connection.roles.length) return json(response, 422, { code: "validation-error", message: "Connection identity, organization, and role are required" })
     if (item(store.connections, connection.id)) return json(response, 409, { code: "conflict", message: `Connection ${connection.id} already exists` })
     if (connection.interface === "browser" && (connection.roles.length !== 1 || connection.roles[0] !== "provider" || connection.authorization !== "browser-session" || connection.status !== "setup-required")) return json(response, 409, { code: "conflict", message: "Browser connections start as provider-only setup-required connections" })
-    if (connection.interface === "api" && connection.roles.includes("provider") && !connection.http) return json(response, 422, { code: "validation-error", message: "API provider connections require typed HTTP operations" })
+    if (connection.interface === "api" && connection.roles.includes("provider") && (!connection.http?.test_credential?.provider_id_field || !connection.http?.credential_auth || !connection.capabilities.includes("provider.testCredential"))) return json(response, 422, { code: "validation-error", message: "API provider connections require typed list, create, revoke, and credential identity operations" })
+    if (connection.interface === "api" && connection.roles.includes("provider")) {
+      const timestamp = new Date().toISOString()
+      connection.status = "ready"
+      connection.authenticated_at = timestamp
+      connection.last_validated_at = timestamp
+      connection.updated_at = timestamp
+    }
     store.connections.push(connection)
     return json(response, 201, connection)
   }
@@ -628,6 +654,7 @@ createServer(async (request, response) => {
       return json(response, 409, { code: "conflict", message: "Imported generation lineage is inconsistent" })
     }
     if (credential.secret_reference !== generation.secret_reference) return json(response, 409, { code: "conflict", message: "Credential and active generation secret references differ" })
+    if (credential.secret_reference.split("/versions/")[0] !== credential.secret_resource) return json(response, 409, { code: "conflict", message: "Credential secret version does not belong to its resource" })
     if (!credential.secret_reference.includes("/versions/")) return json(response, 409, { code: "conflict", message: "Credential secret reference must identify one immutable version" })
     const consumerIds = new Set(credential.consumer_ids)
     const bindingServices = new Set(bindings.map((entry) => entry.service_id))
@@ -645,6 +672,8 @@ createServer(async (request, response) => {
       return json(response, 404, { code: "not-found", message: "Credential connection or consumer service is missing" })
     }
     if (management.interface === "browser" && (!management.playbook_version_id || management.status !== "ready")) return json(response, 409, { code: "conflict", message: "Browser credential connection is not ready" })
+    const verifiedImport = store.credentialImports.find((entry) => entry.connection_id === credential.connection_id && entry.provider_id === credential.provider_id && entry.secret_resource === credential.secret_resource && entry.secret_reference === credential.secret_reference)
+    if (!verifiedImport) return json(response, 409, { code: "conflict", message: "Stored secret does not authenticate as the selected provider credential" })
     if (bindings.some((entry) => { const service = item(store.services, entry.service_id); return !service || !service.verification || entry.environment_id !== service.environment_id || entry.runtime_connection_id !== service.runtime_connection_id || entry.runtime_resource !== service.runtime_resource || entry.secret_reference !== generation.secret_reference })) return json(response, 409, { code: "conflict", message: "Credential binding does not match its consumer service, verification, or generation" })
     if (bindings.some((entry) => !entry.runtime_secret_name)) return json(response, 422, { code: "validation-error", message: "Runtime secret name is required for every binding" })
 

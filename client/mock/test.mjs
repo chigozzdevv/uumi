@@ -24,6 +24,7 @@ for (const credential of store.credentials) {
   assert(management?.roles.includes("provider"), `${credential.id} requires a provider connection`)
   assert.equal(management.platform, credential.provider, `${credential.id} platform does not match its provider connection`)
   assert(secretStore?.roles.includes("secret-store"), `${credential.id} requires a secret-store connection`)
+  assert.equal(credential.secret_reference.split("/versions/")[0], credential.secret_resource, `${credential.id} secret version differs from its resource`)
   assert(credential.secret_reference, `${credential.id} requires a secret reference`)
   assert.equal(store.generations.find((generation) => generation.id === credential.active_generation_id)?.secret_reference, credential.secret_reference, `${credential.id} secret reference differs from its active generation`)
   assert(secretStore.allowed_resources.some((boundary) => credential.secret_reference === boundary || credential.secret_reference.startsWith(`${boundary.replace(/\/$/, "")}/`)), `${credential.id} escapes its secret-store boundary`)
@@ -45,6 +46,11 @@ for (const metadata of store.providerCredentials) {
   assert.equal(connection.interface, "api", `${metadata.provider_id} requires API discovery`)
   assert(metadata.provider_id && metadata.kind && metadata.scopes.length, `${metadata.provider_id} has incomplete metadata`)
   assert(!Object.hasOwn(metadata, "secret"), `${metadata.provider_id} must not expose secret material`)
+}
+
+for (const candidate of store.credentialImports) {
+  assert(store.providerCredentials.some((entry) => entry.connection_id === candidate.connection_id && entry.provider_id === candidate.provider_id), `${candidate.provider_id} has no provider metadata`)
+  assert.equal(candidate.secret_reference.split("/versions/")[0], candidate.secret_resource, `${candidate.provider_id} import secret is inconsistent`)
 }
 
 for (const generation of store.generations) {

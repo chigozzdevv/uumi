@@ -15,6 +15,7 @@ export interface HttpOperation {
   provider_id_field: string | null
   secret_field: string | null
   name_field: string | null
+  metadata_fields?: Record<string, string>
 }
 
 export interface HttpProviderApi {
@@ -27,6 +28,12 @@ export interface HttpProviderApi {
   list_credentials: HttpOperation
   create_credential: HttpOperation
   revoke_credential: HttpOperation
+  test_credential: HttpOperation | null
+  credential_auth: {
+    scheme: "bearer" | "header" | "basic"
+    header: string
+    prefix: string | null
+  } | null
 }
 
 export interface Connection {
@@ -138,6 +145,7 @@ export interface ManagedCredential {
   organisation_id: Identifier
   connection_id: Identifier
   secret_store_connection_id: Identifier
+  secret_resource: string
   secret_reference: string
   provider: string
   kind: string

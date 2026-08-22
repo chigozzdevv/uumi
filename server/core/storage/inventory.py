@@ -445,7 +445,7 @@ class FirestoreInventoryRepository:
                 or secret_store.interface is not ConnectionInterface.API
                 or secret_store.archived_at is not None
                 or secret_store.status is not ConnectionStatus.READY
-                or not _covered(credential.secret_reference, secret_store.allowed_resources)
+                or not _covered(credential.secret_resource, secret_store.allowed_resources)
             ):
                 raise ResourceConflictError(
                     "credential secret-store connection changed during import"

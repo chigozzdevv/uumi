@@ -41,6 +41,34 @@ from testkit import make_http_provider_api
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
 
+class ImportMetadata:
+    async def metadata(self, connection: Connection) -> tuple[dict[str, object], ...]:
+        return (
+            {
+                "provider_id": "provider_key_one",
+                "kind": "api-key",
+                "scopes": ["messages.write"],
+                "disabled": False,
+            },
+        )
+
+
+class ImportVerifier:
+    def __init__(self, identity: str = "provider_key_one") -> None:
+        self.identity = identity
+
+    async def credential_identity(
+        self,
+        connection: Connection,
+        secret_connection: Connection,
+        secret_reference: str,
+    ) -> str:
+        assert connection.id == "provider_one"
+        assert secret_connection.id == "secret_one"
+        assert secret_reference == "projects/project-one/secrets/key/versions/1"
+        return self.identity
+
+
 class Catalog:
     def __init__(self) -> None:
         self.version: PlaybookVersion | None = None
@@ -398,6 +426,7 @@ async def test_inventory_rejects_missing_consumer_binding() -> None:
         organisation_id="org_one",
         connection_id="provider_one",
         secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
         secret_reference="projects/project-one/secrets/key/versions/1",
         provider="provider",
         kind="api-key",
@@ -435,12 +464,18 @@ async def test_inventory_rejects_missing_consumer_binding() -> None:
 @pytest.mark.anyio
 async def test_inventory_compiles_functional_probe_and_recovery_from_service_choices() -> None:
     repository = Catalog()
-    service = InventoryService(repository, clock=lambda: NOW)
+    service = InventoryService(
+        repository,
+        clock=lambda: NOW,
+        provider_metadata=ImportMetadata(),
+        credential_verifier=ImportVerifier(),
+    )
     credential = ManagedCredential(
         id="credential_one",
         organisation_id="org_one",
         connection_id="provider_one",
         secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
         secret_reference="projects/project-one/secrets/key/versions/1",
         provider="provider",
         kind="api-key",
@@ -493,6 +528,72 @@ async def test_inventory_compiles_functional_probe_and_recovery_from_service_cho
 
 
 @pytest.mark.anyio
+async def test_inventory_rejects_a_secret_for_another_provider_credential() -> None:
+    repository = Catalog()
+    service = InventoryService(
+        repository,
+        clock=lambda: NOW,
+        provider_metadata=ImportMetadata(),
+        credential_verifier=ImportVerifier("another_provider_key"),
+    )
+    credential = ManagedCredential(
+        id="credential_one",
+        organisation_id="org_one",
+        connection_id="provider_one",
+        secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
+        secret_reference="projects/project-one/secrets/key/versions/1",
+        provider="provider",
+        kind="api-key",
+        display_name="Production key",
+        provider_id="provider_key_one",
+        scopes=frozenset({"messages.write"}),
+        consumer_ids=("service_one",),
+        active_generation_id="generation_one",
+        control_version="control_one",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    generation = CredentialGeneration(
+        id="generation_one",
+        organisation_id="org_one",
+        credential_id=credential.id,
+        provider_id=credential.provider_id,
+        state=GenerationState.ACTIVE,
+        attempt_id="attempt_one",
+        secret_reference=credential.secret_reference,
+        created_at=NOW,
+    )
+    service_value = await repository.get_service("org_one", "service_one")
+    binding = ConsumerBinding(
+        id="binding_one",
+        organisation_id="org_one",
+        credential_id=credential.id,
+        service_id=service_value.id,
+        environment_id=service_value.environment_id,
+        runtime_connection_id=service_value.runtime_connection_id,
+        runtime_resource=service_value.runtime_resource,
+        runtime_secret_name="PROVIDER_KEY",
+        secret_reference=credential.secret_reference,
+        current_generation_id=generation.id,
+        verification_id="probe_functional_one",
+    )
+
+    with pytest.raises(ResourceConflictError, match="does not authenticate"):
+        await service.import_credential(
+            credential,
+            generation,
+            (binding,),
+            ControlPreferences(
+                automatic_triggers=frozenset({"expiry"}),
+                rotate_before_expiry_seconds=604800,
+                maximum_observation_seconds=1800,
+            ),
+            "actor_one",
+        )
+
+
+@pytest.mark.anyio
 async def test_confirmed_service_archive_includes_bound_credential_and_binding() -> None:
     repository = Catalog()
     credential = ManagedCredential(
@@ -500,6 +601,7 @@ async def test_confirmed_service_archive_includes_bound_credential_and_binding()
         organisation_id="org_one",
         connection_id="provider_one",
         secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
         secret_reference="projects/project-one/secrets/key/versions/1",
         provider="provider",
         kind="api-key",
@@ -653,6 +755,37 @@ async def test_browser_connection_requires_domains_and_capability() -> None:
     )
     with pytest.raises(ResourceConflictError, match="browser capability"):
         await service.add_connection(without_capability)
+
+
+@pytest.mark.anyio
+async def test_provider_connection_is_ready_only_after_live_metadata_validation() -> None:
+    repository = Catalog()
+    candidate = _api_connection("provider_new", ConnectionRole.PROVIDER).model_copy(
+        update={
+            "status": ConnectionStatus.SETUP_REQUIRED,
+            "capabilities": frozenset(
+                {
+                    "provider.listCredentialMetadata",
+                    "provider.createCredential",
+                    "provider.getCredentialStatus",
+                    "provider.revokeCredential",
+                    "provider.testCredential",
+                }
+            ),
+            "authenticated_at": None,
+            "last_validated_at": None,
+        }
+    )
+
+    created = await InventoryService(
+        repository,
+        clock=lambda: NOW,
+        provider_metadata=ImportMetadata(),
+    ).add_connection(candidate)
+
+    assert created.status is ConnectionStatus.READY
+    assert created.authenticated_at == NOW
+    assert created.last_validated_at == NOW
 
 
 def test_audit_hash_binds_sequence_and_previous_event() -> None:

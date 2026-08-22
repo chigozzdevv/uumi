@@ -21,6 +21,7 @@ class ManagedCredential(Contract):
     organisation_id: Identifier
     connection_id: Identifier
     secret_store_connection_id: Identifier
+    secret_resource: str = Field(min_length=1, max_length=1024)
     secret_reference: str = Field(min_length=1, max_length=1024)
     provider: str = Field(min_length=1, max_length=64)
     kind: str = Field(min_length=1, max_length=64)
@@ -41,6 +42,8 @@ class ManagedCredential(Contract):
 
     @model_validator(mode="after")
     def validate_rotation_due(self) -> "ManagedCredential":
+        if self.secret_reference.partition("/versions/")[0] != self.secret_resource:
+            raise ValueError("credential secret reference must belong to its secret resource")
         if len(set(self.consumer_ids)) != len(self.consumer_ids):
             raise ValueError("credential consumer IDs must be unique")
         if self.rotation_due_at is not None and self.expires_at is None:

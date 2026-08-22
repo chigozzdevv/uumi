@@ -482,6 +482,49 @@ async def test_http_metadata_projection_drops_undeclared_provider_fields() -> No
 
 
 @pytest.mark.anyio
+async def test_http_provider_proves_the_secret_credential_identity() -> None:
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/versions/1:access")
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"workload-secret").decode()}},
+        )
+
+    def provider_handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer workload-secret"
+        return httpx.Response(200, json={"id": "provider-key-one"})
+
+    google = _google(google_handler)
+    secret_connection = _runtime_context().connection.model_copy(
+        update={
+            "id": "secret_one",
+            "platform": "google-secret-manager",
+            "roles": frozenset({ConnectionRole.SECRET_STORE}),
+            "authorization_reference": (
+                "workload-identity://secret-reader@project-one.iam.gserviceaccount.com"
+            ),
+            "capabilities": SecretManagerConnector.tools,
+        }
+    )
+    google._connection_credentials["secret-reader@project-one.iam.gserviceaccount.com"] = (
+        Credentials(token="token")  # type: ignore[no-untyped-call]
+    )
+    connector = HttpProviderConnector(
+        SecretManagerConnector(google),
+        httpx.AsyncClient(transport=httpx.MockTransport(provider_handler)),
+    )
+
+    identity = await connector.credential_identity(
+        _context().connection,
+        secret_connection,
+        "projects/project-one/secrets/workload/versions/1",
+    )
+
+    assert identity == "provider-key-one"
+    await google.close()
+
+
+@pytest.mark.anyio
 async def test_http_connector_encodes_provider_ids_before_building_paths() -> None:
     seen: list[bytes] = []
 
