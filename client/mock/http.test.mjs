@@ -35,6 +35,11 @@ try {
   assert.deepEqual(providerCredentials.body[0].scopes, ["mail.send"])
   assert.equal(Object.hasOwn(providerCredentials.body[0], "secret"), false)
 
+  const runtimeResources = await request("/inventory/connections/conn_runtime/runtime-resources")
+  assert.equal(runtimeResources.response.status, 200)
+  assert(runtimeResources.body.some((entry) => entry.display_name === "inventory-reporter"))
+  assert.equal(Object.hasOwn(runtimeResources.body[0], "secret"), false)
+
   const detail = await request("/inventory/credentials/cred_sendgrid")
   assert.equal(detail.response.status, 200)
   assert.equal(detail.body.display_name, "production-password-emailer")

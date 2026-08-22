@@ -15,6 +15,7 @@ from contracts import (
     Identifier,
     ManagedCredential,
     ProviderCredentialMetadata,
+    RuntimeResourceMetadata,
     SecretResourceMetadata,
     SecretVersionMetadata,
     SetupSession,
@@ -288,6 +289,23 @@ async def list_provider_credentials(
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
     return await required(api.inventory, "inventory").list_provider_credentials(
+        organisation_id, connection_id
+    )
+
+
+@router.get(
+    "/connections/{connection_id}/runtime-resources",
+    response_model=tuple[RuntimeResourceMetadata, ...],
+)
+async def list_runtime_resources(
+    organisation_id: Identifier,
+    connection_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> tuple[RuntimeResourceMetadata, ...]:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_READ)
+    return await required(api.inventory, "inventory").list_runtime_resources(
         organisation_id, connection_id
     )
 

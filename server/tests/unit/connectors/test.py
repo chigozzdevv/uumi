@@ -696,6 +696,68 @@ async def test_cloudrun_deploy_supports_multi_container_with_target() -> None:
 
 
 @pytest.mark.anyio
+async def test_cloudrun_lists_services_from_connection_region_without_secret_material() -> None:
+    from connectors.cloudrun import CloudRunConnector
+
+    requests_log: list[httpx.Request] = []
+
+    def run_handler(request: httpx.Request) -> httpx.Response:
+        requests_log.append(request)
+        page_token = request.url.params.get("pageToken")
+        if page_token == "next":
+            return httpx.Response(
+                200,
+                json={
+                    "services": [
+                        {
+                            "name": "projects/project-one/locations/us-east1/services/worker-two",
+                            "uri": "https://worker-two.example.run.app",
+                            "template": {
+                                "serviceAccount": "worker-two@example.iam.gserviceaccount.com"
+                            },
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "services": [
+                    {
+                        "name": "projects/project-one/locations/us-east1/services/worker-one",
+                        "uri": "https://worker-one.example.run.app",
+                        "template": {
+                            "serviceAccount": "worker-one@example.iam.gserviceaccount.com"
+                        },
+                    }
+                ],
+                "nextPageToken": "next",
+            },
+        )
+
+    google = _google(run_handler)
+    google._connection_credentials["runtime@project-one.iam.gserviceaccount.com"] = Credentials(
+        token="token"
+    )  # type: ignore[no-untyped-call]
+    connector = CloudRunConnector(google)
+    connection = _runtime_context().connection.model_copy(
+        update={"allowed_resources": ("projects/project-one",), "region": "us-east1"}
+    )
+
+    resources = await connector.resources_for(connection)
+
+    assert [resource["display_name"] for resource in resources] == ["worker-one", "worker-two"]
+    assert resources[0]["identity"] == "worker-one@example.iam.gserviceaccount.com"
+    assert resources[0]["endpoint"] == "https://worker-one.example.run.app"
+    assert all("secret" not in resource for resource in resources)
+    assert all(
+        request.url.path == "/v2/projects/project-one/locations/us-east1/services"
+        for request in requests_log
+    )
+    await google.close()
+
+
+@pytest.mark.anyio
 async def test_google_customer_calls_reject_process_identity_fallback() -> None:
     google = _google(lambda request: httpx.Response(200, json={}))
 

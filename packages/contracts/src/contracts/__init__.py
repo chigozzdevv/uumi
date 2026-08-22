@@ -85,6 +85,7 @@ from contracts.inventory import (
     ConsumerService,
     Environment,
     FunctionalVerification,
+    RuntimeResourceMetadata,
 )
 from contracts.notification import (
     Notification,
@@ -266,6 +267,7 @@ __all__ = [
     "RunStatus",
     "RunStep",
     "RuntimeDeployment",
+    "RuntimeResourceMetadata",
     "SecretResourceMetadata",
     "SecretVersionMetadata",
     "SecureCaptureResult",

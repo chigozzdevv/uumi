@@ -102,7 +102,7 @@ export const connections = [
     interface: "api",
     authorization: "workload-identity",
     authorization_reference: "workload-identity://firekey-runtime-operator",
-    capabilities: ["runtime.deployCandidate", "runtime.shiftTraffic", "runtime.rollback", "runtime.invokeCandidateProbe"],
+    capabilities: ["runtime.listServices", "runtime.deployCandidate", "runtime.shiftTraffic", "runtime.rollback", "runtime.invokeCandidateProbe"],
     allowed_resources: ["projects/acme-prod"],
     http: null,
     playbook_id: null,
@@ -228,6 +228,30 @@ export const services = [
     timeout_seconds: 30,
   },
 }))
+
+export const runtimeResources = [
+  ...services.map((service) => ({
+    connection_id: service.runtime_connection_id,
+    reference: service.runtime_resource,
+    display_name: service.display_name,
+    endpoint: service.verification.target,
+    identity: service.identity,
+  })),
+  {
+    connection_id: "conn_runtime",
+    reference: "projects/acme-prod/locations/us-central1/services/customer-sync",
+    display_name: "customer-sync",
+    endpoint: "https://customer-sync-acme-prod.us-central1.run.app",
+    identity: "customer-sync@acme-prod.iam.gserviceaccount.com",
+  },
+  {
+    connection_id: "conn_runtime",
+    reference: "projects/acme-prod/locations/us-central1/services/inventory-reporter",
+    display_name: "inventory-reporter",
+    endpoint: "https://inventory-reporter-acme-prod.us-central1.run.app",
+    identity: "inventory-reporter@acme-prod.iam.gserviceaccount.com",
+  },
+]
 
 export const credentials = [
   { id: "cred_sendgrid", organisation_id: "org_acme", connection_id: "conn_sendgrid", secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/sendgrid/versions/7", provider: "sendgrid", kind: "api-key", display_name: "production-password-emailer", provider_id: "sg_key_4902", scopes: ["mail.send"], consumer_ids: ["svc_notifications"], active_generation_id: "gen_sendgrid_7", control_version: "control_sendgrid_v1", created_at: "2026-05-18T10:00:00Z", updated_at: now, revision: 8 },
@@ -447,5 +471,5 @@ export const notifications = [
 ]
 
 export function createStore() {
-  return structuredClone({ overview, connections, applications, environments, services, credentials, providerCredentials, generations, bindings, runs, incidents, approvals, controlVersions, playbooks, playbookVersions, playbookSources, agents, audits, notifications, setups: [] })
+  return structuredClone({ overview, connections, applications, environments, services, runtimeResources, credentials, providerCredentials, generations, bindings, runs, incidents, approvals, controlVersions, playbooks, playbookVersions, playbookSources, agents, audits, notifications, setups: [] })
 }

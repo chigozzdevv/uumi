@@ -12,6 +12,7 @@ class CloudRunConnector:
     tools = frozenset(
         {
             "runtime.inspectSecretBindings",
+            "runtime.listServices",
             "runtime.deployCandidate",
             "runtime.shiftTraffic",
             "runtime.rollback",
@@ -20,6 +21,70 @@ class CloudRunConnector:
 
     def __init__(self, client: GoogleRestClient) -> None:
         self._client = client
+
+    async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+        if connection.platform != "cloud-run":
+            raise ConnectorError(
+                "runtime-discovery-unavailable",
+                f"No runtime resource adapter is configured for {connection.platform}",
+            )
+        resources: list[dict[str, object]] = []
+        for target, exact in _discovery_targets(connection):
+            values: tuple[dict[str, Any], ...]
+            if exact:
+                values = (
+                    await self._client.request(
+                        "GET",
+                        f"https://run.googleapis.com/v2/{target}",
+                        connection=connection,
+                    ),
+                )
+            else:
+                values = await self._list_services(connection, target)
+            for service in values:
+                name = service.get("name")
+                if not isinstance(name, str) or not name:
+                    raise ConnectorError(
+                        "runtime-invalid",
+                        "Cloud Run returned a service without a resource name",
+                    )
+                template = service.get("template")
+                identity = template.get("serviceAccount") if isinstance(template, dict) else None
+                resources.append(
+                    {
+                        "reference": name,
+                        "display_name": name.rsplit("/", 1)[-1],
+                        "endpoint": service.get("uri"),
+                        "identity": identity,
+                    }
+                )
+        return tuple({item["reference"]: item for item in resources}.values())
+
+    async def _list_services(
+        self, connection: Connection, parent: str
+    ) -> tuple[dict[str, Any], ...]:
+        services: list[dict[str, Any]] = []
+        page_token = ""
+        while True:
+            params = {"pageSize": "1000"}
+            if page_token:
+                params["pageToken"] = page_token
+            result = await self._client.request(
+                "GET",
+                f"https://run.googleapis.com/v2/{parent}/services",
+                params=params,
+                connection=connection,
+            )
+            values = result.get("services", [])
+            if not isinstance(values, list) or not all(isinstance(item, dict) for item in values):
+                raise ConnectorError(
+                    "runtime-invalid", "Cloud Run returned an invalid service list"
+                )
+            services.extend(values)
+            next_token = result.get("nextPageToken")
+            if not isinstance(next_token, str) or not next_token:
+                return tuple(services)
+            page_token = next_token
 
     async def inspect(self, connection: Connection, service_name: str) -> dict[str, Any]:
         service = await self._client.request(
@@ -284,6 +349,39 @@ def _service_name(value: str) -> str:
     if not value.startswith("projects/") or "/locations/" not in value or "/services/" not in value:
         raise ConnectorError("invalid-service", "a full Cloud Run service resource is required")
     return value
+
+
+def _discovery_targets(connection: Connection) -> tuple[tuple[str, bool], ...]:
+    targets: list[tuple[str, bool]] = []
+    for raw in connection.allowed_resources:
+        boundary = raw.rstrip("/")
+        if not boundary.startswith("projects/"):
+            raise ConnectorError(
+                "invalid-runtime-boundary",
+                "Cloud Run discovery requires a project, location, or service resource boundary",
+            )
+        if "/services/" in boundary:
+            targets.append((_service_name(boundary), True))
+            continue
+        if boundary.endswith("/services"):
+            boundary = boundary.removesuffix("/services")
+        if "/locations/" in boundary:
+            parts = boundary.split("/")
+            if len(parts) != 4 or parts[3] == "-":
+                raise ConnectorError(
+                    "invalid-runtime-boundary",
+                    "Cloud Run discovery requires one concrete location",
+                )
+            targets.append((boundary, False))
+            continue
+        if len(boundary.split("/")) == 2:
+            targets.append((f"{boundary}/locations/{connection.region}", False))
+            continue
+        raise ConnectorError(
+            "invalid-runtime-boundary",
+            "Cloud Run discovery requires a project, location, or service resource boundary",
+        )
+    return tuple(dict.fromkeys(targets))
 
 
 def _string(payload: dict[str, Any], key: str) -> str:

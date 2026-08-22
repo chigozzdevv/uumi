@@ -20,6 +20,7 @@ from contracts import (
     PlaybookVersion,
     ProbeVersion,
     ProviderCredentialMetadata,
+    RuntimeResourceMetadata,
     SecretResourceMetadata,
     SecretVersionMetadata,
 )
@@ -157,6 +158,10 @@ class SecretMetadataLister(Protocol):
     ) -> tuple[dict[str, object], ...]: ...
 
 
+class RuntimeMetadataLister(Protocol):
+    async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]: ...
+
+
 class InventoryService:
     def __init__(
         self,
@@ -164,11 +169,13 @@ class InventoryService:
         clock: Callable[[], datetime] | None = None,
         provider_metadata: ProviderMetadataLister | None = None,
         secret_metadata: SecretMetadataLister | None = None,
+        runtime_metadata: RuntimeMetadataLister | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock or (lambda: datetime.now(UTC))
         self._provider_metadata = provider_metadata
         self._secret_metadata = secret_metadata
+        self._runtime_metadata = runtime_metadata
 
     async def add_connection(self, connection: Connection) -> Connection:
         if connection.interface is ConnectionInterface.BROWSER:
@@ -423,6 +430,30 @@ class InventoryService:
             )
             for item in resources
         )
+
+    async def list_runtime_resources(
+        self, organisation_id: str, connection_id: str
+    ) -> tuple[RuntimeResourceMetadata, ...]:
+        connection = await self.get_connection(organisation_id, connection_id)
+        if (
+            connection.archived_at is not None
+            or connection.status is not ConnectionStatus.READY
+            or connection.interface is not ConnectionInterface.API
+            or ConnectionRole.RUNTIME not in connection.roles
+        ):
+            raise ResourceConflictError("runtime discovery requires a ready API runtime connection")
+        if "runtime.listServices" not in connection.capabilities:
+            raise ResourceConflictError("runtime connection cannot list services")
+        if self._runtime_metadata is None:
+            raise ResourceConflictError("runtime resource discovery is unavailable")
+        resources = await self._runtime_metadata.resources_for(connection)
+        metadata = tuple(RuntimeResourceMetadata.model_validate(item) for item in resources)
+        if any(
+            not _resource_covered(resource.reference, connection.allowed_resources)
+            for resource in metadata
+        ):
+            raise ResourceConflictError("runtime discovery escaped the connection boundary")
+        return tuple(sorted(metadata, key=lambda item: item.display_name.lower()))
 
     async def list_secret_versions(
         self, organisation_id: str, connection_id: str, secret: str

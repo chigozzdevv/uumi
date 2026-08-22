@@ -14,6 +14,7 @@ import type {
   OverviewSummary,
   Playbook,
   ProviderCredentialMetadata,
+  RuntimeResourceMetadata,
   RotationRun,
 } from "../types";
 
@@ -252,6 +253,10 @@ class ApiClient {
 
   async getProviderCredentials(connectionId: Identifier): Promise<ProviderCredentialMetadata[]> {
     return this.request(`${ROOT}/inventory/connections/${connectionId}/credential-metadata`)
+  }
+
+  async getRuntimeResources(connectionId: Identifier): Promise<RuntimeResourceMetadata[]> {
+    return this.request(`${ROOT}/inventory/connections/${connectionId}/runtime-resources`)
   }
 
   async getSecretResources(connectionId: Identifier): Promise<SecretResourceMetadata[]> {

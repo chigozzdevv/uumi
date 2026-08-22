@@ -11,7 +11,7 @@ import { Button } from "../components/ui/button"
 import { Modal } from "../components/ui/modal"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import { Field, FormGrid, ResourceSelect, SelectControl, SetupPage, formControl } from "../components/workspace"
-import type { Application, Connection, ConsumerService, Environment } from "../types"
+import type { Application, Connection, ConsumerService, Environment, RuntimeResourceMetadata } from "../types"
 import { api, type CreateApplicationInput } from "../lib/api"
 import { formatDate } from "../lib/format"
 import { ConnectionSetup } from "./connections"
@@ -35,7 +35,6 @@ export function ApplicationsPage() {
   const [editingEnvironment, setEditingEnvironment] = useState<Environment | null>(null)
   const [environmentName, setEnvironmentName] = useState("")
   const [editingService, setEditingService] = useState<ConsumerService | null>(null)
-  const [serviceName, setServiceName] = useState("")
   const [serviceRuntime, setServiceRuntime] = useState("")
   const [serviceResource, setServiceResource] = useState("")
   const [serviceTelemetry, setServiceTelemetry] = useState("")
@@ -49,7 +48,10 @@ export function ApplicationsPage() {
     { queryKey: ["connections"], queryFn: () => api.getConnections() },
   ] })
   const applicationDetail = useQuery({ queryKey: ["applications", selected?.id], queryFn: () => api.getApplication(selected!.id), enabled: Boolean(selected) })
+  const serviceRuntimeResources = useQuery({ queryKey: ["connections", serviceRuntime, "runtime-resources"], queryFn: () => api.getRuntimeResources(serviceRuntime), enabled: Boolean(editingService && serviceRuntime) })
   const currentSelected = applicationDetail.data ?? selected
+  const editableRuntimeResources = runtimeResourceOptions(serviceRuntimeResources.data, graph.data?.services ?? [], editingService?.runtime_connection_id === serviceRuntime ? editingService : null)
+  const selectedEditableRuntime = editableRuntimeResources.find((item) => item.reference === serviceResource)
   const updateApplication = useMutation({
     mutationFn: () => api.updateApplication(currentSelected!.id, { expected_revision: currentSelected!.revision, display_name: editName.trim() }),
     onSuccess: async (application) => {
@@ -77,7 +79,7 @@ export function ApplicationsPage() {
     onSuccess: async () => { setEditingEnvironment(null); await queryClient.invalidateQueries({ queryKey: ["environments"] }) },
   })
   const updateService = useMutation({
-    mutationFn: () => api.updateService(editingService!.id, { expected_revision: editingService!.revision, display_name: serviceName.trim(), runtime_connection_id: serviceRuntime, telemetry_connection_ids: serviceTelemetry ? [serviceTelemetry] : [], runtime_resource: serviceResource.trim(), verification: verification(serviceVerification) }),
+    mutationFn: () => api.updateService(editingService!.id, { expected_revision: editingService!.revision, display_name: selectedEditableRuntime!.display_name, runtime_connection_id: serviceRuntime, telemetry_connection_ids: serviceTelemetry ? [serviceTelemetry] : [], runtime_resource: selectedEditableRuntime!.reference, verification: verification(serviceVerification), identity: selectedEditableRuntime!.identity }),
     onSuccess: async () => { setEditingService(null); await queryClient.invalidateQueries({ queryKey: ["graph"] }) },
   })
   const archiveService = useMutation({
@@ -116,7 +118,7 @@ export function ApplicationsPage() {
       {tab === "services" && <div>
         {selectedServices.length === 0 ? <div className="rounded-xl bg-[var(--surface-soft)] p-5 text-[10px] text-[var(--ink-soft)]">No runtime services have been added yet.</div> : <div className="divide-y divide-[var(--border-soft)] border-y border-[var(--border-soft)]">{selectedServices.map((service) => {
           const credentials = graph.data!.bindings.filter((binding) => binding.service_id === service.id).length
-          return <div key={service.id} className="flex items-center gap-3 py-4"><Marker icon={Server} /><div className="min-w-0 flex-1"><div className="text-[11px] font-semibold">{service.display_name}</div><div className="mt-1 truncate text-[9px] text-[var(--ink-muted)]">{selectedEnvironments.find((item) => item.id === service.environment_id)?.display_name} · {service.runtime_resource}</div></div><span className="text-[10px] text-[var(--ink-soft)]">{credentials} credential{credentials === 1 ? "" : "s"}</span><Button variant="ghost" size="sm" onClick={() => { setEditingService(service); setServiceName(service.display_name); setServiceRuntime(service.runtime_connection_id); setServiceResource(service.runtime_resource); setServiceTelemetry(service.telemetry_connection_ids[0] ?? ""); setServiceVerification(service.verification?.target ?? ""); updateService.reset(); archiveService.reset() }}>Edit</Button></div>
+          return <div key={service.id} className="flex items-center gap-3 py-4"><Marker icon={Server} /><div className="min-w-0 flex-1"><div className="text-[11px] font-semibold">{service.display_name}</div><div className="mt-1 truncate text-[9px] text-[var(--ink-muted)]">{selectedEnvironments.find((item) => item.id === service.environment_id)?.display_name} · {service.runtime_resource}</div></div><span className="text-[10px] text-[var(--ink-soft)]">{credentials} credential{credentials === 1 ? "" : "s"}</span><Button variant="ghost" size="sm" onClick={() => { setEditingService(service); setServiceRuntime(service.runtime_connection_id); setServiceResource(service.runtime_resource); setServiceTelemetry(service.telemetry_connection_ids[0] ?? ""); setServiceVerification(service.verification?.target ?? ""); updateService.reset(); archiveService.reset() }}>Edit</Button></div>
         })}</div>}
       </div>
       }
@@ -137,8 +139,8 @@ export function ApplicationsPage() {
     </ManageResourceModal>
     <ManageResourceModal isOpen={Boolean(editingService)} onClose={() => setEditingService(null)} title="Edit runtime service" resourceLabel="service" onSave={() => updateService.mutate()} onDelete={() => archiveService.mutate()} dependencies={[
       { label: "Credentials", items: graph.data!.credentials.filter((credential) => graph.data!.bindings.some((binding) => binding.credential_id === credential.id && binding.service_id === editingService?.id)).map((credential) => credential.display_name) },
-    ]} saveDisabled={!serviceName.trim() || !serviceRuntime || !serviceResource.trim() || !serviceVerification.trim() || (serviceName.trim() === editingService?.display_name && serviceRuntime === editingService?.runtime_connection_id && serviceResource.trim() === editingService?.runtime_resource && serviceTelemetry === (editingService?.telemetry_connection_ids[0] ?? "") && serviceVerification.trim() === editingService?.verification?.target)} saving={updateService.isPending} deleting={archiveService.isPending} error={(updateService.error ?? archiveService.error)?.message}>
-      <div className="space-y-4"><Field label="Service name"><input className={formControl} value={serviceName} onChange={(event) => setServiceName(event.target.value)} /></Field><ResourceSelect label="Runtime connection" value={serviceRuntime} onChange={setServiceRuntime} addLabel="Add connection" onAdd={() => setConnectionDependency({ role: "runtime", target: "edit-service" })}>{connections.data!.filter((item) => item.roles.includes("runtime") && item.interface === "api").map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect><Field label="Runtime resource"><input className={formControl} value={serviceResource} onChange={(event) => setServiceResource(event.target.value)} /></Field><Field label="Verification URL"><input className={formControl} type="url" value={serviceVerification} onChange={(event) => setServiceVerification(event.target.value)} /></Field><ResourceSelect label="Telemetry connection" value={serviceTelemetry} onChange={setServiceTelemetry} addLabel="Add connection" onAdd={() => setConnectionDependency({ role: "telemetry", target: "edit-service" })}><option value="">None</option>{connections.data!.filter((item) => item.roles.includes("telemetry") && item.interface === "api").map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect></div>
+    ]} saveDisabled={!selectedEditableRuntime || !serviceVerification.trim() || (selectedEditableRuntime.display_name === editingService?.display_name && serviceRuntime === editingService?.runtime_connection_id && selectedEditableRuntime.reference === editingService?.runtime_resource && selectedEditableRuntime.identity === editingService?.identity && serviceTelemetry === (editingService?.telemetry_connection_ids[0] ?? "") && serviceVerification.trim() === editingService?.verification?.target)} saving={updateService.isPending} deleting={archiveService.isPending} error={(updateService.error ?? archiveService.error ?? serviceRuntimeResources.error)?.message}>
+      <div className="space-y-4"><ResourceSelect label="Runtime connection" value={serviceRuntime} onChange={(value) => { setServiceRuntime(value); setServiceResource("") }} addLabel="Add connection" onAdd={() => setConnectionDependency({ role: "runtime", target: "edit-service" })}>{connections.data!.filter(runtimeDiscoveryReady).map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect><Field label="Service"><SelectControl value={serviceResource} onChange={(event) => setServiceResource(event.target.value)} disabled={!serviceRuntime || serviceRuntimeResources.isLoading}><option value="">{serviceRuntimeResources.isLoading ? "Loading services…" : "Select service"}</option>{editableRuntimeResources.map((item) => <option key={item.reference} value={item.reference}>{item.display_name}</option>)}</SelectControl></Field><Field label="Verification URL"><input className={formControl} type="url" value={serviceVerification} onChange={(event) => setServiceVerification(event.target.value)} /></Field><ResourceSelect label="Telemetry connection" value={serviceTelemetry} onChange={setServiceTelemetry} addLabel="Add connection" onAdd={() => setConnectionDependency({ role: "telemetry", target: "edit-service" })}><option value="">None</option>{connections.data!.filter((item) => item.roles.includes("telemetry") && item.interface === "api" && item.status === "ready").map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect></div>
     </ManageResourceModal>
   </div>
   {connectionDependency && <ConnectionSetup
@@ -148,7 +150,7 @@ export function ApplicationsPage() {
     onChanged={() => queryClient.invalidateQueries({ queryKey: ["connections"] })}
     onCreated={async (connection) => {
       if (connectionDependency.target === "edit-service") {
-        if (connectionDependency.role === "runtime") setServiceRuntime(connection.id)
+        if (connectionDependency.role === "runtime") { setServiceRuntime(connection.id); setServiceResource("") }
         else setServiceTelemetry(connection.id)
       } else setAddedServiceConnection(connection)
       setConnectionDependency(null)
@@ -179,29 +181,33 @@ export function ApplicationSetup({ onClose, connections, onCreated }: { onClose:
   const [step, setStep] = useState(0)
   const [name, setName] = useState("")
   const [environmentName, setEnvironmentName] = useState("Production")
-  const [serviceName, setServiceName] = useState("")
   const [runtimeConnection, setRuntimeConnection] = useState("")
   const [runtimeResource, setRuntimeResource] = useState("")
   const [verificationUrl, setVerificationUrl] = useState("")
   const [telemetryConnection, setTelemetryConnection] = useState("")
   const [connectionDependency, setConnectionDependency] = useState<"runtime" | "telemetry" | null>(null)
   const mutation = useMutation({ mutationFn: (input: CreateApplicationInput) => api.createApplication(input) })
-  const runtimes = connections.filter((item) => item.roles.includes("runtime") && item.interface === "api" && item.status === "ready")
+  const graph = useQuery({ queryKey: ["graph"], queryFn: () => api.getGraph() })
+  const runtimeResourcesQuery = useQuery({ queryKey: ["connections", runtimeConnection, "runtime-resources"], queryFn: () => api.getRuntimeResources(runtimeConnection), enabled: Boolean(runtimeConnection) })
+  const runtimes = connections.filter(runtimeDiscoveryReady)
   const telemetry = connections.filter((item) => item.roles.includes("telemetry") && item.interface === "api" && item.status === "ready")
+  const runtimeResources = runtimeResourceOptions(runtimeResourcesQuery.data, graph.data?.services ?? [])
+  const selectedRuntimeResource = runtimeResources.find((item) => item.reference === runtimeResource)
 
   useEffect(() => { setRuntimeConnection(runtimes[0]?.id ?? ""); setTelemetryConnection(telemetry[0]?.id ?? "") }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const canContinue = step === 0 ? Boolean(name.trim() && environmentName) : step === 1 ? Boolean(serviceName.trim() && runtimeConnection && runtimeResource.trim() && verificationUrl.trim()) : true
+  const canContinue = step === 0 ? Boolean(name.trim() && environmentName) : step === 1 ? Boolean(selectedRuntimeResource && verificationUrl.trim()) : true
 
   async function submit() {
     const applicationId = identifier("app")
     const environmentId = identifier("env")
     const timestamp = new Date().toISOString()
-    const runtimeRegion = connections.find((item) => item.id === runtimeConnection)?.region ?? "us-central1"
+    if (!selectedRuntimeResource) return
+    const runtimeRegion = regionFromRuntimeResource(selectedRuntimeResource.reference)
     const input: CreateApplicationInput = {
       application: { id: applicationId, organisation_id: "org_acme", display_name: name.trim(), repository_ids: [], created_at: timestamp, updated_at: timestamp, revision: 0 },
       environment: { id: environmentId, organisation_id: "org_acme", application_id: applicationId, display_name: environmentName, production: environmentName === "Production", region: runtimeRegion, created_at: timestamp, updated_at: timestamp, revision: 0 },
-      service: { id: identifier("svc"), organisation_id: "org_acme", application_id: applicationId, environment_id: environmentId, runtime_connection_id: runtimeConnection, telemetry_connection_ids: telemetryConnection ? [telemetryConnection] : [], runtime_resource: runtimeResource.trim(), display_name: serviceName.trim(), verification: verification(verificationUrl), repository: null, identity: null, created_at: timestamp, updated_at: timestamp, revision: 0 },
+      service: { id: identifier("svc"), organisation_id: "org_acme", application_id: applicationId, environment_id: environmentId, runtime_connection_id: runtimeConnection, telemetry_connection_ids: telemetryConnection ? [telemetryConnection] : [], runtime_resource: selectedRuntimeResource.reference, display_name: selectedRuntimeResource.display_name, verification: verification(verificationUrl), repository: null, identity: selectedRuntimeResource.identity, created_at: timestamp, updated_at: timestamp, revision: 0 },
     }
     const application = await mutation.mutateAsync(input)
     await onCreated({ application, service: input.service })
@@ -213,45 +219,68 @@ export function ApplicationSetup({ onClose, connections, onCreated }: { onClose:
     onClose={() => setConnectionDependency(null)}
     onChanged={() => queryClient.invalidateQueries({ queryKey: ["connections"] })}
     onCreated={async (connection) => {
-      if (connectionDependency === "runtime") setRuntimeConnection(connection.id)
+      if (connectionDependency === "runtime") { setRuntimeConnection(connection.id); setRuntimeResource("") }
       else setTelemetryConnection(connection.id)
       setConnectionDependency(null)
     }}
   />
 
-  return <SetupPage eyebrow="Inventory / Applications" title="Add application" steps={setupSteps} current={step} onBack={() => setStep((value) => value - 1)} onCancel={onClose} error={mutation.error?.message} primary={step < 2 ? <Button onClick={() => setStep((value) => value + 1)} disabled={!canContinue}>Continue</Button> : <Button onClick={submit} disabled={mutation.isPending}>{mutation.isPending ? "Adding…" : "Add application"}</Button>}>
+  return <SetupPage eyebrow="Inventory / Applications" title="Add application" steps={setupSteps} current={step} onBack={() => setStep((value) => value - 1)} onCancel={onClose} error={(mutation.error ?? graph.error ?? runtimeResourcesQuery.error)?.message} primary={step < 2 ? <Button onClick={() => setStep((value) => value + 1)} disabled={!canContinue}>Continue</Button> : <Button onClick={submit} disabled={mutation.isPending}>{mutation.isPending ? "Adding…" : "Add application"}</Button>}>
     {step === 0 && <FormGrid><Field label="Application name"><input className={formControl} value={name} onChange={(event) => setName(event.target.value)} placeholder="Store platform" /></Field><Field label="Environment"><SelectControl value={environmentName} onChange={(event) => setEnvironmentName(event.target.value)}><option value="Production">Production</option><option value="Staging">Staging</option></SelectControl></Field></FormGrid>}
-    {step === 1 && <FormGrid><Field label="Service name"><input className={formControl} value={serviceName} onChange={(event) => setServiceName(event.target.value)} placeholder="checkout-api" /></Field><ResourceSelect label="Runtime connection" value={runtimeConnection} onChange={setRuntimeConnection} addLabel="Add connection" onAdd={() => setConnectionDependency("runtime")}>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect><Field label="Runtime resource" wide><input className={formControl} value={runtimeResource} onChange={(event) => setRuntimeResource(event.target.value)} placeholder="projects/project/locations/region/services/service" /></Field><Field label="Verification URL"><input className={formControl} type="url" value={verificationUrl} onChange={(event) => setVerificationUrl(event.target.value)} placeholder="https://service.example/verify" /></Field><ResourceSelect label="Telemetry connection" value={telemetryConnection} onChange={setTelemetryConnection} addLabel="Add connection" onAdd={() => setConnectionDependency("telemetry")}><option value="">None</option>{telemetry.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect></FormGrid>}
-    {step === 2 && <div className="grid gap-5 lg:grid-cols-2"><Section title="Application"><DetailList><Detail label="Name">{name}</Detail><Detail label="Environment">{environmentName}</Detail></DetailList></Section><Section title="Runtime"><DetailList><Detail label="Service">{serviceName}</Detail><Detail label="Runtime">{connections.find((item) => item.id === runtimeConnection)?.display_name}</Detail><Detail label="Verification">{verificationUrl}</Detail><Detail label="Telemetry">{connections.find((item) => item.id === telemetryConnection)?.display_name ?? "None"}</Detail></DetailList></Section></div>}
+    {step === 1 && <FormGrid><ResourceSelect label="Runtime connection" value={runtimeConnection} onChange={(value) => { setRuntimeConnection(value); setRuntimeResource("") }} addLabel="Add connection" onAdd={() => setConnectionDependency("runtime")}><option value="">Select connection</option>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect><Field label="Service"><SelectControl value={runtimeResource} onChange={(event) => setRuntimeResource(event.target.value)} disabled={!runtimeConnection || runtimeResourcesQuery.isLoading}><option value="">{runtimeResourcesQuery.isLoading ? "Loading services…" : "Select service"}</option>{runtimeResources.map((item) => <option key={item.reference} value={item.reference}>{item.display_name}</option>)}</SelectControl></Field><Field label="Verification URL"><input className={formControl} type="url" value={verificationUrl} onChange={(event) => setVerificationUrl(event.target.value)} placeholder="https://service.example/verify" /></Field><ResourceSelect label="Telemetry connection" value={telemetryConnection} onChange={setTelemetryConnection} addLabel="Add connection" onAdd={() => setConnectionDependency("telemetry")}><option value="">None</option>{telemetry.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect></FormGrid>}
+    {step === 2 && <div className="grid gap-5 lg:grid-cols-2"><Section title="Application" onEdit={() => setStep(0)}><DetailList><Detail label="Name">{name}</Detail><Detail label="Environment">{environmentName}</Detail></DetailList></Section><Section title="Runtime" onEdit={() => setStep(1)}><DetailList><Detail label="Service">{selectedRuntimeResource?.display_name}</Detail><Detail label="Runtime">{connections.find((item) => item.id === runtimeConnection)?.display_name}</Detail><Detail label="Verification">{verificationUrl}</Detail><Detail label="Telemetry">{connections.find((item) => item.id === telemetryConnection)?.display_name ?? "None"}</Detail></DetailList></Section></div>}
   </SetupPage>
 }
 
 function ServiceModal({ application, environments, connections, isOpen, onClose, onCreated, onAddConnection, addedConnection }: { application: Application; environments: Environment[]; connections: Connection[]; isOpen: boolean; onClose: () => void; onCreated: () => Promise<void>; onAddConnection: (role: "runtime" | "telemetry") => void; addedConnection: Connection | null }) {
-  const [name, setName] = useState("")
   const [environmentId, setEnvironmentId] = useState("")
   const [runtimeConnection, setRuntimeConnection] = useState("")
   const [runtimeResource, setRuntimeResource] = useState("")
   const [verificationUrl, setVerificationUrl] = useState("")
   const [telemetryConnection, setTelemetryConnection] = useState("")
   const mutation = useMutation({ mutationFn: (service: ConsumerService) => api.createService(service), onSuccess: onCreated })
-  const runtimes = connections.filter((item) => item.roles.includes("runtime") && item.status === "ready")
+  const graph = useQuery({ queryKey: ["graph"], queryFn: () => api.getGraph(), enabled: isOpen })
+  const runtimeResourcesQuery = useQuery({ queryKey: ["connections", runtimeConnection, "runtime-resources"], queryFn: () => api.getRuntimeResources(runtimeConnection), enabled: Boolean(isOpen && runtimeConnection) })
+  const runtimes = connections.filter(runtimeDiscoveryReady)
   const telemetry = connections.filter((item) => item.roles.includes("telemetry") && item.status === "ready")
+  const runtimeResources = runtimeResourceOptions(runtimeResourcesQuery.data, graph.data?.services ?? [])
+  const selectedRuntimeResource = runtimeResources.find((item) => item.reference === runtimeResource)
 
-  useEffect(() => { if (isOpen) { setName(""); setEnvironmentId(environments[0]?.id ?? ""); setRuntimeConnection(runtimes[0]?.id ?? ""); setRuntimeResource(""); setVerificationUrl(""); setTelemetryConnection(""); mutation.reset() } }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (isOpen) { setEnvironmentId(environments[0]?.id ?? ""); setRuntimeConnection(runtimes[0]?.id ?? ""); setRuntimeResource(""); setVerificationUrl(""); setTelemetryConnection(""); mutation.reset() } }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!addedConnection) return
-    if (addedConnection.roles.includes("runtime")) setRuntimeConnection(addedConnection.id)
+    if (addedConnection.roles.includes("runtime")) { setRuntimeConnection(addedConnection.id); setRuntimeResource("") }
     if (addedConnection.roles.includes("telemetry")) setTelemetryConnection(addedConnection.id)
   }, [addedConnection])
 
   async function submit() {
+    if (!selectedRuntimeResource) return
     const timestamp = new Date().toISOString()
-    await mutation.mutateAsync({ id: identifier("svc"), organisation_id: application.organisation_id, application_id: application.id, environment_id: environmentId, runtime_connection_id: runtimeConnection, telemetry_connection_ids: telemetryConnection ? [telemetryConnection] : [], runtime_resource: runtimeResource.trim(), display_name: name.trim(), verification: verification(verificationUrl), repository: application.repository_ids[0] ?? null, identity: null, created_at: timestamp, updated_at: timestamp, revision: 0 })
+    await mutation.mutateAsync({ id: identifier("svc"), organisation_id: application.organisation_id, application_id: application.id, environment_id: environmentId, runtime_connection_id: runtimeConnection, telemetry_connection_ids: telemetryConnection ? [telemetryConnection] : [], runtime_resource: selectedRuntimeResource.reference, display_name: selectedRuntimeResource.display_name, verification: verification(verificationUrl), repository: application.repository_ids[0] ?? null, identity: selectedRuntimeResource.identity, created_at: timestamp, updated_at: timestamp, revision: 0 })
   }
 
-  return <Modal isOpen={isOpen} onClose={onClose} title="Add runtime service" actions={<Button onClick={submit} disabled={!name.trim() || !environmentId || !runtimeConnection || !runtimeResource.trim() || !verificationUrl.trim() || mutation.isPending}>{mutation.isPending ? "Adding…" : "Add service"}</Button>}>
-    <div className="space-y-4"><Field label="Service name"><input className={formControl} value={name} onChange={(event) => setName(event.target.value)} placeholder="checkout-api" /></Field><Field label="Environment"><SelectControl value={environmentId} onChange={(event) => setEnvironmentId(event.target.value)}>{environments.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</SelectControl></Field><ResourceSelect label="Runtime connection" value={runtimeConnection} onChange={setRuntimeConnection} addLabel="Add connection" onAdd={() => onAddConnection("runtime")}>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect><Field label="Runtime resource"><input className={formControl} value={runtimeResource} onChange={(event) => setRuntimeResource(event.target.value)} /></Field><Field label="Verification URL"><input className={formControl} type="url" value={verificationUrl} onChange={(event) => setVerificationUrl(event.target.value)} /></Field><ResourceSelect label="Telemetry connection" value={telemetryConnection} onChange={setTelemetryConnection} addLabel="Add connection" onAdd={() => onAddConnection("telemetry")}><option value="">None</option>{telemetry.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect>{mutation.error && <div role="alert" className="rounded-xl bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{mutation.error.message}</div>}</div>
+  return <Modal isOpen={isOpen} onClose={onClose} title="Add runtime service" actions={<Button onClick={submit} disabled={!environmentId || !selectedRuntimeResource || !verificationUrl.trim() || mutation.isPending}>{mutation.isPending ? "Adding…" : "Add service"}</Button>}>
+    <div className="space-y-4"><Field label="Environment"><SelectControl value={environmentId} onChange={(event) => setEnvironmentId(event.target.value)}>{environments.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</SelectControl></Field><ResourceSelect label="Runtime connection" value={runtimeConnection} onChange={(value) => { setRuntimeConnection(value); setRuntimeResource("") }} addLabel="Add connection" onAdd={() => onAddConnection("runtime")}><option value="">Select connection</option>{runtimes.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect><Field label="Service"><SelectControl value={runtimeResource} onChange={(event) => setRuntimeResource(event.target.value)} disabled={!runtimeConnection || runtimeResourcesQuery.isLoading}><option value="">{runtimeResourcesQuery.isLoading ? "Loading services…" : "Select service"}</option>{runtimeResources.map((item) => <option key={item.reference} value={item.reference}>{item.display_name}</option>)}</SelectControl></Field><Field label="Verification URL"><input className={formControl} type="url" value={verificationUrl} onChange={(event) => setVerificationUrl(event.target.value)} /></Field><ResourceSelect label="Telemetry connection" value={telemetryConnection} onChange={setTelemetryConnection} addLabel="Add connection" onAdd={() => onAddConnection("telemetry")}><option value="">None</option>{telemetry.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect>{(mutation.error ?? graph.error ?? runtimeResourcesQuery.error) && <div role="alert" className="rounded-xl bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{(mutation.error ?? graph.error ?? runtimeResourcesQuery.error)?.message}</div>}</div>
   </Modal>
+}
+
+function runtimeResourceOptions(resources: RuntimeResourceMetadata[] | undefined, services: ConsumerService[], current?: ConsumerService | null) {
+  const registered = new Set(services.filter((service) => service.id !== current?.id).map((service) => service.runtime_resource))
+  const available = (resources ?? []).filter((resource) => !registered.has(resource.reference))
+  if (current && !available.some((resource) => resource.reference === current.runtime_resource)) {
+    available.unshift({ reference: current.runtime_resource, display_name: current.display_name, endpoint: null, identity: current.identity })
+  }
+  return available
+}
+
+function runtimeDiscoveryReady(connection: Connection) {
+  return connection.roles.includes("runtime") && connection.interface === "api" && connection.status === "ready" && connection.capabilities.includes("runtime.listServices")
+}
+
+function regionFromRuntimeResource(resource: string) {
+  const match = resource.match(/^projects\/[^/]+\/locations\/([^/]+)\/services\/[^/]+$/)
+  if (!match) throw new Error("Runtime connection returned an invalid service resource")
+  return match[1]
 }
 
 function verification(target: string): NonNullable<ConsumerService["verification"]> {

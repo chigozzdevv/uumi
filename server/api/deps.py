@@ -14,6 +14,7 @@ from browser.secret import BrowserSecretAccessService
 from browser.service import BrowserService
 from browser.setup import BrowserSetupApi, BrowserSetupService, WorkflowRunResumer
 from browser.storage import FirestoreBrowserRepository
+from connectors.cloudrun import CloudRunConnector
 from connectors.github import GitHubOnboardingConnector
 from connectors.google import GoogleRestClient
 from connectors.http import HttpProviderConnector
@@ -177,6 +178,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             _now,
             provider_metadata=HttpProviderConnector(secret_manager),
             secret_metadata=secret_manager,
+            runtime_metadata=CloudRunConnector(google),
         ),
         playbooks=PlaybookService(
             FirestorePlaybookRepository(client),

@@ -159,6 +159,13 @@ class Environment(Contract):
     revision: int = Field(default=0, ge=0)
 
 
+class RuntimeResourceMetadata(Contract):
+    reference: str = Field(min_length=1, max_length=512)
+    display_name: str = Field(min_length=1, max_length=160)
+    endpoint: str | None = Field(default=None, max_length=2048)
+    identity: str | None = Field(default=None, min_length=1, max_length=512)
+
+
 class FunctionalVerification(Contract):
     kind: ProbeKind
     target: str = Field(min_length=12, max_length=1024)

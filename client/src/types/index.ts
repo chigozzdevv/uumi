@@ -66,6 +66,13 @@ export interface ProviderCredentialMetadata {
   expires_at: string | null
 }
 
+export interface RuntimeResourceMetadata {
+  reference: string
+  display_name: string
+  endpoint: string | null
+  identity: string | null
+}
+
 export interface Application {
   id: Identifier
   organisation_id: Identifier

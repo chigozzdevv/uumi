@@ -577,6 +577,32 @@ async def test_inventory_lists_provider_credential_metadata_without_secret_value
 
 
 @pytest.mark.anyio
+async def test_inventory_lists_runtime_resources_inside_connection_boundary() -> None:
+    class RuntimeMetadata:
+        async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+            assert connection.id == "runtime_one"
+            return (
+                {
+                    "reference": "projects/project-one/locations/us-east1/services/service-two",
+                    "display_name": "service-two",
+                    "endpoint": "https://service-two.example.run.app",
+                    "identity": "service-two@example.iam.gserviceaccount.com",
+                },
+            )
+
+    repository = Catalog()
+    repository.connection_values["runtime_one"] = repository.connection_values[
+        "runtime_one"
+    ].model_copy(update={"capabilities": frozenset({"runtime.listServices"})})
+    service = InventoryService(repository, runtime_metadata=RuntimeMetadata())
+
+    resources = await service.list_runtime_resources("org_one", "runtime_one")
+
+    assert resources[0].display_name == "service-two"
+    assert resources[0].identity == "service-two@example.iam.gserviceaccount.com"
+
+
+@pytest.mark.anyio
 async def test_service_runtime_must_stay_inside_its_connection_boundary() -> None:
     service = InventoryService(Catalog())
     escaped = ConsumerService(

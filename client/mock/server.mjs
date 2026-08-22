@@ -311,6 +311,15 @@ createServer(async (request, response) => {
     return json(response, 200, store.providerCredentials.filter((entry) => entry.connection_id === connection.id).map(({ connection_id: _connectionId, ...entry }) => entry))
   }
 
+  const runtimeResourcesMatch = path.match(/^\/inventory\/connections\/([a-z0-9_-]+)\/runtime-resources$/)
+  if (request.method === "GET" && runtimeResourcesMatch) {
+    const connection = item(store.connections, runtimeResourcesMatch[1])
+    if (!connection || connection.archived_at) return json(response, 404, { code: "not-found", message: "Connection not found" })
+    if (!connection.roles.includes("runtime") || connection.interface !== "api" || connection.status !== "ready") return json(response, 409, { code: "conflict", message: "Runtime discovery requires a ready API runtime connection" })
+    if (!connection.capabilities.includes("runtime.listServices")) return json(response, 409, { code: "conflict", message: "Runtime connection cannot list services" })
+    return json(response, 200, store.runtimeResources.filter((entry) => entry.connection_id === connection.id).map(({ connection_id: _connectionId, ...entry }) => entry))
+  }
+
   const secretResourcesMatch = path.match(/^\/inventory\/connections\/([a-z0-9_-]+)\/secret-resources$/)
   if (request.method === "GET" && secretResourcesMatch) {
     const connection = item(store.connections, secretResourcesMatch[1])
