@@ -31,7 +31,7 @@ export function SetupPage({
     <div className="page max-w-[960px]">
       <PageHeader eyebrow={eyebrow} title={title} description={description} onBack={onCancel} />
       <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-white">
-        <div className="border-b border-[var(--border-soft)] px-6 pt-6"><Journey steps={steps} current={current} /></div>
+        <div className="border-b border-[var(--border-soft)] px-6 pt-6 sm:px-8"><div className="mx-auto w-full max-w-[760px]"><Journey steps={steps} current={current} /></div></div>
         <div className="mx-auto min-h-[360px] w-full max-w-[760px] px-6 py-7 sm:px-8">{children}</div>
         {error && <div role="alert" className="mx-6 mb-5 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)] sm:mx-8">{error}</div>}
         <footer className="flex items-center gap-3 border-t border-[var(--border-soft)] bg-white px-6 py-4 sm:px-8">

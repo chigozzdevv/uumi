@@ -291,9 +291,9 @@ export function CredentialSetup({
       {step === 2 && <ControlsFields value={controls} onChange={setControls} />}
 
       {step === 3 && <div>
-        <Section title="Credential"><DetailList><Detail label="Name">{name}</Detail><Detail label="Platform"><Provider value={provider} /></Detail><Detail label="Type">{titleCase(kind)}</Detail><Detail label="Scopes">{scopes || "None"}</Detail><Detail label="Connection">{connection?.display_name}</Detail></DetailList></Section>
-        <Section title="Deployment"><DetailList><Detail label="Secret">{secretStore?.display_name}</Detail><Detail label="Consumers">{selectedServices.map((service) => service.display_name).join(", ")}</Detail><Detail label="Applications">{[...new Set(selectedServices.map((service) => applications.find((item) => item.id === service.application_id)?.display_name).filter(Boolean))].join(", ")}</Detail><Detail label="Environments">{[...new Set(selectedServices.map((service) => environments.find((item) => item.id === service.environment_id)?.display_name).filter(Boolean))].join(", ")}</Detail></DetailList></Section>
-        <Section title="Controls"><ControlsSummary value={controls} /></Section>
+        <Section title="Credential" onEdit={() => setStep(0)}><DetailList><Detail label="Name">{name}</Detail><Detail label="Platform"><Provider value={provider} /></Detail><Detail label="Type">{titleCase(kind)}</Detail><Detail label="Scopes">{scopes || "None"}</Detail><Detail label="Connection">{connection?.display_name}</Detail></DetailList></Section>
+        <Section title="Deployment" onEdit={() => setStep(1)}><DetailList><Detail label="Secret">{secretStore?.display_name}</Detail><Detail label="Consumers">{selectedServices.map((service) => service.display_name).join(", ")}</Detail><Detail label="Applications">{[...new Set(selectedServices.map((service) => applications.find((item) => item.id === service.application_id)?.display_name).filter(Boolean))].join(", ")}</Detail><Detail label="Environments">{[...new Set(selectedServices.map((service) => environments.find((item) => item.id === service.environment_id)?.display_name).filter(Boolean))].join(", ")}</Detail></DetailList></Section>
+        <Section title="Controls" onEdit={() => setStep(2)}><ControlsSummary value={controls} /></Section>
       </div>}
 
     </SetupPage>

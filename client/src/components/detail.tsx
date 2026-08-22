@@ -1,3 +1,4 @@
+import { Pencil } from "lucide-react"
 import type { ReactNode } from "react"
 
 export function DetailTabs<T extends string>({ items, value, onChange }: { items: ReadonlyArray<{ id: T; label: string }>; value: T; onChange: (value: T) => void }) {
@@ -28,10 +29,13 @@ export function Detail({ label, children }: { label: string; children: ReactNode
   )
 }
 
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, children, onEdit }: { title: string; children: ReactNode; onEdit?: () => void }) {
   return (
     <section className="mb-7 last:mb-0">
-      <h3 className="eyebrow mb-3">{title}</h3>
+      <div className="mb-3 flex min-h-7 items-center justify-between gap-3">
+        <h3 className="eyebrow">{title}</h3>
+        {onEdit && <button type="button" className="focus-ring grid size-7 place-items-center rounded-lg text-[var(--ink-muted)] transition hover:bg-[var(--surface-soft)] hover:text-[var(--ink)]" onClick={onEdit} aria-label={`Edit ${title}`} title={`Edit ${title}`}><Pencil className="size-3.5" /></button>}
+      </div>
       {children}
     </section>
   )
