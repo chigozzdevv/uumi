@@ -251,12 +251,8 @@ class ApiClient {
     return this.request(`${ROOT}/inventory/connections/${connectionId}`)
   }
 
-  async getProviderCredentials(connectionId: Identifier): Promise<ProviderCredentialMetadata[]> {
-    return this.request(`${ROOT}/inventory/connections/${connectionId}/credential-metadata`)
-  }
-
-  async verifyCredentialPair(connectionId: Identifier, input: { secret_store_connection_id: Identifier; provider_id: string; secret_reference: string }): Promise<{ verified: boolean }> {
-    return this.request(`${ROOT}/inventory/connections/${connectionId}/verify-credential`, {
+  async resolveCredential(connectionId: Identifier, input: { secret_store_connection_id: Identifier; secret_reference: string }): Promise<ProviderCredentialMetadata> {
+    return this.request(`${ROOT}/inventory/connections/${connectionId}/resolve-credential`, {
       method: "POST",
       body: JSON.stringify(input),
     })

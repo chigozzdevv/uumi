@@ -311,16 +311,18 @@ createServer(async (request, response) => {
     return json(response, 200, store.providerCredentials.filter((entry) => entry.connection_id === connection.id).map(({ connection_id: _connectionId, ...entry }) => entry))
   }
 
-  const verifyCredentialMatch = path.match(/^\/inventory\/connections\/([a-z0-9_-]+)\/verify-credential$/)
-  if (request.method === "POST" && verifyCredentialMatch) {
-    const connection = item(store.connections, verifyCredentialMatch[1])
+  const resolveCredentialMatch = path.match(/^\/inventory\/connections\/([a-z0-9_-]+)\/resolve-credential$/)
+  if (request.method === "POST" && resolveCredentialMatch) {
+    const connection = item(store.connections, resolveCredentialMatch[1])
     const input = await body(request)
     if (!connection || connection.archived_at) return json(response, 404, { code: "not-found", message: "Connection not found" })
     const secretStore = item(store.connections, input.secret_store_connection_id)
     if (!secretStore?.roles.includes("secret-store") || !secretStore.allowed_resources.some((boundary) => input.secret_reference === boundary || input.secret_reference?.startsWith(`${boundary.replace(/\/$/, "")}/`))) return json(response, 409, { code: "conflict", message: "Credential secret reference escapes the secret store" })
-    const verified = store.credentialImports.some((entry) => entry.connection_id === connection.id && entry.provider_id === input.provider_id && entry.secret_reference === input.secret_reference)
-    if (!verified) return json(response, 409, { code: "conflict", message: "Stored secret does not authenticate as the selected provider credential" })
-    return json(response, 200, { verified: true })
+    const resolved = store.credentialImports.find((entry) => entry.connection_id === connection.id && entry.secret_reference === input.secret_reference)
+    const metadata = resolved && store.providerCredentials.find((entry) => entry.connection_id === connection.id && entry.provider_id === resolved.provider_id && entry.disabled !== true)
+    if (!metadata) return json(response, 409, { code: "conflict", message: "Stored secret does not match an active provider credential" })
+    const { connection_id: _connectionId, ...credential } = metadata
+    return json(response, 200, credential)
   }
 
   const runtimeResourcesMatch = path.match(/^\/inventory\/connections\/([a-z0-9_-]+)\/runtime-resources$/)

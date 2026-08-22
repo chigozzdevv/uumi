@@ -31,16 +31,25 @@ try {
 
   const providerCredentials = await request("/inventory/connections/conn_sendgrid/credential-metadata")
   assert.equal(providerCredentials.response.status, 200)
-  assert.equal(providerCredentials.body[0].provider_id, "sg_key_7710")
-  assert.deepEqual(providerCredentials.body[0].scopes, ["mail.send"])
-  assert.equal(Object.hasOwn(providerCredentials.body[0], "secret"), false)
+  const providerCredential = providerCredentials.body.find((entry) => entry.provider_id === "sg_key_7710")
+  assert(providerCredential)
+  assert.deepEqual(providerCredential.scopes, ["mail.send"])
+  assert.equal(Object.hasOwn(providerCredential, "secret"), false)
 
-  const verifiedCredential = await request("/inventory/connections/conn_sendgrid/verify-credential", {
+  const resolvedCredential = await request("/inventory/connections/conn_sendgrid/resolve-credential", {
     method: "POST",
-    body: JSON.stringify({ secret_store_connection_id: "conn_secrets", provider_id: "sg_key_7710", secret_reference: "projects/acme-prod/secrets/customer-notifications/versions/1" }),
+    body: JSON.stringify({ secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/customer-notifications/versions/1" }),
   })
-  assert.equal(verifiedCredential.response.status, 200)
-  assert.equal(verifiedCredential.body.verified, true)
+  assert.equal(resolvedCredential.response.status, 200)
+  assert.equal(resolvedCredential.body.provider_id, "sg_key_7710")
+  assert.equal(resolvedCredential.body.kind, "api-key")
+
+  const importedCredential = await request("/inventory/connections/conn_sendgrid/resolve-credential", {
+    method: "POST",
+    body: JSON.stringify({ secret_store_connection_id: "conn_secrets", secret_reference: "projects/acme-prod/secrets/sendgrid/versions/7" }),
+  })
+  assert.equal(importedCredential.response.status, 200)
+  assert.equal(importedCredential.body.provider_id, "sg_key_4902")
 
   const runtimeResources = await request("/inventory/connections/conn_runtime/runtime-resources")
   assert.equal(runtimeResources.response.status, 200)

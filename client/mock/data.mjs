@@ -268,7 +268,7 @@ export const credentials = [
   { id: "cred_exports", organisation_id: "org_acme", connection_id: "conn_snowflake", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/exports", secret_reference: "projects/acme-prod/secrets/exports/versions/4", provider: "snowflake", kind: "key-pair", display_name: "warehouse-export-signer", provider_id: "snow_user_export", scopes: ["warehouse:use", "stage:write"], consumer_ids: ["svc_exports"], active_generation_id: "gen_exports_4", control_version: "control_exports_v1", created_at: "2026-01-12T09:00:00Z", updated_at: "2026-08-01T10:00:00Z", revision: 4 },
 ]
 
-export const providerCredentials = [
+const availableProviderCredentials = [
   { connection_id: "conn_sendgrid", provider_id: "sg_key_7710", name: "customer-notifications", kind: "api-key", scopes: ["mail.send"], status: "active", disabled: false, created_at: "2026-07-18T10:00:00Z", last_used_at: "2026-08-16T16:00:00Z", expires_at: null },
   { connection_id: "conn_stripe", provider_id: "rk_live_4218", name: "reporting-worker", kind: "restricted-key", scopes: ["charges.read", "refunds.read"], status: "active", disabled: false, created_at: "2026-07-11T10:00:00Z", last_used_at: "2026-08-16T15:20:00Z", expires_at: null },
   { connection_id: "conn_github_provider", provider_id: "gh_pat_7718", name: "release-automation", kind: "fine-grained-token", scopes: ["contents:read", "deployments:write"], status: "active", disabled: false, created_at: "2026-07-03T09:00:00Z", last_used_at: "2026-08-16T14:00:00Z", expires_at: "2026-11-03T09:00:00Z" },
@@ -277,16 +277,43 @@ export const providerCredentials = [
   { connection_id: "conn_snowflake", provider_id: "snow_user_reports", name: "reporting-export", kind: "key-pair", scopes: ["warehouse:use", "stage:read"], status: "active", disabled: false, created_at: "2026-07-01T09:00:00Z", last_used_at: "2026-08-16T08:00:00Z", expires_at: null },
 ]
 
-export const credentialImports = providerCredentials.map((credential, index) => {
-  const name = credential.name.replaceAll("_", "-")
-  const secret_resource = `projects/acme-prod/secrets/${name}`
-  return {
+const importedProviderCredentials = credentials
+  .filter((credential) => connections.find((connection) => connection.id === credential.connection_id)?.interface === "api")
+  .map((credential) => ({
     connection_id: credential.connection_id,
     provider_id: credential.provider_id,
-    secret_resource,
-    secret_reference: `${secret_resource}/versions/${index + 1}`,
-  }
-})
+    name: credential.display_name,
+    kind: credential.kind,
+    scopes: credential.scopes,
+    status: "active",
+    disabled: false,
+    created_at: credential.created_at,
+    last_used_at: credential.updated_at,
+    expires_at: credential.expires_at ?? null,
+  }))
+
+export const providerCredentials = [...importedProviderCredentials, ...availableProviderCredentials]
+
+export const credentialImports = [
+  ...credentials
+    .filter((credential) => connections.find((connection) => connection.id === credential.connection_id)?.interface === "api")
+    .map((credential) => ({
+      connection_id: credential.connection_id,
+      provider_id: credential.provider_id,
+      secret_resource: credential.secret_resource,
+      secret_reference: credential.secret_reference,
+    })),
+  ...availableProviderCredentials.map((credential, index) => {
+    const name = credential.name.replaceAll("_", "-")
+    const secret_resource = `projects/acme-prod/secrets/${name}`
+    return {
+      connection_id: credential.connection_id,
+      provider_id: credential.provider_id,
+      secret_resource,
+      secret_reference: `${secret_resource}/versions/${index + 1}`,
+    }
+  }),
+]
 
 export const bindings = credentials.flatMap((credential, credentialIndex) =>
   credential.consumer_ids.map((serviceId, consumerIndex) => {

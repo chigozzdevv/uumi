@@ -579,7 +579,7 @@ async def test_inventory_rejects_a_secret_for_another_provider_credential() -> N
         verification_id="probe_functional_one",
     )
 
-    with pytest.raises(ResourceConflictError, match="does not authenticate"):
+    with pytest.raises(ResourceConflictError, match="does not match"):
         await service.import_credential(
             credential,
             generation,
@@ -676,6 +676,27 @@ async def test_inventory_lists_provider_credential_metadata_without_secret_value
     ].model_copy(update={"status": ConnectionStatus.DEGRADED})
     with pytest.raises(ResourceConflictError, match="not ready"):
         await service.list_provider_credentials("org_one", "provider_one")
+
+
+@pytest.mark.anyio
+async def test_inventory_resolves_provider_credential_from_stored_secret() -> None:
+    repository = Catalog()
+    service = InventoryService(
+        repository,
+        provider_metadata=ImportMetadata(),
+        credential_verifier=ImportVerifier(),
+    )
+
+    metadata = await service.resolve_credential(
+        "org_one",
+        "provider_one",
+        "secret_one",
+        "projects/project-one/secrets/key/versions/1",
+    )
+
+    assert metadata.provider_id == "provider_key_one"
+    assert metadata.kind == "api-key"
+    assert metadata.scopes == ("messages.write",)
 
 
 @pytest.mark.anyio

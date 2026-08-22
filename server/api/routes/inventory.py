@@ -40,14 +40,9 @@ class ImportCredentialRequest(Contract):
     controls: ControlPreferences
 
 
-class VerifyCredentialPairRequest(Contract):
+class ResolveCredentialRequest(Contract):
     secret_store_connection_id: Identifier
-    provider_id: str = Field(min_length=1, max_length=512)
     secret_reference: str = Field(min_length=1, max_length=1024)
-
-
-class VerifyCredentialPairResponse(Contract):
-    verified: bool
 
 
 class InventoryGraph(Contract):
@@ -304,26 +299,24 @@ async def list_provider_credentials(
 
 
 @router.post(
-    "/connections/{connection_id}/verify-credential",
-    response_model=VerifyCredentialPairResponse,
+    "/connections/{connection_id}/resolve-credential",
+    response_model=ProviderCredentialMetadata,
 )
-async def verify_credential_pair(
+async def resolve_credential(
     organisation_id: Identifier,
     connection_id: Identifier,
-    body: VerifyCredentialPairRequest,
+    body: ResolveCredentialRequest,
     identity: Identity,
     request: Request,
-) -> VerifyCredentialPairResponse:
+) -> ProviderCredentialMetadata:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
-    await required(api.inventory, "inventory").verify_credential_pair(
+    return await required(api.inventory, "inventory").resolve_credential(
         organisation_id,
         connection_id,
         body.secret_store_connection_id,
-        body.provider_id,
         body.secret_reference,
     )
-    return VerifyCredentialPairResponse(verified=True)
 
 
 @router.get(

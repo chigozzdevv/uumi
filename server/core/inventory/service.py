@@ -438,25 +438,33 @@ class InventoryService:
     ) -> None:
         if credential.provider_id is None:
             raise ResourceConflictError("credential import requires a provider credential ID")
-        metadata = await self._verify_credential_pair(
+        metadata = await self._resolve_credential(
             management,
             secret_store,
-            credential.provider_id,
             credential.secret_reference,
         )
-        if metadata.kind is not None and metadata.kind != credential.kind:
+        if metadata.provider_id != credential.provider_id:
+            raise ResourceConflictError("credential identity differs from provider metadata")
+        if metadata.kind != credential.kind:
             raise ResourceConflictError("credential type differs from provider metadata")
-        if metadata.scopes and frozenset(metadata.scopes) != credential.scopes:
+        if frozenset(metadata.scopes) != credential.scopes:
             raise ResourceConflictError("credential scopes differ from provider metadata")
+        existing = await self._repository.credentials(credential.organisation_id)
+        if any(
+            item.archived_at is None
+            and item.connection_id == credential.connection_id
+            and item.provider_id == credential.provider_id
+            for item in existing
+        ):
+            raise ResourceConflictError("provider credential is already imported")
 
-    async def verify_credential_pair(
+    async def resolve_credential(
         self,
         organisation_id: str,
         connection_id: str,
         secret_store_connection_id: str,
-        provider_id: str,
         secret_reference: str,
-    ) -> None:
+    ) -> ProviderCredentialMetadata:
         management = await self.get_connection(organisation_id, connection_id)
         secret_store = await self._secret_connection(organisation_id, secret_store_connection_id)
         if (
@@ -465,25 +473,23 @@ class InventoryService:
             or management.status is not ConnectionStatus.READY
             or management.archived_at is not None
         ):
-            raise ResourceConflictError("credential verification requires a ready API connection")
+            raise ResourceConflictError("credential resolution requires a ready API connection")
         if not _resource_covered(secret_reference, secret_store.allowed_resources):
             raise ResourceConflictError("credential secret reference escapes the secret store")
         if "/versions/" not in secret_reference:
             raise ResourceConflictError(
-                "credential verification requires one immutable secret version"
+                "credential resolution requires one immutable secret version"
             )
-        await self._verify_credential_pair(
+        return await self._resolve_credential(
             management,
             secret_store,
-            provider_id,
             secret_reference,
         )
 
-    async def _verify_credential_pair(
+    async def _resolve_credential(
         self,
         management: Connection,
         secret_store: Connection,
-        provider_id: str,
         secret_reference: str,
     ) -> ProviderCredentialMetadata:
         if self._provider_metadata is None or self._credential_verifier is None:
@@ -492,18 +498,18 @@ class InventoryService:
             ProviderCredentialMetadata.model_validate(item)
             for item in await self._provider_metadata.metadata(management)
         )
-        matches = tuple(item for item in discovered if item.provider_id == provider_id)
-        if len(matches) != 1 or matches[0].disabled is True:
-            raise ResourceConflictError("selected provider credential is not active")
         identity = await self._credential_verifier.credential_identity(
             management,
             secret_store,
             secret_reference,
         )
-        if identity != provider_id:
+        matches = tuple(item for item in discovered if item.provider_id == identity)
+        if len(matches) != 1 or matches[0].disabled is True:
             raise ResourceConflictError(
-                "stored secret does not authenticate as the selected provider credential"
+                "stored secret does not match an active provider credential"
             )
+        if matches[0].kind is None:
+            raise ResourceConflictError("provider credential type is unavailable")
         return matches[0]
 
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
