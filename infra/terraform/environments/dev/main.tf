@@ -90,26 +90,6 @@ resource "google_service_account_iam_member" "coordinator_token" {
   member             = module.identity.members["firekey-coordinator"]
 }
 
-locals {
-  workload_identity_grants = {
-    for grant in setproduct(
-      var.workload_identity_service_accounts,
-      ["firekey-api", "firekey-broker", "firekey-coordinator"],
-      ) : "${grant[1]}:${grant[0]}" => {
-      service_account = grant[0]
-      caller          = grant[1]
-    }
-  }
-}
-
-resource "google_service_account_iam_member" "connection_workload_identity" {
-  for_each = local.workload_identity_grants
-
-  service_account_id = each.value.service_account
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = module.identity.members[each.value.caller]
-}
-
 module "storage" {
   source = "../../modules/storage"
 
@@ -131,12 +111,18 @@ module "storage" {
     coordinator = module.identity.members["firekey-coordinator"]
     browser     = module.identity.members["firekey-browser"]
   }
-  walkthrough_user   = module.identity.members["firekey-api"]
+  walkthrough_user = module.identity.members["firekey-api"]
+  walkthrough_cors_origins = toset([
+    for domain in var.identity_platform_domains : "https://${domain}"
+  ])
   agent_staging_user = module.identity.members["firekey-agents"]
   secret_accessors = {
     api         = module.identity.members["firekey-api"]
     coordinator = module.identity.members["firekey-coordinator"]
   }
+  browser_session_organisations = var.workflow_organisations
+  browser_session_user          = module.identity.members["firekey-browser"]
+  browser_session_manager       = module.identity.members["firekey-api"]
   github_webhook_accessor  = module.identity.members["firekey-ingestion"]
   github_oauth_accessor    = module.identity.members["firekey-api"]
   provider_sources         = var.provider_sources
@@ -200,6 +186,8 @@ check "complete_runtime" {
       length(local.runtime_images) == 9 &&
       var.capability_secret_version != null &&
       var.notification_app_url != null &&
+      var.notification_email_secret_version != null &&
+      var.notification_email_sender != null &&
       var.github_app_slug != null &&
       var.github_client_id != null &&
       var.github_client_secret_version != null &&
@@ -212,7 +200,44 @@ check "complete_runtime" {
       length(var.workflow_organisations) > 0 &&
       length(var.gateway_users) > 0
     )
-    error_message = "Deploy all nine runtime images together with explicit capability and GitHub App secrets, callback metadata, notification app URL, service perimeter, browser egress domains, organisation grant, and IAP gateway user."
+    error_message = "Deploy all nine runtime images together with explicit capability, GitHub App, email delivery, callback, perimeter, browser egress, organisation grant, and IAP gateway configuration."
+  }
+}
+
+check "complete_google_cloud_onboarding" {
+  assert {
+    condition = alltrue([
+      var.google_cloud_client_id == null,
+      var.google_cloud_client_secret_version == null,
+      var.google_cloud_callback_url == null,
+      ]) || alltrue([
+      var.google_cloud_client_id != null,
+      var.google_cloud_client_secret_version != null,
+      var.google_cloud_callback_url != null,
+    ])
+    error_message = "Google Cloud onboarding requires the client ID, client secret version, and callback URL together."
+  }
+}
+
+check "notification_email_delivery" {
+  assert {
+    condition = (
+      (
+        var.notification_email_secret_version == null &&
+        var.notification_email_sender == null
+      ) || (
+        var.notification_email_secret_version != null &&
+        var.notification_email_sender != null &&
+        anytrue([
+          for secret in values(var.notification_secrets) :
+          startswith(
+            coalesce(var.notification_email_secret_version, ""),
+            "projects/${secret.project_id}/secrets/${secret.secret_id}/versions/",
+          )
+        ])
+      )
+    )
+    error_message = "Email delivery requires a sender and a secret version covered by notification_secrets IAM."
   }
 }
 
@@ -263,6 +288,7 @@ module "runtime" {
   coordinator_service_account  = module.identity.emails["firekey-coordinator"]
   notification_service_account = module.identity.emails["firekey-notification"]
   auditlog_service_account     = module.identity.emails["firekey-auditlog"]
+  api_member                   = module.identity.members["firekey-api"]
   coordinator_member           = module.identity.members["firekey-coordinator"]
   workflow_member              = module.identity.members["firekey-workflow"]
   event_member                 = module.identity.members["firekey-events"]
@@ -272,6 +298,12 @@ module "runtime" {
   github_client_id             = coalesce(var.github_client_id, "")
   github_client_secret_version = coalesce(var.github_client_secret_version, "")
   github_callback_url          = coalesce(var.github_callback_url, "")
+  google_cloud_client_id       = coalesce(var.google_cloud_client_id, "")
+  google_cloud_client_secret_version = coalesce(
+    var.google_cloud_client_secret_version,
+    "",
+  )
+  google_cloud_callback_url = coalesce(var.google_cloud_callback_url, "")
   github_webhook_secret_version = coalesce(
     var.github_webhook_secret_version,
     "",
@@ -284,6 +316,11 @@ module "runtime" {
   notification_image        = var.notification_image
   auditlog_image            = var.auditlog_image
   notification_app_url      = var.notification_app_url
+  notification_email_secret_version = coalesce(
+    var.notification_email_secret_version,
+    "",
+  )
+  notification_email_sender = coalesce(var.notification_email_sender, "")
   browser_image             = var.browser_image
   browser_gateway_url       = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
   evidence_bucket           = module.storage.evidence_bucket

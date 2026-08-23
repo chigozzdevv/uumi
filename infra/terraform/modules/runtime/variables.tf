@@ -54,6 +54,11 @@ variable "coordinator_member" {
   type        = string
 }
 
+variable "api_member" {
+  description = "API IAM member allowed to invoke broker onboarding validation."
+  type        = string
+}
+
 variable "event_member" {
   description = "Event delivery IAM member allowed to invoke the publisher."
   type        = string
@@ -137,6 +142,40 @@ variable "github_callback_url" {
       can(regex("^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[^?#]*)?(?:\\?[^#]*)?$", var.github_callback_url))
     )
     error_message = "github_callback_url must be empty or an HTTPS URL without credentials or a fragment."
+  }
+}
+
+variable "google_cloud_client_id" {
+  description = "Public OAuth client ID used for Google Cloud onboarding."
+  type        = string
+  default     = ""
+}
+
+variable "google_cloud_client_secret_version" {
+  description = "Secret Manager version holding the Google OAuth client secret."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.google_cloud_client_secret_version == "" ||
+      can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.google_cloud_client_secret_version))
+    )
+    error_message = "google_cloud_client_secret_version must be empty or an immutable Secret Manager version."
+  }
+}
+
+variable "google_cloud_callback_url" {
+  description = "HTTPS callback URL registered on the Google OAuth client."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.google_cloud_callback_url == "" ||
+      can(regex("^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[^?#]*)?(?:\\?[^#]*)?$", var.google_cloud_callback_url))
+    )
+    error_message = "google_cloud_callback_url must be empty or an HTTPS URL without credentials or a fragment."
   }
 }
 
@@ -241,6 +280,34 @@ variable "notification_app_url" {
       can(regex("^https://[a-zA-Z0-9.-]+$", var.notification_app_url))
     )
     error_message = "notification_app_url must be null or an HTTPS origin without a path."
+  }
+}
+
+variable "notification_email_secret_version" {
+  description = "Immutable Secret Manager version holding FireKey's email delivery credential."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.notification_email_secret_version == "" ||
+      can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.notification_email_secret_version))
+    )
+    error_message = "notification_email_secret_version must be empty or an immutable Secret Manager version."
+  }
+}
+
+variable "notification_email_sender" {
+  description = "Verified sender address used by FireKey email notifications."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.notification_email_sender == "" ||
+      can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.notification_email_sender))
+    )
+    error_message = "notification_email_sender must be empty or a valid email address."
   }
 }
 

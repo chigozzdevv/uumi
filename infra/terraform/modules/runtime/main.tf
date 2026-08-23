@@ -431,6 +431,16 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
+        name  = "FIREKEY_BROKER_URL"
+        value = try(google_cloud_run_v2_service.broker["broker"].uri, "")
+      }
+
+      env {
+        name  = "FIREKEY_BROKER_SERVICE_ACCOUNT"
+        value = var.broker_service_account
+      }
+
+      env {
         name  = "FIREKEY_BROWSER_GATEWAY_URL"
         value = var.browser_gateway_url
       }
@@ -488,6 +498,31 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "FIREKEY_GITHUB_CALLBACK_URL"
         value = var.github_callback_url
+      }
+
+      env {
+        name  = "FIREKEY_GOOGLE_CLOUD_CLIENT_ID"
+        value = var.google_cloud_client_id
+      }
+
+      env {
+        name  = "FIREKEY_GOOGLE_CLOUD_CLIENT_SECRET"
+        value = var.google_cloud_client_secret_version
+      }
+
+      env {
+        name  = "FIREKEY_GOOGLE_CLOUD_CALLBACK_URL"
+        value = var.google_cloud_callback_url
+      }
+
+      env {
+        name  = "FIREKEY_NOTIFICATION_EMAIL_SECRET_VERSION"
+        value = var.notification_email_secret_version
+      }
+
+      env {
+        name  = "FIREKEY_NOTIFICATION_EMAIL_SENDER"
+        value = var.notification_email_sender
       }
 
       resources {
@@ -732,6 +767,16 @@ resource "google_cloud_run_v2_service_iam_member" "coordinator_broker" {
   name     = each.value.name
   role     = "roles/run.invoker"
   member   = var.coordinator_member
+}
+
+resource "google_cloud_run_v2_service_iam_member" "api_broker" {
+  for_each = google_cloud_run_v2_service.broker
+
+  project  = each.value.project
+  location = each.value.location
+  name     = each.value.name
+  role     = "roles/run.invoker"
+  member   = var.api_member
 }
 
 resource "google_cloud_run_v2_service" "coordinator" {

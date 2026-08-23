@@ -105,6 +105,24 @@ resource "google_firestore_index" "audit_outbox" {
   }
 }
 
+resource "google_firestore_index" "active_approvals" {
+  project         = var.project_id
+  database        = google_firestore_database.primary.name
+  collection      = "approvals"
+  query_scope     = "COLLECTION_GROUP"
+  deletion_policy = "PREVENT"
+
+  fields {
+    field_path = "decision"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "expires_at"
+    order      = "ASCENDING"
+  }
+}
+
 resource "google_logging_project_bucket_config" "audit" {
   project        = var.project_id
   location       = var.location
@@ -263,6 +281,16 @@ resource "google_storage_bucket" "walkthroughs" {
   public_access_prevention    = "enforced"
   storage_class               = "STANDARD"
 
+  dynamic "cors" {
+    for_each = length(var.walkthrough_cors_origins) == 0 ? [] : [var.walkthrough_cors_origins]
+    content {
+      origin          = cors.value
+      method          = ["PUT"]
+      response_header = ["Content-Type", "Content-Range", "Location"]
+      max_age_seconds = 3600
+    }
+  }
+
   versioning {
     enabled = true
   }
@@ -373,6 +401,53 @@ resource "google_secret_manager_secret_iam_member" "capability" {
   secret_id = google_secret_manager_secret.capability.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = each.value
+}
+
+resource "google_secret_manager_secret" "browser_session" {
+  for_each = var.browser_session_organisations
+
+  project   = var.project_id
+  secret_id = "firekey-browser-session-${each.value}"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.location
+        customer_managed_encryption {
+          kms_key_name = google_kms_crypto_key.evidence.id
+        }
+      }
+    }
+  }
+
+  deletion_protection = true
+}
+
+resource "google_secret_manager_secret_iam_member" "browser_session_add" {
+  for_each = var.browser_session_user == null ? {} : google_secret_manager_secret.browser_session
+
+  project   = each.value.project
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = var.browser_session_user
+}
+
+resource "google_secret_manager_secret_iam_member" "browser_session_read" {
+  for_each = var.browser_session_user == null ? {} : google_secret_manager_secret.browser_session
+
+  project   = each.value.project
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = var.browser_session_user
+}
+
+resource "google_secret_manager_secret_iam_member" "browser_session_manage" {
+  for_each = var.browser_session_manager == null ? {} : google_secret_manager_secret.browser_session
+
+  project   = each.value.project
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = var.browser_session_manager
 }
 
 resource "google_secret_manager_secret" "github_webhook" {

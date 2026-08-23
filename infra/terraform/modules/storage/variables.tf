@@ -66,6 +66,20 @@ variable "walkthrough_user" {
   }
 }
 
+variable "walkthrough_cors_origins" {
+  description = "HTTPS dashboard origins allowed to upload teaching videos through resumable sessions."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for origin in var.walkthrough_cors_origins :
+      can(regex("^https://[A-Za-z0-9.-]+(?::[0-9]+)?$", origin))
+    ])
+    error_message = "Walkthrough CORS origins must be HTTPS origins without paths."
+  }
+}
+
 variable "agent_staging_user" {
   description = "Managed Agent Runtime IAM member allowed to use its staging bucket and CMEK."
   type        = string
@@ -85,6 +99,44 @@ variable "secret_accessors" {
   description = "IAM members allowed to read the capability signing key."
   type        = map(string)
   default     = {}
+}
+
+variable "browser_session_organisations" {
+  description = "FireKey organisations receiving an isolated browser-session secret container."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for organisation_id in var.browser_session_organisations :
+      can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation_id))
+    ])
+    error_message = "Browser-session organisations must use FireKey identifiers."
+  }
+}
+
+variable "browser_session_user" {
+  description = "Browser worker allowed to add and access encrypted browser-session versions."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.browser_session_user == null || startswith(var.browser_session_user, "serviceAccount:")
+    error_message = "Browser-session user must be a service account IAM member."
+  }
+}
+
+variable "browser_session_manager" {
+  description = "API identity allowed to list and reconcile browser-session versions."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.browser_session_manager == null || startswith(var.browser_session_manager, "serviceAccount:")
+    error_message = "Browser-session manager must be a service account IAM member."
+  }
 }
 
 variable "github_webhook_accessor" {

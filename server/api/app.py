@@ -7,6 +7,7 @@ from core.errors import (
     FireKeyError,
     IdempotencyConflictError,
     LeaseConflictError,
+    PlaybookError,
     ResourceConflictError,
     ResourceNotFoundError,
     RevisionConflictError,
@@ -26,6 +27,7 @@ from api.routes import (
     audit_router,
     browsers_router,
     github_router,
+    google_cloud_router,
     health_router,
     incidents_router,
     inventory_router,
@@ -34,6 +36,8 @@ from api.routes import (
     playbooks_router,
     probes_router,
     runs_router,
+    session_router,
+    settings_router,
     walkthroughs_router,
 )
 
@@ -44,7 +48,9 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app = FastAPI(title="FireKey", version="0.1.0", docs_url=None, redoc_url=None)
     app.state.services = services or build_services()
     app.include_router(health_router)
+    app.include_router(session_router)
     app.include_router(github_router)
+    app.include_router(google_cloud_router)
     app.include_router(runs_router)
     app.include_router(inventory_router)
     app.include_router(notifications_router)
@@ -57,6 +63,7 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.include_router(walkthroughs_router)
     app.include_router(audit_router)
     app.include_router(overview_router)
+    app.include_router(settings_router)
     app.add_exception_handler(FireKeyError, _firekey_error)
     app.add_exception_handler(PolicyViolationError, _controls_error)
     instrument(app, "firekey-api")
@@ -84,6 +91,8 @@ async def _firekey_error(request: Request, error: Exception) -> JSONResponse:
         return _error(status.HTTP_409_CONFLICT, "conflict", str(error))
     if isinstance(error, TransitionRejectedError):
         return _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "transition-rejected", str(error))
+    if isinstance(error, PlaybookError):
+        return _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "playbook-rejected", str(error))
     if isinstance(error, StorageIntegrityError):
         return _error(
             status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -97,20 +97,6 @@ variable "workflow_organisations" {
   }
 }
 
-variable "workload_identity_service_accounts" {
-  description = "Customer-managed service accounts that the FireKey API, broker, and coordinator may impersonate for connection-scoped Google operations. Browser workers receive only encrypted, short-lived session authorization."
-  type        = set(string)
-  default     = []
-
-  validation {
-    condition = alltrue([
-      for service_account in var.workload_identity_service_accounts :
-      can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/serviceAccounts/[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", service_account))
-    ])
-    error_message = "Workload identity targets must be full Google service account resource names."
-  }
-}
-
 variable "api_image" {
   description = "Immutable FireKey API image reference; null bootstraps the registry only."
   type        = string
@@ -201,6 +187,36 @@ variable "notification_app_url" {
   }
 }
 
+variable "notification_email_secret_version" {
+  description = "Immutable Secret Manager version holding FireKey's email delivery credential."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.notification_email_secret_version == null ||
+      can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.notification_email_secret_version))
+    )
+    error_message = "notification_email_secret_version must be null or an immutable Secret Manager version."
+  }
+}
+
+variable "notification_email_sender" {
+  description = "Verified sender address used by FireKey email notifications."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.notification_email_sender == null ||
+      can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.notification_email_sender))
+    )
+    error_message = "notification_email_sender must be null or a valid email address."
+  }
+}
+
 variable "github_app_slug" {
   description = "Public slug of the customer-facing GitHub App."
   type        = string
@@ -252,6 +268,43 @@ variable "github_callback_url" {
       can(regex("^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[^?#]*)?(?:\\?[^#]*)?$", var.github_callback_url))
     )
     error_message = "github_callback_url must be null or an HTTPS URL without credentials or a fragment."
+  }
+}
+
+variable "google_cloud_client_id" {
+  description = "Public OAuth client ID used for Google Cloud onboarding."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "google_cloud_client_secret_version" {
+  description = "Secret Manager version holding the Google OAuth client secret."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.google_cloud_client_secret_version == null ||
+      can(regex("^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*$", var.google_cloud_client_secret_version))
+    )
+    error_message = "google_cloud_client_secret_version must be null or an immutable Secret Manager version."
+  }
+}
+
+variable "google_cloud_callback_url" {
+  description = "HTTPS callback URL registered on the Google OAuth client."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.google_cloud_callback_url == null ||
+      can(regex("^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[^?#]*)?(?:\\?[^#]*)?$", var.google_cloud_callback_url))
+    )
+    error_message = "google_cloud_callback_url must be null or an HTTPS URL without credentials or a fragment."
   }
 }
 

@@ -18,11 +18,6 @@ output "service_accounts" {
   value       = module.identity.emails
 }
 
-output "workload_identity_targets" {
-  description = "Customer-managed service accounts configured for connection-scoped impersonation."
-  value       = var.workload_identity_service_accounts
-}
-
 output "api_uri" {
   description = "Private FireKey API URI, or null before the first image deployment."
   value       = module.runtime.api_uri

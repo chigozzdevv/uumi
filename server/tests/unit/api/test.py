@@ -1,5 +1,6 @@
 import itertools
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import httpx
 import pytest
@@ -9,7 +10,12 @@ from contracts import (
     Application,
     Approval,
     ApprovalDecision,
+    ApprovalEvidenceKind,
+    ApprovalEvidenceSnapshot,
     AuditEvent,
+    ComputerUseActivity,
+    ComputerUseActivityPhase,
+    ComputerUseActivityStatus,
     Connection,
     ConnectionAuthorization,
     ConnectionInterface,
@@ -26,12 +32,17 @@ from contracts import (
     ManagedCredential,
     Playbook,
     PlaybookDraft,
+    PlaybookEffect,
     PlaybookVersion,
     ProbeVersion,
+    RotationHistory,
+    RunStageActivity,
     SetupSession,
     SetupStatus,
     Severity,
     SourceResource,
+    Stage,
+    StageExecutionStatus,
 )
 from contracts.incident import Confidence
 from core.approval import ApprovalService
@@ -43,6 +54,7 @@ from core.auth import (
     Role,
 )
 from core.errors import AuthenticationError, ResourceNotFoundError
+from core.history import RunHistoryService
 from core.incident import IncidentService
 from core.inventory import InventoryService
 from core.overview import OverviewService
@@ -66,6 +78,68 @@ class TokenVerifier:
         return IDENTITY
 
 
+class History:
+    async def get(self, organisation_id: str, run_id: str) -> RotationHistory:
+        assert organisation_id == "org_one"
+        return RotationHistory(
+            run_id=run_id,
+            stages=(
+                RunStageActivity(
+                    id="stage_one",
+                    stage=Stage.PREFLIGHT,
+                    status=StageExecutionStatus.SUCCEEDED,
+                    checks=("credential-known",),
+                    evidence_count=1,
+                    started_at=NOW,
+                    completed_at=NOW + timedelta(seconds=2),
+                ),
+            ),
+            computer_use=(
+                ComputerUseActivity(
+                    id="activity_one",
+                    organisation_id="org_one",
+                    session_id="browser_one",
+                    run_id=run_id,
+                    step_id="step_one",
+                    stage=Stage.CREATE,
+                    turn=1,
+                    phase=ComputerUseActivityPhase.INPUT,
+                    status=ComputerUseActivityStatus.SENT,
+                    effect=PlaybookEffect.CREATE_CREDENTIAL,
+                    prompt="Create the replacement credential.",
+                    instruction="Do not handle secrets.",
+                    image_reference="gs://evidence/input#1",
+                    image_digest="a" * 64,
+                    recorded_at=NOW,
+                ),
+            ),
+        )
+
+    async def input_image(
+        self, organisation_id: str, run_id: str, activity_id: str
+    ) -> tuple[bytes, str]:
+        assert (organisation_id, run_id, activity_id) == (
+            "org_one",
+            "run_one",
+            "activity_one",
+        )
+        return b"\x89PNG\r\n\x1a\n", "image/png"
+
+    async def approval_evidence(
+        self, organisation_id: str, approval_id: str
+    ) -> ApprovalEvidenceSnapshot:
+        assert organisation_id == "org_one"
+        return ApprovalEvidenceSnapshot(
+            approval_id=approval_id,
+            evidence_hash="c" * 64,
+            kind=ApprovalEvidenceKind.VERIFICATION,
+            status="passed",
+            checks=("provider-valid", "store-valid", "deployment-valid"),
+            evidence_count=3,
+            recorded_at=NOW,
+        )
+
+
 class AccessRepository:
     def __init__(self, role: Role) -> None:
         self._role = role
@@ -81,9 +155,9 @@ class AccessRepository:
 
 
 class IncidentRepository:
-    def __init__(self) -> None:
-        self.incidents = (
-            _incident("incident_one", IncidentStatus.NEW, NOW),
+    def __init__(self, credential_id: str | None = None) -> None:
+        self.incidents: tuple[Incident, ...] = (
+            _incident("incident_one", IncidentStatus.NEW, NOW, credential_id),
             _incident("incident_two", IncidentStatus.ACTION, NOW + timedelta(minutes=5)),
         )
 
@@ -99,7 +173,7 @@ class IncidentRepository:
         raise AssertionError("not used")
 
     async def get(self, organisation_id: str, incident_id: str) -> Incident:
-        raise AssertionError("not used")
+        return next(item for item in self.incidents if item.id == incident_id)
 
     async def correlate(
         self,
@@ -132,11 +206,33 @@ class IncidentRepository:
     ) -> tuple[Incident, ...]:
         raise AssertionError("not used")
 
+    async def dismiss(
+        self,
+        organisation_id: str,
+        incident_id: str,
+        expected_revision: int,
+        reason: str,
+        updated_at: datetime,
+    ) -> Incident:
+        current = await self.get(organisation_id, incident_id)
+        changed = current.model_copy(
+            update={
+                "status": IncidentStatus.DISMISSED,
+                "dismissal_reason": reason,
+                "updated_at": updated_at,
+                "revision": current.revision + 1,
+            }
+        )
+        self.incidents = tuple(
+            changed if item.id == incident_id else item for item in self.incidents
+        )
+        return changed
+
 
 class ApprovalRepository:
-    def __init__(self) -> None:
-        self.approvals = (
-            _approval("approval_one", ApprovalDecision.PENDING, NOW),
+    def __init__(self, pending_run_id: str = "run_one") -> None:
+        self.approvals: tuple[Approval, ...] = (
+            _approval("approval_one", ApprovalDecision.PENDING, NOW, run_id=pending_run_id),
             _approval(
                 "approval_two", ApprovalDecision.APPROVED, NOW + timedelta(minutes=5), decided=True
             ),
@@ -146,9 +242,17 @@ class ApprovalRepository:
         return self.approvals[:limit]
 
     async def count_approvals(
-        self, organisation_id: str, decisions: frozenset[ApprovalDecision]
+        self,
+        organisation_id: str,
+        decisions: frozenset[ApprovalDecision],
+        active_at: datetime | None = None,
     ) -> int:
-        return sum(1 for approval in self.approvals if approval.decision in decisions)
+        return sum(
+            1
+            for approval in self.approvals
+            if approval.decision in decisions
+            and (active_at is None or approval.expires_at > active_at)
+        )
 
     async def create(self, approval: Approval, action: object) -> Approval:
         raise AssertionError("not used")
@@ -162,7 +266,19 @@ class ApprovalRepository:
         actor_id: str,
         decided_at: datetime,
     ) -> Approval:
-        raise AssertionError("not used")
+        current = next(item for item in self.approvals if item.id == approval_id)
+        changed = current.model_copy(
+            update={
+                "decision": decision,
+                "approver_id": actor_id,
+                "decided_at": decided_at,
+                "revision": current.revision + 1,
+            }
+        )
+        self.approvals = tuple(
+            changed if item.id == approval_id else item for item in self.approvals
+        )
+        return changed
 
     async def consume(
         self,
@@ -465,6 +581,7 @@ class InventoryRepository:
         bindings: tuple[ConsumerBinding, ...],
         controls: ControlVersion,
         probes: tuple[ProbeVersion, ...],
+        service_setup: tuple[Application, Environment, ConsumerService] | None = None,
     ) -> ManagedCredential:
         raise AssertionError("not used")
 
@@ -522,7 +639,12 @@ class InventoryRepository:
         return ()
 
 
-def app(role: Role = Role.OPERATOR) -> FastAPI:
+def app(
+    role: Role = Role.OPERATOR,
+    *,
+    incident_credential_id: str | None = None,
+    approval_run_id: str = "run_one",
+) -> FastAPI:
     sequence = itertools.count(1)
     repository = MemoryRunRepository()
     workflow = RunWorkflow(
@@ -531,8 +653,8 @@ def app(role: Role = Role.OPERATOR) -> FastAPI:
         id_factory=lambda prefix: f"{prefix}_{next(sequence)}",
     )
     inventory = InventoryRepository()
-    incidents = IncidentRepository()
-    approvals = ApprovalRepository()
+    incidents = IncidentRepository(incident_credential_id)
+    approvals = ApprovalRepository(approval_run_id)
     services = ApiServices(
         workflow=workflow,
         access=AccessControl(AccessRepository(role)),
@@ -542,8 +664,9 @@ def app(role: Role = Role.OPERATOR) -> FastAPI:
         approvals=ApprovalService(approvals, clock=lambda: NOW),
         incidents=IncidentService(incidents, clock=lambda: NOW),
         audit=AuditWriter(AuditRepository(), "us-east1", lambda: NOW),
-        overview=OverviewService(inventory, repository, incidents, approvals),
+        overview=OverviewService(inventory, repository, incidents, approvals, lambda: NOW),
         browser_setup=BrowserSetup(),
+        history=cast(RunHistoryService, History()),
     )
     return create_app(services)
 
@@ -558,11 +681,11 @@ class BrowserSetup:
         self,
         organisation_id: str,
         connection_id: str,
-        secret_container: str,
         subject: str,
         extra_domains: tuple[str, ...] = (),
     ) -> tuple[SetupSession, str]:
         del extra_domains
+        secret_container = f"projects/project-one/secrets/firekey-browser-session-{organisation_id}"
         self.session = SetupSession(
             id="setup_browser",
             organisation_id=organisation_id,
@@ -670,6 +793,7 @@ def _incident(
     incident_id: str,
     incident_status: IncidentStatus,
     created_at: datetime,
+    credential_id: str | None = None,
 ) -> Incident:
     return Incident(
         id=incident_id,
@@ -681,6 +805,7 @@ def _incident(
         confidence=Confidence.HIGH,
         status=incident_status,
         resource=SourceResource(repository="acme/store-api", provider="sendgrid"),
+        credential_id=credential_id,
         created_at=created_at,
         updated_at=created_at,
     )
@@ -691,11 +816,12 @@ def _approval(
     decision: ApprovalDecision,
     created_at: datetime,
     decided: bool = False,
+    run_id: str = "run_one",
 ) -> Approval:
     return Approval(
         id=approval_id,
         organisation_id="org_one",
-        run_id="run_one",
+        run_id=run_id,
         action_id="action_one",
         action_digest="a" * 64,
         plan_hash="b" * 64,
@@ -751,6 +877,17 @@ def anyio_backend() -> str:
 
 
 @pytest.mark.anyio
+async def test_logout_clears_browser_session_data_without_active_identity() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/v1/auth/logout")
+
+    assert response.status_code == 204
+    assert response.headers["clear-site-data"] == '"cache", "cookies", "storage"'
+    assert "__session=" in response.headers["set-cookie"]
+
+
+@pytest.mark.anyio
 async def test_run_routes_require_identity() -> None:
     transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -779,6 +916,27 @@ async def test_viewer_cannot_create_run() -> None:
 
     assert response.status_code == 403
     assert response.json()["code"] == "forbidden"
+
+
+@pytest.mark.anyio
+async def test_viewer_can_read_computer_use_history_and_exact_model_input() -> None:
+    transport = httpx.ASGITransport(app=app(Role.VIEWER), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        history = await client.get(
+            "/v1/organisations/org_one/runs/run_one/history",
+            headers=headers(),
+        )
+        model_input = await client.get(
+            "/v1/organisations/org_one/runs/run_one/computer-use/activity_one/image",
+            headers=headers(),
+        )
+
+    assert history.status_code == 200
+    assert history.json()["stages"][0]["checks"] == ["credential-known"]
+    assert history.json()["computer_use"][0]["prompt"] == "Create the replacement credential."
+    assert model_input.status_code == 200
+    assert model_input.headers["cache-control"] == "private, no-store"
+    assert model_input.headers["content-type"] == "image/png"
 
 
 @pytest.mark.anyio
@@ -911,6 +1069,21 @@ async def test_list_incidents_filters_status_newest_first() -> None:
 
 
 @pytest.mark.anyio
+async def test_administrator_dismisses_an_incident_with_a_reason() -> None:
+    transport = httpx.ASGITransport(app=app(Role.ADMINISTRATOR), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        dismissed = await client.post(
+            "/v1/organisations/org_one/incidents/incident_two/dismiss",
+            headers=headers(),
+            json={"expected_revision": 0, "reason": "False positive"},
+        )
+
+    assert dismissed.status_code == 200
+    assert dismissed.json()["status"] == "dismissed"
+    assert dismissed.json()["dismissal_reason"] == "False positive"
+
+
+@pytest.mark.anyio
 async def test_list_approvals_filters_decision_newest_first() -> None:
     transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -927,6 +1100,24 @@ async def test_list_approvals_filters_decision_newest_first() -> None:
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()] == ["approval_two", "approval_one"]
     assert [item["id"] for item in pending.json()] == ["approval_one"]
+
+
+@pytest.mark.anyio
+async def test_approval_evidence_returns_the_bound_snapshot() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        evidence = await client.get(
+            "/v1/organisations/org_one/approvals/approval_one/evidence",
+            headers=headers(),
+        )
+
+    assert evidence.status_code == 200
+    assert evidence.json()["evidence_hash"] == "c" * 64
+    assert evidence.json()["checks"] == [
+        "provider-valid",
+        "store-valid",
+        "deployment-valid",
+    ]
 
 
 @pytest.mark.anyio
@@ -1077,6 +1268,66 @@ async def test_inventory_metadata_update_is_revision_fenced_and_archivable() -> 
     assert archived.json()["archived_at"] is not None
     assert blocked_application.status_code == 409
     assert listed.json() == []
+
+
+@pytest.mark.anyio
+async def test_credential_archive_stops_active_rotation_and_pending_approval() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.ADMINISTRATOR, approval_run_id="run_1"),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("create-active-run"),
+            json={**create_body(), "credential_id": "credential_one"},
+        )
+        archived = await client.post(
+            "/v1/organisations/org_one/inventory/credentials/credential_one/archive",
+            headers=headers("archive-active-credential"),
+            json={"expected_revision": 0, "cascade": True},
+        )
+        run = await client.get(
+            f"/v1/organisations/org_one/runs/{created.json()['run']['id']}",
+            headers=headers(),
+        )
+        approvals = await client.get(
+            "/v1/organisations/org_one/approvals",
+            headers=headers(),
+        )
+        credentials = await client.get(
+            "/v1/organisations/org_one/inventory/credentials",
+            headers=headers(),
+        )
+
+    assert created.status_code == 201
+    assert archived.status_code == 200
+    assert run.json()["status"] == "cancelled"
+    pending = next(item for item in approvals.json() if item["id"] == "approval_one")
+    assert pending["decision"] == "cancelled"
+    assert credentials.json() == []
+
+
+@pytest.mark.anyio
+async def test_credential_archive_dismisses_open_incident() -> None:
+    transport = httpx.ASGITransport(
+        app=app(Role.ADMINISTRATOR, incident_credential_id="credential_one"),
+        raise_app_exceptions=False,
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        archived = await client.post(
+            "/v1/organisations/org_one/inventory/credentials/credential_one/archive",
+            headers=headers("archive-incident-credential"),
+            json={"expected_revision": 0, "cascade": True},
+        )
+        incident = await client.get(
+            "/v1/organisations/org_one/incidents/incident_one",
+            headers=headers(),
+        )
+
+    assert archived.status_code == 200
+    assert incident.json()["status"] == "dismissed"
+    assert incident.json()["dismissal_reason"] == "Credential removed from FireKey."
 
 
 @pytest.mark.anyio
@@ -1239,6 +1490,19 @@ async def test_viewer_reads_overview() -> None:
 
 
 @pytest.mark.anyio
+async def test_overview_does_not_count_expired_pending_approvals() -> None:
+    summary = await OverviewService(
+        InventoryRepository(),
+        MemoryRunRepository(),
+        IncidentRepository(),
+        ApprovalRepository(),
+        lambda: NOW + timedelta(hours=2),
+    ).summary("org_one")
+
+    assert summary.pending_approvals == 0
+
+
+@pytest.mark.anyio
 async def test_administrator_can_run_browser_connection_setup() -> None:
     transport = httpx.ASGITransport(
         app=app(Role.ADMINISTRATOR),
@@ -1248,7 +1512,7 @@ async def test_administrator_can_run_browser_connection_setup() -> None:
         begun = await client.post(
             "/v1/organisations/org_one/inventory/connections/connection_browser/setup",
             headers=headers(),
-            json={"secret_container": "projects/project-one/secrets/vendor-session"},
+            json={"extra_domains": []},
         )
         setup_id = begun.json()["session"]["id"]
         fetched = await client.get(
@@ -1279,7 +1543,7 @@ async def test_operator_cannot_begin_browser_setup() -> None:
         begun = await client.post(
             "/v1/organisations/org_one/inventory/connections/connection_browser/setup",
             headers=headers(),
-            json={"secret_container": "projects/project-one/secrets/vendor-session"},
+            json={"extra_domains": []},
         )
 
     assert begun.status_code == 403
@@ -1304,14 +1568,20 @@ async def test_setup_without_browser_runtime_is_a_conflict() -> None:
         approvals=ApprovalService(ApprovalRepository(), clock=lambda: NOW),
         incidents=IncidentService(IncidentRepository(), clock=lambda: NOW),
         audit=AuditWriter(AuditRepository(), "us-east1", lambda: NOW),
-        overview=OverviewService(inventory, repository, IncidentRepository(), ApprovalRepository()),
+        overview=OverviewService(
+            inventory,
+            repository,
+            IncidentRepository(),
+            ApprovalRepository(),
+            lambda: NOW,
+        ),
     )
     transport = httpx.ASGITransport(app=create_app(services), raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         begun = await client.post(
             "/v1/organisations/org_one/inventory/connections/connection_browser/setup",
             headers=headers(),
-            json={"secret_container": "projects/project-one/secrets/vendor-session"},
+            json={"extra_domains": []},
         )
 
     assert begun.status_code == 409

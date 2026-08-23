@@ -7,7 +7,7 @@ from agents.continuity import AgentContinuityService
 from agents.fleet import AgentFleetService
 from agents.runtime import AgentRuntimeService
 from agents.storage import AgentRepository
-from broker import CapabilitySigner
+from broker import CapabilitySigner, GcsEvidenceSink
 from browser.access import BrowserAccessService
 from browser.compute import BrowserVmManager
 from browser.secret import BrowserSecretAccessService
@@ -17,10 +17,12 @@ from browser.storage import FirestoreBrowserRepository
 from connectors.cloudrun import CloudRunConnector
 from connectors.github import GitHubOnboardingConnector
 from connectors.google import GoogleRestClient
+from connectors.googlecloud import GoogleCloudOnboardingConnector
 from connectors.http import HttpProviderConnector
 from connectors.secrets import SecretManagerConnector
 from connectors.storage import GcsUploadConnector
 from connectors.video import VideoIntelligenceConnector
+from core.account import AccountService, FirestoreAccountRepository
 from core.approval import ApprovalService
 from core.audit import AuditWriter
 from core.auth import (
@@ -28,16 +30,21 @@ from core.auth import (
     AuthenticatedIdentity,
     CompositeTokenVerifier,
     FirebaseTokenVerifier,
-    FirestoreAccessRepository,
     GoogleTokenVerifier,
     IdentityTokenVerifier,
 )
 from core.config import Settings
 from core.errors import AuthenticationError
 from core.github import FirestoreGitHubRepository, GitHubOnboardingService
+from core.googlecloud import (
+    FirestoreGoogleCloudRepository,
+    GoogleCloudBrokerValidator,
+    GoogleCloudOnboardingService,
+)
+from core.history import RunHistoryService
 from core.incident import IncidentService
 from core.inventory import InventoryService
-from core.notification import NotificationService
+from core.notification import EmailDeliveryConfiguration, NotificationService
 from core.overview import OverviewService
 from core.playbook import PlaybookService, WalkthroughService
 from core.storage import (
@@ -78,6 +85,9 @@ class ApiServices:
     overview: OverviewService | None = None
     browser_setup: BrowserSetupApi | None = None
     github: GitHubOnboardingService | None = None
+    google_cloud: GoogleCloudOnboardingService | None = None
+    history: RunHistoryService | None = None
+    accounts: AccountService | None = None
 
 
 def build_services(settings: Settings | None = None) -> ApiServices:
@@ -86,7 +96,9 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         project=configured.project_id,
         database=configured.firestore_database,
     )
+    account_repository = FirestoreAccountRepository(client, _now)
     google = GoogleRestClient()
+    catalog = FirestoreCatalog(client)
     secret_manager = SecretManagerConnector(google)
     provider_connector = HttpProviderConnector(secret_manager)
 
@@ -110,10 +122,33 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         configured.firestore_database,
         _now,
     )
-    notifications = NotificationService(FirestoreNotificationRepository(client), _now)
+    email_delivery = (
+        EmailDeliveryConfiguration(
+            configured.notification_email_secret_version,
+            configured.notification_email_sender,
+        )
+        if configured.notification_email_secret_version and configured.notification_email_sender
+        else None
+    )
+    notifications = NotificationService(
+        FirestoreNotificationRepository(client),
+        _now,
+        email_delivery,
+    )
     audit = AuditWriter(FirestoreAuditRepository(client), configured.region, _now)
+    evidence = (
+        GcsEvidenceSink(
+            google,
+            client,
+            configured.evidence_bucket,
+            configured.region,
+        )
+        if configured.evidence_bucket
+        else None
+    )
     browser_setup = None
     github = None
+    google_cloud = None
     if all(
         (
             configured.browser_zone,
@@ -125,7 +160,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         )
     ):
         browser_setup = BrowserSetupService(
-            FirestoreCatalog(client),
+            catalog,
             inventory_repository,
             BrowserVmManager(
                 google,
@@ -140,6 +175,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             ),
             secret_manager,
             configured.browser_gateway_url,
+            configured.project_id,
             _now,
             runs=WorkflowRunResumer(workflow, _now),
         )
@@ -153,7 +189,6 @@ def build_services(settings: Settings | None = None) -> ApiServices:
     ):
         github = GitHubOnboardingService(
             FirestoreGitHubRepository(client),
-            inventory_repository,
             GitHubOnboardingConnector(
                 configured.github_client_id,
                 configured.github_client_secret,
@@ -165,9 +200,31 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             configured.github_callback_url,
             _now,
         )
+    if all(
+        (
+            configured.google_cloud_client_id,
+            configured.google_cloud_client_secret,
+            configured.google_cloud_callback_url,
+        )
+    ):
+        google_cloud = GoogleCloudOnboardingService(
+            FirestoreGoogleCloudRepository(client),
+            GoogleCloudOnboardingConnector(
+                configured.google_cloud_client_id,
+                configured.google_cloud_client_secret,
+                configured.google_cloud_callback_url,
+                secret_manager,
+            ),
+            configured.google_cloud_client_id,
+            configured.google_cloud_callback_url,
+            _now,
+            inventory_repository,
+            GoogleCloudBrokerValidator(configured.broker_url),
+            configured.broker_service_account,
+        )
     return ApiServices(
         workflow=workflow,
-        access=AccessControl(FirestoreAccessRepository(client)),
+        access=AccessControl(account_repository),
         tokens=CompositeTokenVerifier(
             (
                 FirebaseTokenVerifier(configured.project_id),
@@ -197,12 +254,12 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             audit,
         ),
         browsers=BrowserAccessService(
-            FirestoreCatalog(client),
+            catalog,
             BrowserService(FirestoreBrowserRepository(client), _now),
             load_signer,
             configured.browser_gateway_url,
             _now,
-            BrowserSecretAccessService(FirestoreCatalog(client), google, load_signer, _now),
+            BrowserSecretAccessService(catalog, google, load_signer, _now),
         ),
         agents=AgentRuntimeService(
             AgentFleetService(agent_repository),
@@ -228,9 +285,13 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             runs,
             incident_repository,
             approval_repository,
+            _now,
         ),
         browser_setup=browser_setup,
         github=github,
+        google_cloud=google_cloud,
+        history=RunHistoryService(catalog, evidence),
+        accounts=AccountService(account_repository, _now),
     )
 
 
