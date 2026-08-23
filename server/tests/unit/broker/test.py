@@ -640,10 +640,11 @@ def _connection(
     )
 
 
-def test_mcp_broker_exposes_only_capability_scoped_connector_tools() -> None:
+def test_mcp_broker_exposes_only_declared_connector_and_onboarding_tools() -> None:
     tools = {tool.name: tool for tool in mcp_server._tool_manager.list_tools()}
 
     assert set(tools) == {
+        "connection.validateGoogleCloud",
         "provider.listCredentialMetadata",
         "provider.getCredentialStatus",
         "provider.createCredential",
@@ -660,8 +661,10 @@ def test_mcp_broker_exposes_only_capability_scoped_connector_tools() -> None:
     assert all("capability" not in str(tool.parameters).lower() for tool in tools.values())
     revoke = tools["provider.revokeCredential"].annotations
     status = tools["provider.getCredentialStatus"].annotations
+    connection_validation = tools["connection.validateGoogleCloud"].annotations
     assert revoke is not None and revoke.destructive_hint is True
     assert status is not None and status.read_only_hint is True
+    assert connection_validation is not None and connection_validation.read_only_hint is True
 
 
 def test_provider_resource_boundary_uses_connection_platform_and_credential_id() -> None:

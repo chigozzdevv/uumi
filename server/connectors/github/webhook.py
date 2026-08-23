@@ -21,7 +21,7 @@ class GitHubWebhook:
         event_type: str,
         body: bytes,
         received_at: datetime,
-        credential_id: str | None = None,
+        connection_id: str | None = None,
     ) -> IngestionEvent:
         if event_type != "secret_scanning_alert":
             raise ValueError("GitHub webhook is not a secret scanning alert")
@@ -66,7 +66,7 @@ class GitHubWebhook:
             severity=Severity.CRITICAL if action != "resolved" else Severity.MEDIUM,
             confidence=Confidence.HIGH,
             resource=SourceResource(
-                credential_id=credential_id,
+                connection_id=connection_id,
                 repository=repository_name,
             ),
             source_reference=alert_url,

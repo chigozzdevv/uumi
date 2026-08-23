@@ -14,6 +14,8 @@ from connectors.http import HttpProviderConnector
 from connectors.scc import SecurityCommandCenterFinding
 from connectors.secrets import SecretManagerConnector
 from contracts import (
+    ConnectionRole,
+    ConnectionStatus,
     Contract,
     GitHubWebhookReceipt,
     Identifier,
@@ -74,6 +76,7 @@ class Runtime:
         self.github = FirestoreGitHubRepository(firestore)
         self.tokens = GoogleTokenVerifier(settings.oidc_audience)
         inventory = FirestoreInventoryRepository(firestore)
+        self.inventory = inventory
         notifications = NotificationService(FirestoreNotificationRepository(firestore), _now)
         audit = AuditWriter(FirestoreAuditRepository(firestore), settings.region, _now)
         self.incidents = IncidentService(
@@ -94,7 +97,7 @@ class Runtime:
             inventory,
             inventory,
             HttpProviderConnector(self.secrets),
-            {"cloud-run": cloudrun, "google-cloud-run": cloudrun},
+            {"cloud-run": cloudrun, "google-cloud": cloudrun, "google-cloud-run": cloudrun},
             _now,
         )
 
@@ -198,12 +201,24 @@ async def github(
         organisation_id, repository = route
         if repository.full_name != repository_name:
             raise ValueError("GitHub webhook repository mapping changed")
+        connections = tuple(
+            connection
+            for connection in await runtime.inventory.connections(organisation_id)
+            if ConnectionRole.INCIDENT in connection.roles
+            and connection.platform == "github"
+            and connection.status is ConnectionStatus.READY
+            and connection.authorization_reference
+            == f"oauth://github/installation/{installation_id}"
+            and repository_name in connection.allowed_resources
+        )
+        if len(connections) != 1:
+            raise ValueError("GitHub installation does not resolve to one ready connection")
         event = GitHubWebhook().normalise(
             organisation_id,
             event_type,
             body,
             _now(),
-            repository.credential_id,
+            connections[0].id,
         )
     except (ValueError, json.JSONDecodeError) as error:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error

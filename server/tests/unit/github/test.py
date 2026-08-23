@@ -13,8 +13,8 @@ from contracts import (
     GitHubOnboardingSession,
     GitHubOnboardingStatus,
     GitHubRepository,
+    GitHubRepositoryCandidate,
     GitHubWebhookReceipt,
-    ManagedCredential,
 )
 from core.errors import ResourceConflictError
 from core.github import GitHubOnboardingService
@@ -29,7 +29,7 @@ def anyio_backend() -> str:
 
 
 @pytest.mark.anyio
-async def test_onboarding_requires_exact_repository_mapping_and_signed_delivery() -> None:
+async def test_onboarding_verifies_repositories_and_signed_delivery() -> None:
     repository = Repository(
         GitHubWebhookReceipt(
             installation_id=123,
@@ -41,7 +41,6 @@ async def test_onboarding_requires_exact_repository_mapping_and_signed_delivery(
     )
     service = GitHubOnboardingService(
         repository,
-        Inventory(),
         Connector(),  # type: ignore[arg-type]
         "firekey-app",
         "client-one",
@@ -58,7 +57,7 @@ async def test_onboarding_requires_exact_repository_mapping_and_signed_delivery(
     assert verifier not in session.model_dump_json()
 
     with pytest.raises(ResourceConflictError, match="state is invalid"):
-        await service.complete(
+        await service.discover(
             "org_one",
             session.id,
             "user-one",
@@ -66,22 +65,9 @@ async def test_onboarding_requires_exact_repository_mapping_and_signed_delivery(
             verifier,
             "oauth-code",
             123,
-            {"456": "credential_one"},
         )
 
-    with pytest.raises(ResourceConflictError, match="every installed"):
-        await service.complete(
-            "org_one",
-            session.id,
-            "user-one",
-            state,
-            verifier,
-            "oauth-code",
-            123,
-            {},
-        )
-
-    completed, installation, repositories = await service.complete(
+    staged, installation, candidates = await service.discover(
         "org_one",
         session.id,
         "user-one",
@@ -89,13 +75,21 @@ async def test_onboarding_requires_exact_repository_mapping_and_signed_delivery(
         verifier,
         "oauth-code",
         123,
-        {"456": "credential_one"},
+    )
+
+    assert staged.status is GitHubOnboardingStatus.DISCOVERED
+    assert candidates[0].full_name == "customer/api"
+
+    completed, installation, repositories = await service.complete(
+        "org_one",
+        session.id,
+        "user-one",
     )
 
     assert completed.status is GitHubOnboardingStatus.COMPLETE
     assert installation.ready
     assert installation.webhook_verified_at == NOW
-    assert repositories[0].credential_id == "credential_one"
+    assert repositories[0].full_name == "customer/api"
 
 
 @pytest.mark.anyio
@@ -167,7 +161,7 @@ async def test_connector_uses_user_access_to_verify_installation_without_persist
     await google.close()
 
 
-def test_secret_scanning_event_uses_confirmed_repository_credential_mapping() -> None:
+def test_secret_scanning_event_uses_the_confirmed_source_connection() -> None:
     body = json.dumps(
         {
             "action": "created",
@@ -189,10 +183,11 @@ def test_secret_scanning_event_uses_confirmed_repository_credential_mapping() ->
         "secret_scanning_alert",
         body,
         NOW,
-        "credential_one",
+        "connection_github",
     )
 
-    assert event.resource.credential_id == "credential_one"
+    assert event.resource.connection_id == "connection_github"
+    assert event.resource.credential_id is None
     assert event.resource.repository == "customer/api"
     assert event.resource.provider is None
     assert "must-never-enter-firekey-metadata" not in event.model_dump_json()
@@ -214,7 +209,7 @@ def test_public_leak_event_is_an_exposure_trigger() -> None:
     ).encode()
 
     event = GitHubWebhook().normalise(
-        "org_one", "secret_scanning_alert", body, NOW, "credential_one"
+        "org_one", "secret_scanning_alert", body, NOW, "connection_github"
     )
 
     assert event.kind == "credential-exposure-detected"
@@ -250,26 +245,6 @@ class Connector:
         )
 
 
-class Inventory:
-    async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]:
-        return (
-            ManagedCredential(
-                id="credential_one",
-                organisation_id="org_one",
-                connection_id="provider_one",
-                secret_store_connection_id="secret_one",
-                secret_resource="projects/project-one/secrets/mailer",
-                secret_reference="projects/project-one/secrets/mailer",
-                provider="sendgrid",
-                kind="api-key",
-                display_name="Mailer",
-                control_version="policy_one",
-                created_at=NOW,
-                updated_at=NOW,
-            ),
-        )
-
-
 class Repository:
     def __init__(self, receipt: GitHubWebhookReceipt | None) -> None:
         self.receipt_value = receipt
@@ -287,6 +262,23 @@ class Repository:
 
     async def receipt(self, installation_id: int) -> GitHubWebhookReceipt | None:
         return self.receipt_value
+
+    async def stage(
+        self,
+        session: GitHubOnboardingSession,
+        installation: GitHubInstallation,
+        repositories: tuple[GitHubRepositoryCandidate, ...],
+    ) -> GitHubOnboardingSession:
+        staged = session.model_copy(
+            update={
+                "status": GitHubOnboardingStatus.DISCOVERED,
+                "installation_id": installation.installation_id,
+                "installation": installation,
+                "repositories": repositories,
+            }
+        )
+        self.session = staged
+        return staged
 
     async def complete(
         self,

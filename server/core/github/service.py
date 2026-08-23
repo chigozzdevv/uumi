@@ -13,9 +13,9 @@ from contracts import (
     GitHubOnboardingSession,
     GitHubOnboardingStatus,
     GitHubRepository,
+    GitHubRepositoryCandidate,
     GitHubSecretScanningStatus,
     GitHubWebhookReceipt,
-    ManagedCredential,
 )
 
 from core.errors import ResourceConflictError
@@ -30,6 +30,13 @@ class GitHubRepositoryStore(Protocol):
     ) -> GitHubOnboardingSession: ...
 
     async def receipt(self, installation_id: int) -> GitHubWebhookReceipt | None: ...
+
+    async def stage(
+        self,
+        session: GitHubOnboardingSession,
+        installation: GitHubInstallation,
+        repositories: tuple[GitHubRepositoryCandidate, ...],
+    ) -> GitHubOnboardingSession: ...
 
     async def complete(
         self,
@@ -47,15 +54,10 @@ class GitHubRepositoryStore(Protocol):
     ) -> tuple[GitHubRepository, ...]: ...
 
 
-class GitHubCredentialStore(Protocol):
-    async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]: ...
-
-
 class GitHubOnboardingService:
     def __init__(
         self,
         repository: GitHubRepositoryStore,
-        inventory: GitHubCredentialStore,
         connector: GitHubOnboardingConnector,
         app_slug: str,
         client_id: str,
@@ -63,7 +65,6 @@ class GitHubOnboardingService:
         clock: Callable[[], datetime],
     ) -> None:
         self._repository = repository
-        self._inventory = inventory
         self._connector = connector
         self._app_slug = app_slug
         self._client_id = client_id
@@ -102,7 +103,7 @@ class GitHubOnboardingService:
         )
         return stored, state, verifier, install_url, authorization_url
 
-    async def complete(
+    async def discover(
         self,
         organisation_id: str,
         session_id: str,
@@ -111,11 +112,10 @@ class GitHubOnboardingService:
         verifier: str,
         code: str,
         installation_id: int,
-        mappings: dict[str, str],
     ) -> tuple[
         GitHubOnboardingSession,
         GitHubInstallation,
-        tuple[GitHubRepository, ...],
+        tuple[GitHubRepositoryCandidate, ...],
     ]:
         session = await self._repository.get_session(organisation_id, session_id)
         _authorise(session, subject, state, verifier, self._clock())
@@ -124,8 +124,22 @@ class GitHubOnboardingService:
             return (
                 session,
                 await self._repository.installation(organisation_id, session.installation_id),
-                await self._repository.repositories(organisation_id, session.installation_id),
+                tuple(
+                    GitHubRepositoryCandidate(
+                        repository_id=item.repository_id,
+                        full_name=item.full_name,
+                        private=item.private,
+                        default_branch=item.default_branch,
+                        secret_scanning=item.secret_scanning,
+                    )
+                    for item in await self._repository.repositories(
+                        organisation_id, session.installation_id
+                    )
+                ),
             )
+        if session.status is GitHubOnboardingStatus.DISCOVERED:
+            assert session.installation is not None
+            return session, session.installation, session.repositories
         metadata, repository_metadata = await self._connector.verify(
             code, verifier, installation_id
         )
@@ -137,32 +151,20 @@ class GitHubOnboardingService:
             raise ResourceConflictError(
                 "GitHub App is not subscribed to secret scanning alert events"
             )
-        repository_ids = {str(item["repository_id"]) for item in repository_metadata}
-        if set(mappings) != repository_ids:
-            raise ResourceConflictError(
-                "every installed GitHub repository requires exactly one credential mapping"
-            )
-        credentials = {item.id for item in await self._inventory.credentials(organisation_id)}
-        if not set(mappings.values()).issubset(credentials):
-            raise ResourceConflictError(
-                "GitHub repository mapping references an unknown credential"
-            )
         receipt = await self._repository.receipt(installation_id)
         now = self._clock()
         repositories = tuple(
-            GitHubRepository(
+            GitHubRepositoryCandidate(
                 repository_id=item["repository_id"],
-                installation_id=installation_id,
-                organisation_id=organisation_id,
                 full_name=item["full_name"],
                 private=item["private"],
                 default_branch=item["default_branch"],
                 secret_scanning=GitHubSecretScanningStatus(item["secret_scanning"]),
-                credential_id=mappings[str(item["repository_id"])],
-                updated_at=now,
             )
             for item in repository_metadata
         )
+        if not repositories:
+            raise ResourceConflictError("GitHub App must be installed on at least one repository")
         repositories_ready = bool(repositories) and all(
             item.secret_scanning is GitHubSecretScanningStatus.ENABLED for item in repositories
         )
@@ -181,6 +183,47 @@ class GitHubOnboardingService:
             created_at=now,
             updated_at=now,
         )
+        staged = await self._repository.stage(session, installation, repositories)
+        return staged, installation, repositories
+
+    async def complete(
+        self,
+        organisation_id: str,
+        session_id: str,
+        subject: str,
+    ) -> tuple[
+        GitHubOnboardingSession,
+        GitHubInstallation,
+        tuple[GitHubRepository, ...],
+    ]:
+        session = await self._repository.get_session(organisation_id, session_id)
+        _owner(session, subject, self._clock())
+        if session.status is GitHubOnboardingStatus.COMPLETE:
+            assert session.installation_id is not None
+            return (
+                session,
+                await self._repository.installation(organisation_id, session.installation_id),
+                await self._repository.repositories(organisation_id, session.installation_id),
+            )
+        if session.status is not GitHubOnboardingStatus.DISCOVERED:
+            raise ResourceConflictError("GitHub repositories have not been discovered")
+        installation = session.installation
+        if installation is None:
+            raise ResourceConflictError("GitHub installation metadata is unavailable")
+        now = self._clock()
+        repositories = tuple(
+            GitHubRepository(
+                repository_id=item.repository_id,
+                installation_id=installation.installation_id,
+                organisation_id=organisation_id,
+                full_name=item.full_name,
+                private=item.private,
+                default_branch=item.default_branch,
+                secret_scanning=item.secret_scanning,
+                updated_at=now,
+            )
+            for item in session.repositories
+        )
         completed = await self._repository.complete(session, installation, repositories)
         return completed, installation, repositories
 
@@ -192,14 +235,18 @@ def _authorise(
     verifier: str,
     now: datetime,
 ) -> None:
-    if session.subject != subject:
-        raise ResourceConflictError("GitHub onboarding belongs to another administrator")
-    if session.expires_at <= now and session.status is not GitHubOnboardingStatus.COMPLETE:
-        raise ResourceConflictError("GitHub onboarding session has expired")
+    _owner(session, subject, now)
     if not hmac.compare_digest(_hash(state), session.state_hash):
         raise ResourceConflictError("GitHub onboarding state is invalid")
     if not hmac.compare_digest(_hash(verifier), session.verifier_hash):
         raise ResourceConflictError("GitHub onboarding PKCE verifier is invalid")
+
+
+def _owner(session: GitHubOnboardingSession, subject: str, now: datetime) -> None:
+    if session.subject != subject:
+        raise ResourceConflictError("GitHub onboarding belongs to another administrator")
+    if session.expires_at <= now and session.status is not GitHubOnboardingStatus.COMPLETE:
+        raise ResourceConflictError("GitHub onboarding session has expired")
 
 
 def _hash(value: str) -> str:

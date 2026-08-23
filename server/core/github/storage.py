@@ -7,6 +7,7 @@ from contracts import (
     GitHubOnboardingSession,
     GitHubOnboardingStatus,
     GitHubRepository,
+    GitHubRepositoryCandidate,
     GitHubWebhookReceipt,
 )
 from google.cloud.firestore_v1 import AsyncClient
@@ -40,6 +41,66 @@ class FirestoreGitHubRepository:
             FirestorePaths.github_webhook_receipt(installation_id)
         ).get()
         return GitHubWebhookReceipt.model_validate(_data(snapshot)) if snapshot.exists else None
+
+    async def stage(
+        self,
+        session: GitHubOnboardingSession,
+        installation: GitHubInstallation,
+        repositories: tuple[GitHubRepositoryCandidate, ...],
+    ) -> GitHubOnboardingSession:
+        session_ref = self._client.document(
+            FirestorePaths.github_onboarding(session.organisation_id, session.id)
+        )
+        index_ref = self._client.document(
+            FirestorePaths.github_installation_index(installation.installation_id)
+        )
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> GitHubOnboardingSession:
+            session_snapshot = await session_ref.get(transaction=transaction)
+            index_snapshot = await index_ref.get(transaction=transaction)
+            if not session_snapshot.exists:
+                raise StorageIntegrityError("GitHub onboarding disappeared before discovery")
+            current = GitHubOnboardingSession.model_validate(_data(session_snapshot))
+            if current.status in {
+                GitHubOnboardingStatus.DISCOVERED,
+                GitHubOnboardingStatus.COMPLETE,
+            }:
+                return current
+            if current != session:
+                raise ResourceConflictError("GitHub onboarding changed before discovery")
+            if index_snapshot.exists:
+                index = GitHubInstallationIndex.model_validate(_data(index_snapshot))
+                if index.organisation_id != session.organisation_id:
+                    raise ResourceConflictError(
+                        "GitHub installation is already connected to another organisation"
+                    )
+                if index.deleted:
+                    raise ResourceConflictError("GitHub installation has been deleted")
+                if index.onboarding_id != session.id:
+                    raise ResourceConflictError(
+                        "GitHub installation is already connected to this organisation"
+                    )
+            else:
+                index = GitHubInstallationIndex(
+                    installation_id=installation.installation_id,
+                    organisation_id=session.organisation_id,
+                    onboarding_id=session.id,
+                    created_at=installation.created_at,
+                )
+                transaction.create(index_ref, encode(index))
+            staged = current.model_copy(
+                update={
+                    "status": GitHubOnboardingStatus.DISCOVERED,
+                    "installation_id": installation.installation_id,
+                    "installation": installation,
+                    "repositories": repositories,
+                }
+            )
+            transaction.set(session_ref, encode(staged))
+            return staged
+
+        return await apply(self._client.transaction(max_attempts=5))
 
     async def complete(
         self,

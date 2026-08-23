@@ -23,7 +23,7 @@ class CloudRunConnector:
         self._client = client
 
     async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
-        if connection.platform != "cloud-run":
+        if connection.platform not in {"cloud-run", "google-cloud"}:
             raise ConnectorError(
                 "runtime-discovery-unavailable",
                 f"No runtime resource adapter is configured for {connection.platform}",
@@ -50,12 +50,22 @@ class CloudRunConnector:
                     )
                 template = service.get("template")
                 identity = template.get("serviceAccount") if isinstance(template, dict) else None
+                labels = service.get("labels")
+                environment_name = _label(labels, "environment")
                 resources.append(
                     {
                         "reference": name,
                         "display_name": name.rsplit("/", 1)[-1],
                         "endpoint": service.get("uri"),
                         "identity": identity,
+                        "region": name.split("/locations/", 1)[1].split("/", 1)[0],
+                        "environment_name": environment_name,
+                        "production": (
+                            environment_name.lower() == "production"
+                            if environment_name is not None
+                            else None
+                        ),
+                        "secret_bindings": _secret_bindings(service),
                     }
                 )
         return tuple({item["reference"]: item for item in resources}.values())
@@ -318,6 +328,35 @@ def _inspect(service: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _secret_bindings(service: dict[str, Any]) -> tuple[dict[str, str | None], ...]:
+    template = service.get("template")
+    containers = template.get("containers", []) if isinstance(template, dict) else []
+    bindings: list[dict[str, str | None]] = []
+    for container in containers if isinstance(containers, list) else []:
+        if not isinstance(container, dict):
+            continue
+        container_name = container.get("name")
+        for item in container.get("env", []):
+            if not isinstance(item, dict):
+                continue
+            source = item.get("valueSource")
+            secret = source.get("secretKeyRef") if isinstance(source, dict) else None
+            name = item.get("name")
+            secret_name = secret.get("secret") if isinstance(secret, dict) else None
+            version = secret.get("version") if isinstance(secret, dict) else None
+            if not all(isinstance(value, str) and value for value in (name, secret_name, version)):
+                continue
+            bindings.append(
+                {
+                    "name": name,
+                    "secret": secret_name,
+                    "version": version,
+                    "container": container_name if isinstance(container_name, str) else None,
+                }
+            )
+    return tuple(bindings)
+
+
 def _set_env(env: list[Any], name: str, value: str | dict[str, Any]) -> None:
     env[:] = [item for item in env if not isinstance(item, dict) or item.get("name") != name]
     if isinstance(value, str):
@@ -355,6 +394,8 @@ def _discovery_targets(connection: Connection) -> tuple[tuple[str, bool], ...]:
     targets: list[tuple[str, bool]] = []
     for raw in connection.allowed_resources:
         boundary = raw.rstrip("/")
+        if connection.platform == "google-cloud" and "/secrets" in boundary:
+            continue
         if not boundary.startswith("projects/"):
             raise ConnectorError(
                 "invalid-runtime-boundary",
@@ -382,6 +423,13 @@ def _discovery_targets(connection: Connection) -> tuple[tuple[str, bool], ...]:
             "Cloud Run discovery requires a project, location, or service resource boundary",
         )
     return tuple(dict.fromkeys(targets))
+
+
+def _label(value: object, key: str) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    label = value.get(key)
+    return label if isinstance(label, str) and label else None
 
 
 def _string(payload: dict[str, Any], key: str) -> str:

@@ -93,16 +93,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         secrets,
     )
     connectors.register(
+        ConnectionRole.SECRET_STORE,
+        ConnectionInterface.API,
+        "google-cloud",
+        secrets,
+    )
+    connectors.register(
         ConnectionRole.PROVIDER,
         ConnectionInterface.API,
         "*",
         HttpProviderConnector(secrets),
     )
+    cloudrun = CloudRunConnector(google)
     connectors.register(
         ConnectionRole.RUNTIME,
         ConnectionInterface.API,
         "cloud-run",
-        CloudRunConnector(google),
+        cloudrun,
+    )
+    connectors.register(
+        ConnectionRole.RUNTIME,
+        ConnectionInterface.API,
+        "google-cloud",
+        cloudrun,
     )
     agent_repository = AgentRepository(firestore)
     fleet = AgentFleetService(agent_repository)

@@ -3,6 +3,7 @@ from contracts import (
     GitHubInstallation,
     GitHubOnboardingSession,
     GitHubRepository,
+    GitHubRepositoryCandidate,
     Identifier,
 )
 from core.auth import Permission
@@ -25,12 +26,17 @@ class BeginGitHubResponse(Contract):
     authorization_url: str = Field(pattern=r"^https://github\.com/")
 
 
-class CompleteGitHubRequest(Contract):
+class DiscoverGitHubRequest(Contract):
     state: str = Field(min_length=32, max_length=256)
     pkce_verifier: str = Field(min_length=43, max_length=128)
     code: str = Field(min_length=8, max_length=512)
     installation_id: int = Field(gt=0)
-    repository_mappings: dict[str, Identifier] = Field(min_length=1, max_length=400)
+
+
+class DiscoverGitHubResponse(Contract):
+    session: GitHubOnboardingSession
+    installation: GitHubInstallation
+    repositories: tuple[GitHubRepositoryCandidate, ...]
 
 
 class CompleteGitHubResponse(Contract):
@@ -60,13 +66,41 @@ async def begin(
 
 
 @router.post(
+    "/onboarding/{session_id}/discover",
+    response_model=DiscoverGitHubResponse,
+)
+async def discover(
+    organisation_id: Identifier,
+    session_id: Identifier,
+    body: DiscoverGitHubRequest,
+    identity: Identity,
+    request: Request,
+) -> DiscoverGitHubResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
+    session, installation, repositories = await required(api.github, "github").discover(
+        organisation_id,
+        session_id,
+        identity.subject,
+        body.state,
+        body.pkce_verifier,
+        body.code,
+        body.installation_id,
+    )
+    return DiscoverGitHubResponse(
+        session=session,
+        installation=installation,
+        repositories=repositories,
+    )
+
+
+@router.post(
     "/onboarding/{session_id}/complete",
     response_model=CompleteGitHubResponse,
 )
 async def complete(
     organisation_id: Identifier,
     session_id: Identifier,
-    body: CompleteGitHubRequest,
     identity: Identity,
     request: Request,
 ) -> CompleteGitHubResponse:
@@ -76,11 +110,6 @@ async def complete(
         organisation_id,
         session_id,
         identity.subject,
-        body.state,
-        body.pkce_verifier,
-        body.code,
-        body.installation_id,
-        body.repository_mappings,
     )
     return CompleteGitHubResponse(
         session=session,

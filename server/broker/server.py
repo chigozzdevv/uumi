@@ -8,8 +8,16 @@ from connectors.cloudrun import CloudRunConnector
 from connectors.google import GoogleRestClient
 from connectors.http import HttpProviderConnector
 from connectors.secrets import SecretManagerConnector
-from contracts import ConnectionInterface, ConnectionRole, ToolRequest, ToolResult
+from contracts import (
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
+    ConnectionStatus,
+    ToolRequest,
+    ToolResult,
+)
 from core.audit import AuditWriter
+from core.errors import ResourceConflictError
 from core.storage import FirestoreAuditRepository
 from google.cloud.firestore_v1 import AsyncClient
 from mcp.server import MCPServer
@@ -37,9 +45,18 @@ class BrokerCall(BaseModel):
     fencing_token: int = Field(gt=0)
 
 
+class ConnectionValidationCall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,127}$")
+    organisation_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,127}$")
+    connection_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,127}$")
+
+
 @dataclass(frozen=True, slots=True)
 class BrokerRuntime:
     service: BrokerService
+    repository: FirestoreBrokerRepository
     google: GoogleRestClient
 
 
@@ -58,19 +75,33 @@ async def lifespan(_: MCPServer[Any]) -> Any:
         secrets,
     )
     connectors.register(
+        ConnectionRole.SECRET_STORE,
+        ConnectionInterface.API,
+        "google-cloud",
+        secrets,
+    )
+    connectors.register(
         ConnectionRole.PROVIDER,
         ConnectionInterface.API,
         "*",
         HttpProviderConnector(secrets),
     )
+    cloudrun = CloudRunConnector(google)
     connectors.register(
         ConnectionRole.RUNTIME,
         ConnectionInterface.API,
         "cloud-run",
-        CloudRunConnector(google),
+        cloudrun,
     )
+    connectors.register(
+        ConnectionRole.RUNTIME,
+        ConnectionInterface.API,
+        "google-cloud",
+        cloudrun,
+    )
+    repository = FirestoreBrokerRepository(firestore)
     service = BrokerService(
-        FirestoreBrokerRepository(firestore),
+        repository,
         connectors,
         signer,
         GcsEvidenceSink(google, firestore, settings.evidence_bucket, settings.region),
@@ -81,7 +112,7 @@ async def lifespan(_: MCPServer[Any]) -> Any:
         settings.attempt_lease_seconds,
     )
     try:
-        yield BrokerRuntime(service, google)
+        yield BrokerRuntime(service, repository, google)
     finally:
         await google.close()
 
@@ -245,6 +276,39 @@ async def runtime_traffic(call: BrokerCall, ctx: Context[BrokerRuntime, Any]) ->
 )
 async def runtime_rollback(call: BrokerCall, ctx: Context[BrokerRuntime, Any]) -> dict[str, Any]:
     return await _execute("runtime.rollback", call, ctx)
+
+
+@server.tool(
+    name="connection.validateGoogleCloud",
+    description="Verify one pending Google Cloud connection through the broker identity.",
+    annotations=_read("Validate Google Cloud connection"),
+    structured_output=True,
+)
+async def validate_google_cloud_connection(
+    call: ConnectionValidationCall,
+    ctx: Context[BrokerRuntime, Any],
+) -> dict[str, Any]:
+    runtime = ctx.request_context.lifespan_context
+    connection = await runtime.repository.connection(call.organisation_id, call.connection_id)
+    if (
+        connection.platform != "google-cloud"
+        or connection.interface is not ConnectionInterface.API
+        or connection.authorization is not ConnectionAuthorization.WORKLOAD_IDENTITY
+        or connection.authorization_reference is None
+        or connection.status is not ConnectionStatus.SETUP_REQUIRED
+        or not {ConnectionRole.RUNTIME, ConnectionRole.SECRET_STORE}.issubset(connection.roles)
+    ):
+        raise ResourceConflictError("connection is not a pending Google Cloud connection")
+    cloudrun = CloudRunConnector(runtime.google)
+    secrets = SecretManagerConnector(runtime.google)
+    runtime_resources = await cloudrun.resources_for(connection)
+    secret_resources = await secrets.resources_for(connection)
+    return {
+        "connection_id": connection.id,
+        "ready": True,
+        "runtime_resources": len(runtime_resources),
+        "secret_resources": len(secret_resources),
+    }
 
 
 async def _execute(tool: str, call: BrokerCall, ctx: Context[BrokerRuntime, Any]) -> dict[str, Any]:
