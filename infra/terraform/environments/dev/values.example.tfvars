@@ -9,7 +9,7 @@ gateway_users             = ["group:firekey-operators@example.com"]
 
 identity_platform_domains = ["app.example.com"]
 
-workflow_organisations = ["org_replace"]
+workflow_organisations             = ["org_replace"]
 api_image                          = null
 publisher_image                    = null
 ingestion_image                    = null

@@ -123,10 +123,10 @@ module "storage" {
   browser_session_organisations = var.workflow_organisations
   browser_session_user          = module.identity.members["firekey-browser"]
   browser_session_manager       = module.identity.members["firekey-api"]
-  github_webhook_accessor  = module.identity.members["firekey-ingestion"]
-  github_oauth_accessor    = module.identity.members["firekey-api"]
-  provider_sources         = var.provider_sources
-  provider_secret_accessor = module.identity.members["firekey-ingestion"]
+  github_webhook_accessor       = module.identity.members["firekey-ingestion"]
+  github_oauth_accessor         = module.identity.members["firekey-api"]
+  provider_sources              = var.provider_sources
+  provider_secret_accessor      = module.identity.members["firekey-ingestion"]
   principals = {
     for organisation_id in var.workflow_organisations :
     "workflow-${organisation_id}" => {
@@ -225,7 +225,7 @@ check "notification_email_delivery" {
       (
         var.notification_email_secret_version == null &&
         var.notification_email_sender == null
-      ) || (
+        ) || (
         var.notification_email_secret_version != null &&
         var.notification_email_sender != null &&
         anytrue([
@@ -308,14 +308,14 @@ module "runtime" {
     var.github_webhook_secret_version,
     "",
   )
-  api_image                 = var.api_image
-  ingestion_image           = var.ingestion_image
-  publisher_image           = var.publisher_image
-  broker_image              = var.broker_image
-  coordinator_image         = var.coordinator_image
-  notification_image        = var.notification_image
-  auditlog_image            = var.auditlog_image
-  notification_app_url      = var.notification_app_url
+  api_image            = var.api_image
+  ingestion_image      = var.ingestion_image
+  publisher_image      = var.publisher_image
+  broker_image         = var.broker_image
+  coordinator_image    = var.coordinator_image
+  notification_image   = var.notification_image
+  auditlog_image       = var.auditlog_image
+  notification_app_url = var.notification_app_url
   notification_email_secret_version = coalesce(
     var.notification_email_secret_version,
     "",
