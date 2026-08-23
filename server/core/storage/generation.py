@@ -118,7 +118,7 @@ class FirestoreGenerationRepository:
                     binding.credential_id != credential.id
                     or binding.current_generation_id != predecessor.id
                     or binding.target_generation_id != target.id
-                    or binding.verification_id != report.id
+                    or binding.verification_report_id != report.id
                 ):
                     raise ResourceConflictError("consumer binding has not verified the target")
 
@@ -165,11 +165,13 @@ class FirestoreGenerationRepository:
         self,
         organisation_id: str,
         generation_id: str,
-        verification_id: str,
+        verification_report_id: str,
         revoked_at: datetime,
     ) -> CredentialGeneration:
         reference = self._client.document(FirestorePaths.generation(organisation_id, generation_id))
-        report_ref = self._client.document(FirestorePaths.report(organisation_id, verification_id))
+        report_ref = self._client.document(
+            FirestorePaths.report(organisation_id, verification_report_id)
+        )
 
         @async_transactional
         async def apply(transaction: AsyncTransaction) -> CredentialGeneration:
@@ -264,7 +266,7 @@ class FirestoreGenerationRepository:
                     encode(
                         binding.model_copy(
                             update={
-                                "verification_id": report_id,
+                                "verification_report_id": report_id,
                                 "revision": binding.revision + 1,
                             }
                         )

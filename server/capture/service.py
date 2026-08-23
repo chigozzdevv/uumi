@@ -144,7 +144,7 @@ class SecureCapture:
                     organisation_id, sink_connection_id
                 )
                 if (
-                    connection.platform != "google-secret-manager"
+                    connection.platform not in {"google-secret-manager", "google-cloud"}
                     or ConnectionRole.SECRET_STORE not in connection.roles
                     or connection.interface is not ConnectionInterface.API
                     or not _resource_allowed(secret_resource, connection.allowed_resources)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from contracts import (
+    CancelRunCommand,
     CleanupRunCommand,
     CompleteRecoveryCommand,
     CompleteStageCommand,
@@ -176,6 +177,14 @@ class RunWorkflow:
                 command.expected_revision,
                 now,
             ),
+        )
+
+    async def cancel(self, command: CancelRunCommand) -> MutationResult:
+        now = self._clock()
+        return await self._repository.mutate(
+            command,
+            EventKind.RUN_CANCELLED,
+            lambda run: self._machine.cancel(run, command.expected_revision, now),
         )
 
     async def recover(self, command: RecoverRunCommand) -> MutationResult:

@@ -1,6 +1,7 @@
 import hashlib
+import re
 from datetime import datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from connectors.base.errors import ConnectorError
 from connectors.google import GoogleRestClient
@@ -75,6 +76,40 @@ class GcsEvidenceSink:
                 raise
             return existing
         return evidence
+
+    async def read_image(
+        self,
+        organisation_id: str,
+        run_id: str,
+        resource: str,
+        expected_digest: str,
+    ) -> tuple[bytes, str]:
+        parsed = urlsplit(resource)
+        object_name = parsed.path.lstrip("/")
+        expected_prefix = f"organisations/{organisation_id}/runs/{run_id}/"
+        if (
+            parsed.scheme != "gs"
+            or parsed.netloc != self._bucket
+            or not object_name.startswith(expected_prefix)
+            or re.fullmatch(r"[1-9][0-9]*", parsed.fragment) is None
+        ):
+            raise ResourceConflictError("browser evidence is outside the authorised run")
+        response = await self._client.response(
+            "GET",
+            f"https://storage.googleapis.com/download/storage/v1/b/{self._bucket}/o/"
+            f"{quote(object_name, safe='')}",
+            params={"alt": "media", "generation": parsed.fragment},
+            headers={"Accept": "image/png"},
+        )
+        content = response.content
+        if len(content) > 10 * 1024 * 1024:
+            raise StorageIntegrityError("browser image exceeds its display limit")
+        if not hashlib.sha256(content).hexdigest() == expected_digest:
+            raise StorageIntegrityError("browser image digest does not match its activity")
+        content_type = response.headers.get("content-type", "image/png").partition(";")[0]
+        if content_type != "image/png":
+            raise StorageIntegrityError("browser image is not a PNG image")
+        return content, content_type
 
     async def _upload(
         self,

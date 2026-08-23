@@ -6,7 +6,7 @@ from contracts import (
     BrowserActionRecord,
     BrowserActionStatus,
     BrowserSession,
-    ReplayCheckpoint,
+    ComputerUseActivity,
     SecureCaptureResult,
 )
 from core.errors import ResourceConflictError, ResourceNotFoundError, StorageIntegrityError
@@ -114,11 +114,11 @@ class FirestoreBrowserRepository:
 
         return await apply(self._client.transaction(max_attempts=5))
 
-    async def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> ReplayCheckpoint:
-        path = FirestorePaths.replay(
-            checkpoint.organisation_id, checkpoint.session_id, checkpoint.id
+    async def save_activity(self, activity: ComputerUseActivity) -> ComputerUseActivity:
+        path = FirestorePaths.computer_use_activity(
+            activity.organisation_id, activity.session_id, activity.id
         )
-        return await self._create_immutable(path, checkpoint, ReplayCheckpoint)
+        return await self._create_immutable(path, activity, ComputerUseActivity)
 
     async def begin_action(
         self,
@@ -195,7 +195,7 @@ class FirestoreBrowserRepository:
 
         return await apply(self._client.transaction(max_attempts=5))
 
-    async def _create_immutable[T: SecureCaptureResult | ReplayCheckpoint](
+    async def _create_immutable[T: SecureCaptureResult | ComputerUseActivity](
         self, path: str, value: T, model: type[T]
     ) -> T:
         reference = self._client.document(path)

@@ -769,8 +769,25 @@ async def test_cloudrun_lists_services_from_connection_region_without_secret_mat
                     {
                         "name": "projects/project-one/locations/us-east1/services/worker-one",
                         "uri": "https://worker-one.example.run.app",
+                        "labels": {"environment": "production"},
                         "template": {
-                            "serviceAccount": "worker-one@example.iam.gserviceaccount.com"
+                            "serviceAccount": "worker-one@example.iam.gserviceaccount.com",
+                            "containers": [
+                                {
+                                    "name": "worker",
+                                    "env": [
+                                        {
+                                            "name": "PROVIDER_KEY",
+                                            "valueSource": {
+                                                "secretKeyRef": {
+                                                    "secret": "provider-key",
+                                                    "version": "7",
+                                                }
+                                            },
+                                        }
+                                    ],
+                                }
+                            ],
                         },
                     }
                 ],
@@ -792,7 +809,18 @@ async def test_cloudrun_lists_services_from_connection_region_without_secret_mat
     assert [resource["display_name"] for resource in resources] == ["worker-one", "worker-two"]
     assert resources[0]["identity"] == "worker-one@example.iam.gserviceaccount.com"
     assert resources[0]["endpoint"] == "https://worker-one.example.run.app"
-    assert all("secret" not in resource for resource in resources)
+    assert resources[0]["region"] == "us-east1"
+    assert resources[0]["environment_name"] == "production"
+    assert resources[0]["production"] is True
+    assert resources[0]["secret_bindings"] == (
+        {
+            "name": "PROVIDER_KEY",
+            "secret": "provider-key",
+            "version": "7",
+            "container": "worker",
+        },
+    )
+    assert "value" not in str(resources[0]["secret_bindings"])
     assert all(
         request.url.path == "/v2/projects/project-one/locations/us-east1/services"
         for request in requests_log
@@ -842,6 +870,35 @@ async def test_google_mints_short_lived_connection_token() -> None:
     assert returned_expiry == expires_at
     assert "short-lived-customer-token" not in repr(token)
     token.clear()
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_google_stream_parses_server_sent_json_events() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["alt"] == "sse"
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            text=(
+                'data: {"candidates":[{"content":{"parts":[{"text":"first"}]}}]}\n\n'
+                'data: {"candidates":[{"content":{"parts":[{"text":"second"}]}}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+        )
+
+    google = _google(handler)
+    events = [
+        event
+        async for event in google.stream(
+            "POST", "https://aiplatform.googleapis.com/model:stream", params={"alt": "sse"}
+        )
+    ]
+
+    assert [event["candidates"][0]["content"]["parts"][0]["text"] for event in events] == [
+        "first",
+        "second",
+    ]
     await google.close()
 
 

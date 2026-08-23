@@ -151,7 +151,7 @@ def _validate_sink(connection: Connection, session: BrowserSession) -> None:
     )
     if (
         connection.id != session.secret_store_connection_id
-        or connection.platform != "google-secret-manager"
+        or connection.platform not in {"google-secret-manager", "google-cloud"}
         or ConnectionRole.SECRET_STORE not in connection.roles
         or connection.interface is not ConnectionInterface.API
         or connection.authorization is not ConnectionAuthorization.WORKLOAD_IDENTITY

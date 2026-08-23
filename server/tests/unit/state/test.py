@@ -105,6 +105,18 @@ def test_resume_invalidates_queued_work() -> None:
         machine.complete(run, make_proof(Stage.TRIGGER, NOW), 1, run.revision, NOW)
 
 
+def test_cancel_releases_the_lease_and_invalidates_queued_work() -> None:
+    machine, run = start()
+
+    cancelled = machine.cancel(run, run.revision, NOW)
+
+    assert cancelled.status is RunStatus.CANCELLED
+    assert cancelled.lease is None
+    assert cancelled.fencing_token == 2
+    with pytest.raises(TransitionRejectedError, match="terminal"):
+        machine.cancel(cancelled, cancelled.revision, NOW)
+
+
 def test_cleanup_can_recover_under_a_new_fence() -> None:
     machine, run = start()
     failure = Failure(

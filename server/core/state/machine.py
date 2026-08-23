@@ -204,6 +204,34 @@ class RotationMachine:
             )
         return self._update(run, now, **changes)
 
+    def cancel(
+        self,
+        run: RotationRun,
+        expected_revision: int,
+        now: datetime,
+    ) -> RotationRun:
+        self._revision(run, expected_revision)
+        if run.status in {
+            RunStatus.CANCELLED,
+            RunStatus.COMPLETED,
+            RunStatus.COMPENSATED,
+            RunStatus.FAILED,
+        }:
+            raise TransitionRejectedError("terminal work cannot be cancelled")
+        return self._update(
+            run,
+            now,
+            status=RunStatus.CANCELLED,
+            lease=None,
+            fencing_token=run.fencing_token + 1,
+            failure=None,
+            recovery_id=None,
+            recovery_stage=None,
+            recovery_mode=None,
+            recovery_failure=None,
+            recovery_evidence_ids=(),
+        )
+
     def recover(
         self,
         run: RotationRun,

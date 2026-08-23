@@ -28,6 +28,9 @@ from contracts import (
     BrowserSecretKeyRequest,
     BrowserSession,
     BrowserStatus,
+    ComputerUseActivity,
+    ComputerUseActivityPhase,
+    ComputerUseActivityStatus,
     Connection,
     Contract,
     PlaybookStep,
@@ -55,8 +58,7 @@ from telemetry import instrument
 
 from browser.auth import BrowserAuthBroker, filter_storage_state, validate_storage_state
 from browser.driver import AuthenticationRequiredError, BrowserDriver
-from browser.model import ComputerProposal, ComputerUseClient
-from browser.replay import ReplayRecorder
+from browser.model import ComputerProposal, ComputerUseClient, ModelStreamEvent
 from browser.secret import associated_data
 from browser.service import BrowserService
 from browser.storage import FirestoreBrowserRepository
@@ -83,7 +85,7 @@ class WorkerSettings(BaseSettings):
 
 
 class SetupRuntime:
-    # Setup VMs run no model and record no replay; the human drives a fresh
+    # Setup VMs run no model and retain no model-input evidence; the human drives a fresh
     # profile and only the exported session leaves the machine.
     def __init__(
         self,
@@ -143,7 +145,7 @@ class WorkerRuntime:
         driver: BrowserDriver,
         sessions: BrowserService,
         capture: SecureCapture,
-        replay: ReplayRecorder,
+        evidence: GcsEvidenceSink,
         masked_selectors: tuple[Selector, ...],
     ) -> None:
         self.firestore = firestore
@@ -155,7 +157,7 @@ class WorkerRuntime:
         self.driver = driver
         self.sessions = sessions
         self.capture = capture
-        self.replay = replay
+        self.evidence = evidence
         self.masked_selectors = masked_selectors
         self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
         self.pending: dict[str, tuple[ProposedBrowserAction, PlaybookStep]] = {}
@@ -246,13 +248,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         for step in version.definition.steps
         if step.secure_field is not None
     )
-    replay = ReplayRecorder(
-        driver,
-        sessions,
-        GcsEvidenceSink(google, firestore, settings.evidence_bucket, settings.region),
-        _now,
-        new_id,
-    )
+    evidence = GcsEvidenceSink(google, firestore, settings.evidence_bucket, settings.region)
     worker = ComputerUseWorker(
         ComputerUseClient(
             google,
@@ -278,7 +274,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         driver,
         sessions,
         capture,
-        replay,
+        evidence,
         masked_selectors,
     )
     yield
@@ -489,16 +485,142 @@ async def propose(
     await _validate_step(runtime, session, body.step)
     worker: ComputerUseWorker = request.app.state.worker
     continuation = runtime.continuations.get(body.step.id)
-    proposed = await worker.propose(
-        session,
-        body.step,
-        body.objective,
-        continuation[0] if continuation is not None else None,
-        continuation[1] if continuation is not None else None,
+    turn = session.step_count + 1
+    frame = await worker.model_input(session)
+    evidence = await runtime.evidence.store(
+        session.organisation_id,
+        session.run_id,
+        "computer-use-input",
+        frame,
+        "image/png",
+        _now(),
     )
+    await runtime.sessions.record_activity(
+        session,
+        ComputerUseActivity(
+            id=new_id("activity"),
+            organisation_id=session.organisation_id,
+            session_id=session.id,
+            run_id=session.run_id,
+            step_id=body.step.id,
+            stage=body.step.stage,
+            turn=turn,
+            phase=ComputerUseActivityPhase.INPUT,
+            status=ComputerUseActivityStatus.SENT,
+            effect=body.step.effect,
+            prompt=body.objective,
+            instruction=worker.instruction,
+            image_reference=evidence.resource,
+            image_digest=evidence.digest,
+            recorded_at=_now(),
+        ),
+    )
+
+    async def record_model_event(event: ModelStreamEvent) -> None:
+        await runtime.sessions.record_activity(
+            session,
+            ComputerUseActivity(
+                id=new_id("activity"),
+                organisation_id=session.organisation_id,
+                session_id=session.id,
+                run_id=session.run_id,
+                step_id=body.step.id,
+                stage=body.step.stage,
+                turn=turn,
+                phase=(
+                    ComputerUseActivityPhase.THOUGHT
+                    if event.kind == "thought"
+                    else ComputerUseActivityPhase.RESPONSE
+                ),
+                status=ComputerUseActivityStatus.STREAMING,
+                content=event.content,
+                recorded_at=_now(),
+            ),
+        )
+
+    try:
+        proposed = await worker.propose(
+            session,
+            body.step,
+            body.objective,
+            continuation[0] if continuation is not None else None,
+            continuation[1] if continuation is not None else None,
+            frame,
+            record_model_event,
+        )
+    except Exception:
+        with suppress(Exception):
+            await runtime.sessions.record_activity(
+                session,
+                ComputerUseActivity(
+                    id=new_id("activity"),
+                    organisation_id=session.organisation_id,
+                    session_id=session.id,
+                    run_id=session.run_id,
+                    step_id=body.step.id,
+                    stage=body.step.stage,
+                    turn=turn,
+                    phase=ComputerUseActivityPhase.RESPONSE,
+                    status=ComputerUseActivityStatus.FAILED,
+                    recorded_at=_now(),
+                ),
+            )
+        raise
     if proposed is None:
+        await runtime.sessions.record_activity(
+            session,
+            ComputerUseActivity(
+                id=new_id("activity"),
+                organisation_id=session.organisation_id,
+                session_id=session.id,
+                run_id=session.run_id,
+                step_id=body.step.id,
+                stage=body.step.stage,
+                turn=turn,
+                phase=ComputerUseActivityPhase.RESPONSE,
+                status=ComputerUseActivityStatus.COMPLETED,
+                recorded_at=_now(),
+            ),
+        )
         runtime.continuations.pop(body.step.id, None)
         return ProposeResponse(done=True, outputs=await runtime.driver.extract(body.step.outputs))
+    await runtime.sessions.record_activity(
+        session,
+        ComputerUseActivity(
+            id=new_id("activity"),
+            organisation_id=session.organisation_id,
+            session_id=session.id,
+            run_id=session.run_id,
+            step_id=body.step.id,
+            stage=body.step.stage,
+            turn=turn,
+            phase=ComputerUseActivityPhase.PROPOSAL,
+            status=ComputerUseActivityStatus.PROPOSED,
+            action=proposed.action.kind,
+            arguments=proposed.model.arguments,
+            intent=proposed.model.intent,
+            safety_decision=proposed.model.safety_decision,
+            target=_safe_action_target(proposed.action),
+            recorded_at=_now(),
+        ),
+    )
+    await runtime.sessions.record_activity(
+        session,
+        ComputerUseActivity(
+            id=new_id("activity"),
+            organisation_id=session.organisation_id,
+            session_id=session.id,
+            run_id=session.run_id,
+            step_id=body.step.id,
+            stage=body.step.stage,
+            turn=turn,
+            phase=ComputerUseActivityPhase.VALIDATION,
+            status=ComputerUseActivityStatus.VALIDATED,
+            action=proposed.action.kind,
+            target=_safe_action_target(proposed.action),
+            recorded_at=_now(),
+        ),
+    )
     runtime.pending.clear()
     runtime.pending[proposed.action.id] = (proposed, body.step)
     return ProposeResponse(
@@ -528,21 +650,63 @@ async def execute(
     proposal, step = pending
     await _validate_approval(runtime, claims, step)
     worker: ComputerUseWorker = request.app.state.worker
-    if step.secure_field is not None:
-        try:
-            changed, capture = await worker.execute_protected_capture(
+    try:
+        if step.secure_field is not None:
+            try:
+                changed, capture = await worker.execute_protected_capture(
+                    session,
+                    proposal,
+                    step,
+                    body.confirmed,
+                    runtime.require_secret_access(),
+                )
+            finally:
+                runtime.clear_secret_access()
+        else:
+            changed = await worker.execute(session, proposal, body.confirmed)
+            capture = None
+    except Exception:
+        with suppress(Exception):
+            await runtime.sessions.record_activity(
                 session,
-                proposal,
-                step,
-                body.confirmed,
-                runtime.require_secret_access(),
+                ComputerUseActivity(
+                    id=new_id("activity"),
+                    organisation_id=session.organisation_id,
+                    session_id=session.id,
+                    run_id=session.run_id,
+                    step_id=step.id,
+                    stage=step.stage,
+                    turn=session.step_count + 1,
+                    phase=ComputerUseActivityPhase.EXECUTION,
+                    status=ComputerUseActivityStatus.FAILED,
+                    action=proposal.action.kind,
+                    target=_safe_action_target(proposal.action),
+                    recorded_at=_now(),
+                ),
             )
-        finally:
-            runtime.clear_secret_access()
-    else:
-        changed = await worker.execute(session, proposal, body.confirmed)
-        capture = None
+        raise
     runtime.session = changed
+    await runtime.sessions.record_activity(
+        changed,
+        ComputerUseActivity(
+            id=new_id("activity"),
+            organisation_id=changed.organisation_id,
+            session_id=changed.id,
+            run_id=changed.run_id,
+            step_id=step.id,
+            stage=step.stage,
+            turn=changed.step_count,
+            phase=ComputerUseActivityPhase.EXECUTION,
+            status=(
+                ComputerUseActivityStatus.SUCCEEDED
+                if changed.status is BrowserStatus.RUNNING
+                else ComputerUseActivityStatus.PAUSED
+            ),
+            action=proposal.action.kind,
+            target=_safe_action_target(proposal.action),
+            recorded_at=_now(),
+        ),
+    )
     outcome: dict[str, str | int | bool] = {
         "status": "succeeded" if changed.status is BrowserStatus.RUNNING else "paused",
         "url": runtime.driver.metadata_url,
@@ -550,13 +714,6 @@ async def execute(
     if proposal.model.requires_confirmation and body.confirmed:
         outcome["safety_acknowledgement"] = "true"
     runtime.continuations[step.id] = (proposal.model, outcome)
-    if not changed.recording_paused:
-        await runtime.replay.record(
-            changed,
-            proposal.action.kind.value,
-            runtime.masked_selectors,
-            ("computer-use",),
-        )
     paused_reason = None
     if step.secure_field is not None and capture is None:
         paused_reason = "secure capture requires authorised recovery"
@@ -614,12 +771,6 @@ async def navigate(
         raise
     await runtime.sessions.finish_action(session.organisation_id, session.id, action.id, True)
     runtime.session = authorised
-    await runtime.replay.record(
-        authorised,
-        action.kind.value,
-        runtime.masked_selectors,
-        ("deterministic-navigation",),
-    )
     return ExecuteResponse(session=authorised)
 
 
@@ -779,6 +930,14 @@ def _decode_envelope(value: str, label: str, expected_length: int | None = None)
     if expected_length is not None and len(decoded) != expected_length:
         raise CapabilityError(f"browser secret-store {label} has an invalid length")
     return decoded
+
+
+def _safe_action_target(action: BrowserAction) -> str:
+    if action.selector is not None and action.selector.name:
+        return action.selector.name
+    if action.selector is not None:
+        return f"Approved {action.selector.kind.value} control"
+    return "Approved browser action"
 
 
 async def _validate_approval(

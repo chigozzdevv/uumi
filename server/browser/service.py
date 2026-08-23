@@ -10,7 +10,7 @@ from contracts import (
     BrowserPolicy,
     BrowserSession,
     BrowserStatus,
-    ReplayCheckpoint,
+    ComputerUseActivity,
     SecureCaptureResult,
 )
 from core.errors import ResourceConflictError
@@ -40,7 +40,7 @@ class BrowserRepository(Protocol):
         result: SecureCaptureResult,
     ) -> BrowserSession: ...
 
-    async def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> ReplayCheckpoint: ...
+    async def save_activity(self, activity: ComputerUseActivity) -> ComputerUseActivity: ...
 
     async def begin_action(
         self,
@@ -266,16 +266,18 @@ class BrowserService:
             self._clock(),
         )
 
-    async def checkpoint(
-        self, session: BrowserSession, checkpoint: ReplayCheckpoint
-    ) -> ReplayCheckpoint:
-        if session.recording_paused:
-            raise ResourceConflictError("replay capture is paused")
-        if checkpoint.organisation_id != session.organisation_id:
-            raise ResourceConflictError("replay checkpoint crosses organisation boundary")
-        if checkpoint.session_id != session.id or checkpoint.sequence != session.step_count:
-            raise ResourceConflictError("replay checkpoint sequence is inconsistent")
-        return await self._repository.save_checkpoint(checkpoint)
+    async def record_activity(
+        self, session: BrowserSession, activity: ComputerUseActivity
+    ) -> ComputerUseActivity:
+        if (
+            activity.organisation_id != session.organisation_id
+            or activity.session_id != session.id
+            or activity.run_id != session.run_id
+        ):
+            raise ResourceConflictError("Computer Use activity crosses its browser session")
+        if activity.turn not in {session.step_count, session.step_count + 1}:
+            raise ResourceConflictError("Computer Use activity turn is inconsistent")
+        return await self._repository.save_activity(activity)
 
     async def reprovision(
         self,

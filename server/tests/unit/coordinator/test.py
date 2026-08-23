@@ -230,6 +230,7 @@ async def test_coordinator_executes_trigger_stage() -> None:
         allowed_tools=frozenset({"provider.createCredential", "verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
         maximum_observation_seconds=1800,
+        require_revoke_approval=True,
     )
     controls_version = ControlVersion(
         id="pol_ver_1",
@@ -262,3 +263,80 @@ async def test_coordinator_executes_trigger_stage() -> None:
     assert result.status is StageExecutionStatus.SUCCEEDED
     assert "request-authenticated" in result.checks
     assert "source-deduplicated" in result.checks
+
+
+@pytest.mark.anyio
+async def test_coordinator_skips_optional_human_approval() -> None:
+    catalog = MemoryCatalog()
+    coordinator = StageCoordinator(
+        catalog=catalog,  # type: ignore[arg-type]
+        broker=Broker(),  # type: ignore[arg-type]
+        browser=Browser(),  # type: ignore[arg-type]
+        agents=Agents(),  # type: ignore[arg-type]
+        verifier=Verifier(),  # type: ignore[arg-type]
+        generations=Generations(),  # type: ignore[arg-type]
+        incidents=Incidents(),  # type: ignore[arg-type]
+        evidence=EvidenceSink(),  # type: ignore[arg-type]
+        audit=AuditWriter(),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+    from contracts import Lease, RecoveryMode
+    from policy import digest
+    from policy.rules import REQUIRED_CHECKS
+
+    checks = dict(REQUIRED_CHECKS)
+    checks[Stage.PREFLIGHT] = checks[Stage.PREFLIGHT].difference({"approvers-known"})
+    checks[Stage.APPROVAL] = frozenset({"approval-not-required", "evidence-current"})
+    definition = ControlDefinition(
+        required_checks=checks,
+        allowed_tools=frozenset({"provider.revokeCredential", "verification.run"}),
+        allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
+        maximum_observation_seconds=1800,
+        require_revoke_approval=False,
+    )
+    version = ControlVersion(
+        id="control_automatic",
+        organisation_id="org_one",
+        credential_id="cred_one",
+        number=1,
+        definition=definition,
+        digest=digest(definition),
+        created_by="admin_one",
+        created_at=NOW,
+    )
+    run = make_run(NOW).model_copy(
+        update={
+            "id": "run_automatic",
+            "organisation_id": "org_one",
+            "credential_id": "cred_one",
+            "stage": Stage.APPROVAL,
+            "status": RunStatus.RUNNING,
+            "revision": 9,
+            "fencing_token": 2,
+            "control_version": version.id,
+            "lease": Lease(
+                owner_id="worker_one",
+                fencing_token=2,
+                expires_at=NOW + timedelta(hours=1),
+            ),
+        }
+    )
+    catalog.store[FirestorePaths.control_version("org_one", "cred_one", version.id)] = (
+        version.model_dump()
+    )
+    catalog.store[FirestorePaths.run("org_one", run.id)] = run.model_dump()
+
+    result = await coordinator.execute(
+        StageExecutionRequest(
+            organisation_id="org_one",
+            run_id=run.id,
+            stage=Stage.APPROVAL,
+            expected_revision=run.revision,
+            fencing_token=run.fencing_token,
+        )
+    )
+
+    assert result.status is StageExecutionStatus.SUCCEEDED
+    assert result.checks == frozenset({"approval-not-required", "evidence-current"})
+    assert result.output == {"approval_required": False}

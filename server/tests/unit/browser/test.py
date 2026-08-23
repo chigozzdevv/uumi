@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
@@ -30,6 +31,7 @@ from contracts import (
     BrowserSecretAccessEnvelope,
     BrowserSession,
     BrowserStatus,
+    ComputerUseActivity,
     Connection,
     ConnectionAuthorization,
     ConnectionInterface,
@@ -44,7 +46,6 @@ from contracts import (
     PlaybookState,
     PlaybookStep,
     PlaybookVersion,
-    ReplayCheckpoint,
     RotationRun,
     RunStatus,
     SecureCaptureResult,
@@ -79,6 +80,7 @@ class Repository:
         self.session: BrowserSession | None = None
         self.actions: dict[str, BrowserActionRecord] = {}
         self.captures: list[SecureCaptureResult] = []
+        self.activity: list[ComputerUseActivity] = []
 
     async def create(self, session: BrowserSession) -> BrowserSession:
         self.session = session
@@ -114,8 +116,9 @@ class Repository:
         self.session = changed
         return changed
 
-    async def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> ReplayCheckpoint:
-        return checkpoint
+    async def save_activity(self, activity: ComputerUseActivity) -> ComputerUseActivity:
+        self.activity.append(activity)
+        return activity
 
     async def begin_action(
         self,
@@ -453,7 +456,7 @@ async def test_takeover_blocks_an_alternate_selector_for_a_protected_element(
             "status": BrowserStatus.TAKEOVER,
             "takeover_subject": "user_one",
             "policy": _session().policy.model_copy(
-                update={"protected_tools": frozenset({"browser.click"})}
+                update={"protected_tools": frozenset({"browser.revokeCredential"})}
             ),
         }
     )
@@ -498,7 +501,75 @@ async def test_computer_use_enables_injection_detection_and_parses_supported_act
             "projects/project-one/locations/us-east1/templates/firekey-guardrails"
         ),
     }
-    assert proposal.safety_explanation == "Provider safety policy requires confirmation"
+    assert proposal.safety_explanation == "confirm the browser action"
+
+
+@pytest.mark.anyio
+async def test_computer_use_streams_visible_thought_summary_before_function_call() -> None:
+    class StreamingGoogle:
+        def __init__(self) -> None:
+            self.body: dict[str, Any] = {}
+
+        async def stream(
+            self, method: str, url: str, **kwargs: Any
+        ) -> AsyncIterator[dict[str, Any]]:
+            assert method == "POST"
+            assert url.endswith(":streamGenerateContent")
+            assert kwargs["params"] == {"alt": "sse"}
+            self.body = kwargs["json"]
+            yield {
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [
+                                {"text": "The approved control is visible.", "thought": True}
+                            ],
+                        }
+                    }
+                ]
+            }
+            yield {
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [
+                                {
+                                    "functionCall": {
+                                        "name": "click",
+                                        "args": {
+                                            "x": 500,
+                                            "y": 500,
+                                            "intent": "Open the approved form",
+                                            "safety_decision": {"decision": "allowed"},
+                                        },
+                                    }
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+
+    google = StreamingGoogle()
+    events: list[tuple[str, str]] = []
+    client = ComputerUseClient(
+        cast(Any, google),
+        "project-one",
+        "projects/project-one/locations/us-east1/templates/firekey-guardrails",
+    )
+
+    async def record(event: Any) -> None:
+        events.append((event.kind, event.content))
+
+    proposal = await client.propose("click the approved control", b"image", on_event=record)
+
+    assert proposal is not None
+    assert proposal.intent == "Open the approved form"
+    assert proposal.arguments["x"] == 500
+    assert events == [("thought", "The approved control is visible.")]
+    assert google.body["generationConfig"]["thinkingConfig"] == {"includeThoughts": True}
 
 
 @pytest.mark.anyio
@@ -943,7 +1014,9 @@ def _setup_service(
             return httpx.Response(
                 200,
                 json={
-                    "secret_reference": ("projects/project-one/secrets/vendor-session/versions/2"),
+                    "secret_reference": (
+                        "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
+                    ),
                     "fingerprint": "a" * 64,
                 },
             )
@@ -957,6 +1030,7 @@ def _setup_service(
         vms,
         secrets,
         "https://gateway.firekey.example",
+        "project-one",
         lambda: NOW,
         http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         runs=runs,
@@ -972,7 +1046,6 @@ async def test_setup_begin_boots_isolated_worker_with_setup_token() -> None:
     session, token = await service.begin(
         "org_one",
         "connection_browser",
-        "projects/project-one/secrets/vendor-session",
         "user_one",
         ("accounts.google.com",),
     )
@@ -1004,7 +1077,6 @@ async def test_setup_begin_rejects_api_connections() -> None:
         await service.begin(
             "org_one",
             "connection_browser",
-            "projects/project-one/secrets/vendor-session",
             "user_one",
         )
 
@@ -1015,9 +1087,7 @@ async def test_setup_complete_captures_only_the_provider_session() -> None:
     service, vms, secrets, _ = _setup_service(
         catalog, _browser_connection(), state=_exported_state()
     )
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
 
     completed, connection, resumed = await service.complete(
         "org_one", session.id, session.revision, token, "user_one"
@@ -1025,7 +1095,10 @@ async def test_setup_complete_captures_only_the_provider_session() -> None:
     assert resumed == ()
 
     assert completed.status is SetupStatus.COMPLETE
-    assert completed.auth_reference == "projects/project-one/secrets/vendor-session/versions/2"
+    assert (
+        completed.auth_reference
+        == "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
+    )
     assert connection.status is ConnectionStatus.READY
     assert connection.authorization_reference == completed.auth_reference
     assert vms.deleted == [completed.worker_instance]
@@ -1036,9 +1109,7 @@ async def test_setup_complete_captures_only_the_provider_session() -> None:
 async def test_setup_complete_rejects_a_wrong_token() -> None:
     catalog = SetupCatalog()
     service, _, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
-    session, _ = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, _ = await service.begin("org_one", "connection_browser", "user_one")
 
     with pytest.raises(ResourceConflictError, match="token is invalid"):
         await service.complete("org_one", session.id, session.revision, "x" * 43, "user_one")
@@ -1048,9 +1119,7 @@ async def test_setup_complete_rejects_a_wrong_token() -> None:
 async def test_setup_complete_belongs_to_its_operator() -> None:
     catalog = SetupCatalog()
     service, _, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
 
     with pytest.raises(ResourceConflictError, match="another operator"):
         await service.complete("org_one", session.id, session.revision, token, "user_two")
@@ -1064,9 +1133,7 @@ async def test_setup_complete_requires_a_captured_provider_session() -> None:
     }
     catalog = SetupCatalog()
     service, vms, _, _ = _setup_service(catalog, _browser_connection(), state=foreign_only)
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
 
     with pytest.raises(ResourceConflictError, match="no provider session"):
         await service.complete("org_one", session.id, session.revision, token, "user_one")
@@ -1093,9 +1160,7 @@ async def test_setup_reconciles_an_ambiguous_worker_secret_write() -> None:
     service, vms, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
     secrets = AmbiguousSecrets()
     service._secrets = cast(Any, secrets)
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
 
     def timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("worker response was lost", request=request)
@@ -1104,7 +1169,9 @@ async def test_setup_reconciles_an_ambiguous_worker_secret_write() -> None:
     with pytest.raises(ResourceConflictError, match="worker was unavailable"):
         await service.complete("org_one", session.id, session.revision, token, "user_one")
 
-    assert secrets.disabled == ["projects/project-one/secrets/vendor-session/versions/2"]
+    assert secrets.disabled == [
+        "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
+    ]
     stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
     assert stored.status is SetupStatus.TERMINATED
     assert vms.deleted == [session.worker_instance]
@@ -1126,9 +1193,7 @@ async def test_setup_terminates_when_reconciliation_baseline_cannot_be_read() ->
     catalog = SetupCatalog()
     service, vms, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
     service._secrets = cast(Any, FailingBaseline())
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
 
     with pytest.raises(RuntimeError, match="Secret Manager unavailable"):
         await service.complete("org_one", session.id, session.revision, token, "user_one")
@@ -1151,14 +1216,14 @@ async def test_setup_disables_stored_version_when_connection_update_fails() -> N
         catalog, _browser_connection(), state=_exported_state()
     )
     service._connections = cast(Any, BrokenConnections(_browser_connection(), catalog))
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
 
     with pytest.raises(RuntimeError, match="database write failed"):
         await service.complete("org_one", session.id, session.revision, token, "user_one")
 
-    assert secrets.disabled == ["projects/project-one/secrets/vendor-session/versions/2"]
+    assert secrets.disabled == [
+        "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
+    ]
     stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
     assert stored.status is SetupStatus.TERMINATED
     assert vms.deleted == [session.worker_instance]
@@ -1188,9 +1253,7 @@ async def test_setup_recovers_an_ambiguous_atomic_completion() -> None:
     )
     ambiguous = AmbiguousConnections(_browser_connection(), catalog)
     service._connections = cast(Any, ambiguous)
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
 
     completed, connection, _ = await service.complete(
         "org_one", session.id, session.revision, token, "user_one"
@@ -1260,9 +1323,7 @@ async def test_setup_vm_metadata_contains_only_the_token_hash() -> None:
 async def test_setup_abort_terminates_the_worker() -> None:
     catalog = SetupCatalog()
     service, vms, _, _ = _setup_service(catalog, _browser_connection())
-    session, _ = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, _ = await service.begin("org_one", "connection_browser", "user_one")
 
     aborted = await service.abort("org_one", session.id, session.revision, "user_one")
 
@@ -1297,7 +1358,9 @@ async def test_setup_store_requires_the_setup_token_and_returns_metadata_only() 
 
     class Google:
         async def request(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {"name": "projects/project-one/secrets/vendor-session/versions/2"}
+            return {
+                "name": "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
+            }
 
     token = "t" * 43
     app.state.setup = SetupRuntime(
@@ -1305,7 +1368,7 @@ async def test_setup_store_requires_the_setup_token_and_returns_metadata_only() 
         cast(Any, None),
         hashlib.sha256(token.encode()).hexdigest(),
         ("*.vendor.example.com",),
-        "projects/project-one/secrets/vendor-session",
+        "projects/project-one/secrets/firekey-browser-session-org_one",
         cast(Any, Google()),
     )
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
@@ -1657,7 +1720,6 @@ async def test_setup_begin_rejects_an_unwritable_secret_container() -> None:
         await service.begin(
             "org_one",
             "connection_browser",
-            "projects/project-one/secrets/vendor-session",
             "user_one",
         )
     assert vms.created == []
@@ -1680,7 +1742,6 @@ async def test_setup_begin_terminates_the_session_when_worker_readiness_fails() 
         await service.begin(
             "org_one",
             "connection_browser",
-            "projects/project-one/secrets/vendor-session",
             "user_one",
         )
 
@@ -1709,9 +1770,7 @@ async def test_setup_complete_resumes_paused_runs_waiting_on_the_connection() ->
     service, _, _, _ = _setup_service(
         catalog, _browser_connection(), state=_exported_state(), runs=resumer
     )
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
     waiter_path = FirestorePaths.connection_waiter("org_one", "connection_browser")
     await catalog.create(
         waiter_path,
@@ -1748,9 +1807,7 @@ async def test_setup_completion_keeps_waiting_runs_that_did_not_resume() -> None
     service, _, _, _ = _setup_service(
         catalog, _browser_connection(), state=_exported_state(), runs=PartialResumer()
     )
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
     waiter_path = FirestorePaths.connection_waiter("org_one", "connection_browser")
     await catalog.create(
         waiter_path,
@@ -1790,9 +1847,7 @@ async def test_setup_completion_retry_resumes_runs_after_transient_resume_failur
     service, _, secrets, _ = _setup_service(
         catalog, _browser_connection(), state=_exported_state(), runs=resumer
     )
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
     waiter_path = FirestorePaths.connection_waiter("org_one", "connection_browser")
     await catalog.create(
         waiter_path,
@@ -1824,9 +1879,7 @@ async def test_setup_completion_claims_the_session_before_writing_a_secret() -> 
 
     catalog = SetupCatalog()
     service, _, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
 
     completed, _, _ = await service.complete(
         "org_one", session.id, session.revision, token, "user_one"
@@ -1839,9 +1892,7 @@ async def test_setup_completion_claims_the_session_before_writing_a_secret() -> 
 async def test_setup_completion_replays_without_creating_another_secret_version() -> None:
     catalog = SetupCatalog()
     service, _, secrets, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
     completed, connection, _ = await service.complete(
         "org_one", session.id, session.revision, token, "user_one"
     )
@@ -1868,15 +1919,12 @@ def test_blocked_redirect_is_authentication_required() -> None:
 async def test_setup_begin_rejects_a_second_active_session() -> None:
     catalog = SetupCatalog()
     service, _, _, _ = _setup_service(catalog, _browser_connection())
-    await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    await service.begin("org_one", "connection_browser", "user_one")
 
     with pytest.raises(ResourceConflictError, match="already active"):
         await service.begin(
             "org_one",
             "connection_browser",
-            "projects/project-one/secrets/vendor-session",
             "user_one",
         )
 
@@ -1885,14 +1933,10 @@ async def test_setup_begin_rejects_a_second_active_session() -> None:
 async def test_setup_begin_replaces_a_finished_session() -> None:
     catalog = SetupCatalog()
     service, vms, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
-    session, token = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_one"
-    )
+    session, token = await service.begin("org_one", "connection_browser", "user_one")
     await service.complete("org_one", session.id, session.revision, token, "user_one")
 
-    restarted, _ = await service.begin(
-        "org_one", "connection_browser", "projects/project-one/secrets/vendor-session", "user_two"
-    )
+    restarted, _ = await service.begin("org_one", "connection_browser", "user_two")
 
     assert restarted.id == session.id
     assert restarted.status is SetupStatus.READY
@@ -1976,13 +2020,79 @@ async def test_executor_binds_the_browser_connection() -> None:
         connection,
         version,
         credential,
-        frozenset({"browser.secure-capture", "browser.click"}),
+        frozenset({"browser.revokeCredential"}),
     )
 
     assert session.provider_connection_id == "connection_browser"
     assert session.policy.login_url_pattern == "https://*.vendor.example.com/login*"
-    assert session.policy.protected_tools == frozenset({"browser.secure-capture", "browser.click"})
+    assert session.policy.protected_tools == frozenset({"browser.revokeCredential"})
     assert vms.created[0]["session_id"] == session.id
+
+
+@pytest.mark.anyio
+async def test_executor_uses_the_exact_playbook_step_as_the_model_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _browser_connection()
+    version = _computer_version()
+    step = next(item for item in version.definition.steps if item.stage is Stage.REVOKE)
+    run = make_run(NOW).model_copy(update={"fencing_token": 3})
+    credential = ManagedCredential(
+        id="cred_one",
+        organisation_id="org_one",
+        connection_id="connection_browser",
+        secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
+        secret_reference="projects/project-one/secrets/key",
+        provider="internal-vendor",
+        kind="api-key",
+        display_name="Vendor production key",
+        control_version="policy_one",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    browser_session = _session().model_copy(
+        update={"status": BrowserStatus.RUNNING, "internal_address": "10.0.0.2"}
+    )
+    prompts: list[str] = []
+
+    async def session(*args: object) -> BrowserSession:
+        del args
+        return browser_session
+
+    async def post(
+        run_value: RotationRun,
+        session_value: BrowserSession,
+        tool: str,
+        path: str,
+        payload: dict[str, Any],
+        approval: object = None,
+    ) -> dict[str, Any]:
+        del run_value, session_value, tool, path, approval
+        prompts.append(cast(str, payload["objective"]))
+        return {"done": True, "outputs": {}}
+
+    async with httpx.AsyncClient() as http:
+        executor = BrowserStepExecutor(
+            cast(Any, None),
+            cast(Any, None),
+            cast(Any, None),
+            CapabilitySigner(b"\x01" * 32),
+            http,
+        )
+        monkeypatch.setattr(executor, "_session", session)
+        monkeypatch.setattr(executor, "_post", post)
+
+        await executor.execute(
+            run,
+            connection,
+            version,
+            credential,
+            frozenset(),
+            step,
+        )
+
+    assert prompts == [step.objective]
 
 
 class SessionCatalog:
@@ -2021,11 +2131,17 @@ def _computer_version() -> PlaybookVersion:
                 if stage is Stage.CREATE
                 else PlaybookEffect.REVOKE_CREDENTIAL
             ),
-            tool="browser.secure-capture" if stage is Stage.CREATE else "browser.click",
+            tool=(
+                "browser.secure-capture" if stage is Stage.CREATE else "browser.revokeCredential"
+            ),
             operation=stage.value,
-            objective=f"Execute the {stage.value} lifecycle stage",
+            objective=(
+                "Submit the credential creation form"
+                if stage is Stage.CREATE
+                else "Revoke the previous credential"
+            ),
             selectors=(
-                (Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),)
+                (Selector(kind=SelectorKind.TEST_ID, value="create-api-key"),)
                 if stage is Stage.CREATE
                 else (Selector(kind=SelectorKind.TEST_ID, value="revoke-key"),)
             ),

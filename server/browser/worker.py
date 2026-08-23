@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -17,7 +17,7 @@ from contracts import (
 from core.errors import ResourceConflictError
 
 from browser.driver import BrowserDriver
-from browser.model import ComputerProposal, ComputerUseClient
+from browser.model import ComputerProposal, ComputerUseClient, ModelStreamEvent
 from browser.service import BrowserService
 
 
@@ -45,6 +45,15 @@ class ComputerUseWorker:
         self._id = id_factory
         self._masked_selectors = masked_selectors
 
+    @property
+    def instruction(self) -> str:
+        return self._model.instruction
+
+    async def model_input(self, session: BrowserSession) -> bytes:
+        if session.status is not BrowserStatus.RUNNING:
+            raise ResourceConflictError("Computer Use requires a running browser session")
+        return await self._driver.screenshot(session, self._masked_selectors)
+
     async def propose(
         self,
         session: BrowserSession,
@@ -52,11 +61,13 @@ class ComputerUseWorker:
         objective: str,
         previous: ComputerProposal | None = None,
         outcome: dict[str, str | int | bool] | None = None,
+        frame: bytes | None = None,
+        on_event: Callable[[ModelStreamEvent], Awaitable[None]] | None = None,
     ) -> ProposedBrowserAction | None:
         if session.status is not BrowserStatus.RUNNING:
             raise ResourceConflictError("Computer Use requires a running browser session")
-        frame = await self._driver.screenshot(session, self._masked_selectors)
-        proposal = await self._model.propose(objective, frame, previous, outcome)
+        model_frame = frame if frame is not None else await self.model_input(session)
+        proposal = await self._model.propose(objective, model_frame, previous, outcome, on_event)
         if proposal is None:
             await self._driver.validate_step(step)
             return None
@@ -109,10 +120,8 @@ class ComputerUseWorker:
         confirmed: bool,
         access_token: SecretValue,
     ) -> tuple[BrowserSession, SecureCaptureResult | None]:
-        if not step.protected or step.secure_field is None or step.checkpoint is None:
-            raise ResourceConflictError(
-                "protected capture requires a protected step, field and checkpoint"
-            )
+        if step.secure_field is None or step.checkpoint is None:
+            raise ResourceConflictError("secure capture requires a field and checkpoint")
         if not confirmed:
             return (
                 await self._sessions.freeze(session.organisation_id, session.id, session.revision),

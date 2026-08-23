@@ -1,6 +1,4 @@
 import asyncio
-import json
-from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -78,11 +76,15 @@ class BrowserStepExecutor:
                 approval,
             )
             navigated = BrowserSession.model_validate(result.get("session"))
-            return {"session_id": navigated.id, "step_id": step.id, "done": True}
-        objective = (
-            f"Execute only this approved browser objective: {step.objective}. "
-            f"Operation: {step.operation}. Approved parameters: {_safe_parameters(step.parameters)}"
-        )
+            return {
+                "session_id": navigated.id,
+                "step_id": step.id,
+                "objective": step.objective,
+                "operation": step.operation,
+                "outcome": "Approved page opened",
+                "done": True,
+            }
+        objective = step.objective
         for _ in range(session.policy.max_steps):
             propose_payload = {"step": step.model_dump(mode="json"), "objective": objective}
             proposal = await self._post(
@@ -102,6 +104,9 @@ class BrowserStepExecutor:
                 return {
                     "session_id": session.id,
                     "step_id": step.id,
+                    "objective": step.objective,
+                    "operation": step.operation,
+                    "outcome": "Step completed",
                     "done": True,
                     **outputs,
                 }
@@ -116,6 +121,9 @@ class BrowserStepExecutor:
                         "session_id": session.id,
                         "action_id": action["id"],
                         "step_id": step.id,
+                        "objective": step.objective,
+                        "operation": step.operation,
+                        "outcome": "Confirmation required",
                         "takeover_required": True,
                     },
                 )
@@ -139,6 +147,9 @@ class BrowserStepExecutor:
                 return {
                     "session_id": session.id,
                     "step_id": step.id,
+                    "objective": step.objective,
+                    "operation": step.operation,
+                    "outcome": "Secret captured and masked",
                     **captured,
                 }
             if session.status is BrowserStatus.PAUSED:
@@ -147,6 +158,9 @@ class BrowserStepExecutor:
                     {
                         "session_id": session.id,
                         "step_id": step.id,
+                        "objective": step.objective,
+                        "operation": step.operation,
+                        "outcome": "Step paused",
                         "takeover_required": True,
                         "secure_field": (
                             step.secure_field.name if step.secure_field is not None else None
@@ -358,12 +372,3 @@ def _code(response: httpx.Response) -> str | None:
         return None
     code = body.get("code") if isinstance(body, dict) else None
     return code if isinstance(code, str) else None
-
-
-def _safe_parameters(value: Mapping[str, object]) -> str:
-    safe = {
-        key: item
-        for key, item in value.items()
-        if key.lower() not in {"secret", "password", "token", "value"}
-    }
-    return json.dumps(safe, separators=(",", ":"), sort_keys=True)

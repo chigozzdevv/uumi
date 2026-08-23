@@ -293,7 +293,11 @@ class FirestoreRunRepository:
             transaction.set(run_ref, encode(updated))
             transaction.set(step_ref, encode(step))
             transaction.set(outbox_ref, encode(event))
-            if updated.status in {RunStatus.COMPLETED, RunStatus.COMPENSATED}:
+            if updated.status in {
+                RunStatus.CANCELLED,
+                RunStatus.COMPLETED,
+                RunStatus.COMPENSATED,
+            }:
                 transaction.delete(lock_ref)
             return MutationResult(run=updated, step=step, applied=True)
 

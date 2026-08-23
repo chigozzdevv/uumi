@@ -24,7 +24,7 @@ class GenerationRepository(Protocol):
         self,
         organisation_id: str,
         generation_id: str,
-        verification_id: str,
+        verification_report_id: str,
         revoked_at: datetime,
     ) -> CredentialGeneration: ...
 
@@ -94,12 +94,12 @@ class GenerationService:
         self,
         organisation_id: str,
         generation_id: str,
-        verification_id: str,
+        verification_report_id: str,
     ) -> CredentialGeneration:
         return await self._repository.revoke(
             organisation_id,
             generation_id,
-            verification_id,
+            verification_report_id,
             self._clock(),
         )
 

@@ -152,6 +152,11 @@ class FirestorePaths:
         return f"{root}/github-onboarding/{_segment(onboarding_id)}"
 
     @staticmethod
+    def google_cloud_onboarding(organisation_id: str, onboarding_id: str) -> str:
+        root = FirestorePaths.organisation(organisation_id)
+        return f"{root}/google-cloud-onboarding/{_segment(onboarding_id)}"
+
+    @staticmethod
     def github_installation(organisation_id: str, installation_id: int) -> str:
         root = FirestorePaths.organisation(organisation_id)
         return f"{root}/github-installations/{installation_id}"
@@ -170,11 +175,6 @@ class FirestorePaths:
         return f"github-webhook-receipts/{installation_id}"
 
     @staticmethod
-    def replay(organisation_id: str, session_id: str, checkpoint_id: str) -> str:
-        root = FirestorePaths.browser(organisation_id, session_id)
-        return f"{root}/replay/{_segment(checkpoint_id)}"
-
-    @staticmethod
     def capture(organisation_id: str, session_id: str, capture_id: str) -> str:
         root = FirestorePaths.browser(organisation_id, session_id)
         return f"{root}/captures/{_segment(capture_id)}"
@@ -183,6 +183,11 @@ class FirestorePaths:
     def browser_action(organisation_id: str, session_id: str, action_id: str) -> str:
         root = FirestorePaths.browser(organisation_id, session_id)
         return f"{root}/actions/{_segment(action_id)}"
+
+    @staticmethod
+    def computer_use_activity(organisation_id: str, session_id: str, activity_id: str) -> str:
+        root = FirestorePaths.browser(organisation_id, session_id)
+        return f"{root}/activity/{_segment(activity_id)}"
 
     @staticmethod
     def probe(organisation_id: str, probe_id: str) -> str:
@@ -249,8 +254,19 @@ class FirestorePaths:
 
     @staticmethod
     def principal(organisation_id: str, principal_id: str) -> str:
-        organisation = FirestorePaths.organisation(organisation_id)
-        return f"{organisation}/principals/{principal_id}"
+        return f"{FirestorePaths.principal_collection(organisation_id)}/{principal_id}"
+
+    @staticmethod
+    def principal_collection(organisation_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/principals"
+
+    @staticmethod
+    def invitation(organisation_id: str, invitation_id: str) -> str:
+        return f"{FirestorePaths.invitation_collection(organisation_id)}/{_segment(invitation_id)}"
+
+    @staticmethod
+    def invitation_collection(organisation_id: str) -> str:
+        return f"{FirestorePaths.organisation(organisation_id)}/team-invitations"
 
     @staticmethod
     def organisation(organisation_id: str) -> str:

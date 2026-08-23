@@ -16,6 +16,7 @@ from contracts import (
     RecoveryMode,
     RenewLeaseCommand,
     ResumeRunCommand,
+    RotationHistory,
     RotationRun,
     RunStatus,
     RunStep,
@@ -49,6 +50,7 @@ class CreateRunRequest(Contract):
     credential_id: Identifier
     control_version: Identifier
     source: str = Field(min_length=1, max_length=64)
+    kind: str = Field(default="manual", min_length=1, max_length=96)
     event_id: str = Field(min_length=1, max_length=256)
     reason: str = Field(min_length=1, max_length=1024)
     urgency: str = Field(min_length=1, max_length=32)
@@ -137,6 +139,7 @@ async def create_run(
         control_version=body.control_version,
         trigger=Trigger(
             source=body.source,
+            kind=body.kind,
             event_id=body.event_id,
             actor_id=identity.actor_id,
             reason=body.reason,
@@ -190,6 +193,44 @@ async def get_run(
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.RUN_READ)
     return await api.workflow.get(organisation_id, run_id)
+
+
+@router.get("/{run_id}/history", response_model=RotationHistory)
+async def get_run_history(
+    organisation_id: OrganisationId,
+    run_id: RunId,
+    identity: Identity,
+    request: Request,
+) -> RotationHistory:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.RUN_READ)
+    if api.history is None:
+        raise ResourceConflictError("rotation history is unavailable")
+    return await api.history.get(organisation_id, run_id)
+
+
+@router.get("/{run_id}/computer-use/{activity_id}/image")
+async def get_computer_use_input_image(
+    organisation_id: OrganisationId,
+    run_id: RunId,
+    activity_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> Response:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.RUN_READ)
+    if api.history is None:
+        raise ResourceConflictError("Computer Use history is unavailable")
+    content, content_type = await api.history.input_image(organisation_id, run_id, activity_id)
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Security-Policy": "default-src 'none'",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/{run_id}/start", response_model=MutationResponse)

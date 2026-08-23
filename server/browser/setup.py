@@ -106,7 +106,6 @@ class BrowserSetupApi(Protocol):
         self,
         organisation_id: str,
         connection_id: str,
-        secret_container: str,
         subject: str,
         extra_domains: tuple[str, ...] = (),
     ) -> tuple[SetupSession, str]: ...
@@ -140,6 +139,7 @@ class BrowserSetupService:
         vms: SetupVms,
         secrets: SetupSecrets,
         gateway_url: str,
+        session_project: str,
         clock: Callable[[], datetime],
         http: httpx.AsyncClient | None = None,
         runs: WaitingRunResumer | None = None,
@@ -149,6 +149,7 @@ class BrowserSetupService:
         self._vms = vms
         self._secrets = secrets
         self._gateway_url = gateway_url.rstrip("/")
+        self._session_project = session_project
         self._clock = clock
         self._http = http or httpx.AsyncClient(timeout=60)
         self._runs = runs
@@ -161,7 +162,6 @@ class BrowserSetupService:
         self,
         organisation_id: str,
         connection_id: str,
-        secret_container: str,
         subject: str,
         extra_domains: tuple[str, ...] = (),
     ) -> tuple[SetupSession, str]:
@@ -175,6 +175,9 @@ class BrowserSetupService:
             raise ResourceConflictError(
                 "attach a published playbook before opening the secure browser"
             )
+        secret_container = (
+            f"projects/{self._session_project}/secrets/firekey-browser-session-{organisation_id}"
+        )
         await self._require_secret(secret_container)
         domains = connection.allowed_resources
         if not domains or any(not is_domain_pattern(value) for value in domains):
@@ -300,7 +303,9 @@ class BrowserSetupService:
             baseline_loaded = True
             result = await self._store(session, token)
             auth_reference = result.get("secret_reference")
-            if not isinstance(auth_reference, str):
+            if not isinstance(auth_reference, str) or not auth_reference.startswith(
+                f"{session.secret_container}/versions/"
+            ):
                 raise ResourceConflictError("setup worker returned no secret version reference")
             previous_connection = await self._connections.get_connection(
                 organisation_id, session.connection_id

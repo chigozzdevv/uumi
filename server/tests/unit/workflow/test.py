@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from contracts import (
+    CancelRunCommand,
     CompleteStageCommand,
     CreateRunCommand,
     EventKind,
@@ -147,6 +148,30 @@ async def test_complete_flow_releases_credential_lock() -> None:
     )
     assert next_run.applied is True
     assert next_run.run.id != result.run.id
+
+
+@pytest.mark.anyio
+async def test_cancel_releases_credential_lock() -> None:
+    repository = MemoryRunRepository()
+    workflow = RunWorkflow(repository, clock=lambda: NOW, id_factory=IdSequence())
+    created = await workflow.create(create_command())
+
+    cancelled = await workflow.cancel(
+        CancelRunCommand(
+            id="command_cancel",
+            organisation_id="org_one",
+            run_id=created.run.id,
+            actor_id="service_one",
+            expected_revision=created.run.revision,
+        )
+    )
+    next_run = await workflow.create(
+        create_command(command_id="command_next", event_id="event-two")
+    )
+
+    assert cancelled.run.status is RunStatus.CANCELLED
+    assert repository.events[-2].event.kind is EventKind.RUN_CANCELLED
+    assert next_run.applied is True
 
 
 @pytest.mark.anyio

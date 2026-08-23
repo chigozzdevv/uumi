@@ -1,5 +1,7 @@
 import asyncio
+import json as jsonlib
 import re
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -105,6 +107,55 @@ class GoogleRestClient:
                 retryable=retryable,
             )
         return response
+
+    async def stream(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: Any | None = None,
+        headers: dict[str, str] | None = None,
+        params: dict[str, str] | None = None,
+        expected: frozenset[int] = frozenset({200}),
+        connection: Connection | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        token = await self._token(self._credentials_for(connection))
+        request_headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "text/event-stream",
+            **(headers or {}),
+        }
+        async with self._client.stream(
+            method,
+            url,
+            headers=request_headers,
+            json=json,
+            params=params,
+        ) as response:
+            if response.status_code not in expected:
+                retryable = response.status_code in {408, 409, 429, 500, 502, 503, 504}
+                raise ConnectorError(
+                    f"google-api-{response.status_code}",
+                    f"Google API returned HTTP {response.status_code}",
+                    retryable=retryable,
+                )
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line.removeprefix("data:").strip()
+                if not payload or payload == "[DONE]":
+                    continue
+                try:
+                    value = jsonlib.loads(payload)
+                except jsonlib.JSONDecodeError as error:
+                    raise ConnectorError(
+                        "google-api-stream", "Google API returned invalid stream data"
+                    ) from error
+                if not isinstance(value, dict):
+                    raise ConnectorError(
+                        "google-api-stream", "Google API returned a non-object stream event"
+                    )
+                yield value
 
     async def wait_operation(
         self,
