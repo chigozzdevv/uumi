@@ -1,6 +1,8 @@
 const now = "2026-08-16T18:00:00Z"
 const earlier = "2026-08-01T09:00:00Z"
 const hash = (character) => character.repeat(64)
+const pendingCreatedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+const pendingExpiresAt = new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString()
 
 const providerConnection = (id, platform, displayName) => ({
   id,
@@ -39,7 +41,7 @@ export const overview = {
   rotations_in_progress: 2,
   failed_rotations: 1,
   open_incidents: 2,
-  pending_approvals: 2,
+  pending_approvals: 1,
 }
 
 export const connections = [
@@ -128,9 +130,9 @@ export const connections = [
     roles: ["incident"],
     interface: "api",
     authorization: "oauth",
-    authorization_reference: "oauth://github/acme-security",
+    authorization_reference: "oauth://github/installation/123",
     capabilities: ["incident.verifyWebhook", "incident.readFinding", "repository.resolveContext"],
-    allowed_resources: ["github.com/acme/*"],
+    allowed_resources: ["acme/store-workers", "acme/billing-services"],
     http: null,
     playbook_id: null,
     playbook_version_id: null,
@@ -221,25 +223,35 @@ export const services = [
   { id: "svc_exports", organisation_id: "org_acme", application_id: "app_data", environment_id: "env_data_prod", runtime_connection_id: "conn_runtime", runtime_resource: "projects/acme-prod/locations/us-east4/services/warehouse-export-worker", display_name: "warehouse-export-worker", repository: "github.com/acme/warehouse", identity: "warehouse-export@acme-prod.iam.gserviceaccount.com", created_at: earlier, updated_at: now, revision: 1 },
 ].map((service) => ({
   ...service,
+  endpoint: `https://${service.display_name}-acme-prod.run.app`,
   telemetry_connection_ids: ["conn_telemetry"],
-  verification: {
-    kind: "http",
-    target: `https://verification.acme.test/${service.id}`,
-    method: "POST",
-    expected_status: [200],
-    required_fields: { success: true },
-    confirmation: null,
-    timeout_seconds: 30,
-  },
 }))
+
+const runtimeSecretBindings = {
+  svc_notifications: [{ name: "SENDGRID_API_KEY", secret: "sendgrid", version: "7", container: null }],
+  svc_checkout: [{ name: "STRIPE_CHECKOUT_LIVE", secret: "stripe", version: "5", container: null }],
+  svc_orders: [{ name: "VENDOR_ORDER_EXPORT", secret: "vendor", version: "3", container: null }],
+  svc_webhooks: [
+    { name: "STRIPE_CHECKOUT_LIVE", secret: "stripe", version: "5", container: null },
+    { name: "GITHUB_DEPLOYMENT_TOKEN", secret: "github", version: "4", container: null },
+  ],
+  svc_billing: [{ name: "BILLING_SUBSCRIPTIONS", secret: "billing", version: "9", container: null }],
+  svc_reconcile: [{ name: "NETSUITE_RECONCILIATION", secret: "reconcile", version: "2", container: null }],
+  svc_ingest: [{ name: "SEGMENT_WRITE_KEY", secret: "ingest", version: "6", container: null }],
+  svc_exports: [{ name: "SNOWFLAKE_EXPORT_KEY", secret: "exports", version: "4", container: null }],
+}
 
 export const runtimeResources = [
   ...services.map((service) => ({
     connection_id: service.runtime_connection_id,
     reference: service.runtime_resource,
     display_name: service.display_name,
-    endpoint: service.verification.target,
+    endpoint: service.endpoint,
     identity: service.identity,
+    region: environments.find((item) => item.id === service.environment_id)?.region ?? null,
+    environment_name: environments.find((item) => item.id === service.environment_id)?.display_name ?? null,
+    production: environments.find((item) => item.id === service.environment_id)?.production ?? null,
+    secret_bindings: runtimeSecretBindings[service.id] ?? [],
   })),
   {
     connection_id: "conn_runtime",
@@ -247,6 +259,10 @@ export const runtimeResources = [
     display_name: "customer-sync",
     endpoint: "https://customer-sync-acme-prod.us-central1.run.app",
     identity: "customer-sync@acme-prod.iam.gserviceaccount.com",
+    region: "us-central1",
+    environment_name: "Production",
+    production: true,
+    secret_bindings: [{ name: "CUSTOMER_NOTIFICATIONS", secret: "customer-notifications", version: "1", container: null }],
   },
   {
     connection_id: "conn_runtime",
@@ -254,6 +270,10 @@ export const runtimeResources = [
     display_name: "inventory-reporter",
     endpoint: "https://inventory-reporter-acme-prod.us-central1.run.app",
     identity: "inventory-reporter@acme-prod.iam.gserviceaccount.com",
+    region: "us-central1",
+    environment_name: "Production",
+    production: true,
+    secret_bindings: [{ name: "REPORTING_WORKER", secret: "reporting-worker", version: "2", container: null }],
   },
 ]
 
@@ -326,11 +346,12 @@ export const bindings = credentials.flatMap((credential, credentialIndex) =>
       environment_id: service.environment_id,
       runtime_connection_id: service.runtime_connection_id,
       runtime_resource: service.runtime_resource,
-      runtime_secret_name: credential.display_name.replaceAll("-", "_").toUpperCase(),
+      runtime_secret_name: runtimeSecretBindings[service.id]?.find((item) => item.secret === credential.secret_resource.split("/").at(-1))?.name ?? credential.display_name.replaceAll("-", "_").toUpperCase(),
+      runtime_container_name: null,
       secret_reference: credential.secret_reference,
       current_generation_id: credential.active_generation_id,
       target_generation_id: credential.id === "cred_sendgrid" ? "gen_sendgrid_8" : null,
-      verification_id: `probe_${credential.id.replace("cred_", "")}_${consumerIndex + 1}`,
+      verification_report_id: null,
       required: true,
       revision: credentialIndex + consumerIndex + 1,
     }
@@ -356,35 +377,42 @@ export const generations = credentials.map((credential, index) => ({
 export const runs = [
   {
     id: "run_emergency_sendgrid", organisation_id: "org_acme", credential_id: "cred_sendgrid",
-    trigger: { source: "github-secret-scanning", event_id: "event_github_1842", actor_id: "actor_ingestion", reason: "Verified SendGrid key exposure in a public repository", urgency: "emergency", received_at: "2026-08-16T11:42:00Z" },
+    trigger: { source: "github-secret-scanning", kind: "credential-exposure-detected", event_id: "event_github_1842", actor_id: "actor_ingestion", reason: "Verified SendGrid key exposure in a public repository", urgency: "emergency", received_at: "2026-08-16T11:42:00Z" },
     control_version: "control_sendgrid_v1", stage: "approval", status: "paused",
     lease: null, fencing_token: 4, browser_playbook_version: null, plan_id: "plan_sendgrid_42", plan_hash: hash("a"), current_generation_id: "gen_sendgrid_7", target_generation_id: "gen_sendgrid_8",
     failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-16T11:42:05Z", updated_at: "2026-08-16T17:43:00Z", revision: 14,
   },
   {
     id: "run_github_schedule", organisation_id: "org_acme", credential_id: "cred_github",
-    trigger: { source: "scheduler", event_id: "schedule_90d_991", actor_id: "actor_scheduler", reason: "Routine 90-day credential rotation", urgency: "routine", received_at: "2026-08-16T16:20:00Z" },
+    trigger: { source: "schedule", kind: "credential-rotation-due", event_id: "schedule_90d_991", actor_id: "actor_scheduler", reason: "The configured rotation time was reached.", urgency: "routine", received_at: "2026-08-16T16:20:00Z" },
     control_version: "control_github_v1", stage: "deploy", status: "running",
     lease: { owner_id: "actor_coordinator", fencing_token: 2, expires_at: "2026-08-16T18:10:00Z" }, fencing_token: 2, browser_playbook_version: null, plan_id: "plan_github_91", plan_hash: hash("b"), current_generation_id: "gen_github_4", target_generation_id: "gen_github_5",
     failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-16T16:20:00Z", updated_at: now, revision: 8,
   },
   {
     id: "run_stripe_complete", organisation_id: "org_acme", credential_id: "cred_stripe",
-    trigger: { source: "scheduler", event_id: "schedule_90d_948", actor_id: "actor_scheduler", reason: "Routine restricted key rotation", urgency: "routine", received_at: "2026-08-15T13:00:00Z" },
+    trigger: { source: "schedule", kind: "credential-rotation-due", event_id: "schedule_90d_948", actor_id: "actor_scheduler", reason: "The configured rotation time was reached.", urgency: "routine", received_at: "2026-08-15T13:00:00Z" },
     control_version: "control_stripe_v1", stage: "complete", status: "completed",
     lease: null, fencing_token: 3, browser_playbook_version: null, plan_id: "plan_stripe_44", plan_hash: hash("c"), current_generation_id: "gen_stripe_4", target_generation_id: "gen_stripe_5",
     failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-15T13:00:00Z", updated_at: "2026-08-15T15:20:00Z", revision: 18,
   },
   {
     id: "run_segment_complete", organisation_id: "org_acme", credential_id: "cred_ingest",
-    trigger: { source: "cloud-logging", event_id: "event_segment_118", actor_id: "actor_ingestion", reason: "Verified write key exposure in an application log", urgency: "emergency", received_at: "2026-08-12T08:10:00Z" },
+    trigger: { source: "cloud-logging", kind: "credential-exposure-detected", event_id: "event_segment_118", actor_id: "actor_ingestion", reason: "Verified write key exposure in an application log", urgency: "emergency", received_at: "2026-08-12T08:10:00Z" },
     control_version: "control_ingest_v1", stage: "complete", status: "completed",
     lease: null, fencing_token: 3, browser_playbook_version: null, plan_id: "plan_segment_18", plan_hash: hash("8"), current_generation_id: "gen_ingest_5", target_generation_id: "gen_ingest_6",
     failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-12T08:10:10Z", updated_at: "2026-08-12T09:42:00Z", revision: 17,
   },
   {
+    id: "run_vendor_complete", organisation_id: "org_acme", credential_id: "cred_vendor",
+    trigger: { source: "manual", kind: "credential-rotation-requested", event_id: "manual_vendor_2", actor_id: "actor_chigozie", reason: "Rotate the vendor portal credential.", urgency: "routine", received_at: "2026-08-10T09:00:00Z" },
+    control_version: "control_vendor_v1", stage: "complete", status: "completed",
+    lease: null, fencing_token: 3, browser_playbook_version: "play_vendor_v1", plan_id: "plan_vendor_10", plan_hash: hash("9"), current_generation_id: "gen_vendor_2", target_generation_id: "gen_vendor_3",
+    failure: null, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-10T09:00:00Z", updated_at: "2026-08-10T09:24:00Z", revision: 19,
+  },
+  {
     id: "run_vendor_failed", organisation_id: "org_acme", credential_id: "cred_vendor",
-    trigger: { source: "scheduler", event_id: "schedule_90d_913", actor_id: "actor_scheduler", reason: "Routine vendor key rotation", urgency: "routine", received_at: "2026-08-14T09:00:00Z" },
+    trigger: { source: "schedule", kind: "credential-rotation-due", event_id: "schedule_90d_913", actor_id: "actor_scheduler", reason: "The configured rotation time was reached.", urgency: "routine", received_at: "2026-08-14T09:00:00Z" },
     control_version: "control_vendor_v1", stage: "create", status: "failed",
     lease: null, fencing_token: 2, browser_playbook_version: "play_vendor_v1", plan_id: "plan_vendor_12", plan_hash: hash("d"), current_generation_id: "gen_vendor_3", target_generation_id: null,
     failure: { code: "provider-authentication-expired", message: "The approved browser session requires reauthentication before credential creation can continue.", retryable: true, evidence_ids: ["evidence_vendor_auth"] }, recovery_id: null, recovery_stage: null, recovery_mode: null, recovery_failure: null, recovery_evidence_ids: [], created_at: "2026-08-14T09:00:00Z", updated_at: "2026-08-14T09:08:00Z", revision: 6,
@@ -393,14 +421,14 @@ export const runs = [
 
 export const incidents = [
   {
-    id: "incident_github_1842", organisation_id: "org_acme", event_id: "event_github_1842", source: "github-secret-scanning", source_event_id: "alert-1842", severity: "critical", confidence: "verified", status: "rotation-started",
+    id: "incident_github_1842", organisation_id: "org_acme", event_id: "event_github_1842", source: "github-secret-scanning", kind: "credential-exposure-detected", source_event_id: "alert-1842", severity: "critical", confidence: "verified", status: "rotation-started",
     resource: { credential_id: "cred_sendgrid", repository: "github.com/acme/store-api", project: "acme-prod", service: "notification-worker", environment: "production", provider: "sendgrid", provider_id: "sg_key_4902" },
     candidates: [{ credential_id: "cred_sendgrid", confidence: "verified", reasons: ["Exact provider key identifier", "Repository mapped to consuming service"], consumer_ids: ["svc_notifications"] }], credential_id: "cred_sendgrid", run_id: "run_emergency_sendgrid", dismissal_reason: null, created_at: "2026-08-16T11:42:05Z", updated_at: "2026-08-16T11:43:00Z", revision: 4,
   },
   {
-    id: "incident_scc_9921", organisation_id: "org_acme", event_id: "event_scc_9921", source: "security-command-center", source_event_id: "finding-scc-9921", severity: "high", confidence: "high", status: "action-required",
-    resource: { credential_id: "cred_vendor", repository: null, project: "acme-prod", service: "order-worker", environment: "production", provider: "internal-vendor", provider_id: "vendor_key_942" },
-    candidates: [{ credential_id: "cred_vendor", confidence: "high", reasons: ["Provider identifier matched inventory", "Affected service consumes this generation"], consumer_ids: ["svc_orders"] }], credential_id: "cred_vendor", run_id: null, dismissal_reason: null, created_at: "2026-08-16T10:15:30Z", updated_at: "2026-08-16T10:16:00Z", revision: 2,
+    id: "incident_scc_9921", organisation_id: "org_acme", event_id: "event_scc_9921", source: "security-command-center", kind: "credential-exposure-detected", source_event_id: "finding-scc-9921", severity: "high", confidence: "high", status: "action-required",
+    resource: { credential_id: null, repository: null, project: "acme-prod", service: "order-worker", environment: "production", provider: "internal-vendor", provider_id: null },
+    candidates: [{ credential_id: "cred_vendor", confidence: "high", reasons: ["Affected service consumes this credential", "Provider matched the incident source"], consumer_ids: ["svc_orders"] }], credential_id: null, run_id: null, dismissal_reason: null, created_at: "2026-08-16T10:15:30Z", updated_at: "2026-08-16T10:16:00Z", revision: 2,
   },
   {
     id: "incident_segment_118", organisation_id: "org_acme", event_id: "event_segment_118", source: "cloud-logging", source_event_id: "log-alert-118", severity: "medium", confidence: "verified", status: "resolved",
@@ -410,9 +438,9 @@ export const incidents = [
 ]
 
 export const approvals = [
-  { id: "approval_sendgrid_revoke", organisation_id: "org_acme", run_id: "run_emergency_sendgrid", action_id: "action_revoke_sg_old", action_digest: hash("e"), plan_hash: hash("a"), evidence_hash: hash("f"), generation_id: "gen_sendgrid_7", requested_by: "actor_coordinator", capability_hash: hash("1"), decision: "pending", approver_id: null, expires_at: "2026-08-17T17:43:00Z", created_at: "2026-08-16T17:43:00Z", decided_at: null, consumed_at: null, revision: 1 },
-  { id: "approval_vendor_reauth", organisation_id: "org_acme", run_id: "run_vendor_failed", action_id: "action_vendor_takeover", action_digest: hash("2"), plan_hash: hash("d"), evidence_hash: hash("3"), generation_id: "gen_vendor_3", requested_by: "actor_operator", capability_hash: hash("4"), decision: "pending", approver_id: null, expires_at: "2026-08-17T09:08:00Z", created_at: "2026-08-16T17:50:00Z", decided_at: null, consumed_at: null, revision: 2 },
+  { id: "approval_sendgrid_revoke", organisation_id: "org_acme", run_id: "run_emergency_sendgrid", action_id: "action_revoke_sg_old", action_digest: hash("e"), plan_hash: hash("a"), evidence_hash: hash("f"), generation_id: "gen_sendgrid_7", requested_by: "actor_coordinator", capability_hash: hash("1"), decision: "pending", approver_id: null, expires_at: pendingExpiresAt, created_at: pendingCreatedAt, decided_at: null, consumed_at: null, revision: 1 },
   { id: "approval_stripe_revoke", organisation_id: "org_acme", run_id: "run_stripe_complete", action_id: "action_revoke_stripe_old", action_digest: hash("5"), plan_hash: hash("c"), evidence_hash: hash("6"), generation_id: "gen_stripe_4", requested_by: "actor_coordinator", capability_hash: hash("7"), decision: "approved", approver_id: "actor_chigozie", expires_at: "2026-08-16T18:00:00Z", created_at: "2026-08-15T15:01:00Z", decided_at: "2026-08-15T15:04:00Z", consumed_at: "2026-08-15T15:04:10Z", revision: 3 },
+  { id: "approval_vendor_revoke", organisation_id: "org_acme", run_id: "run_vendor_complete", action_id: "action_revoke_vendor_old", action_digest: hash("8"), plan_hash: hash("9"), evidence_hash: hash("a"), generation_id: "gen_vendor_3", requested_by: "actor_coordinator", capability_hash: hash("b"), decision: "approved", approver_id: "actor_chigozie", expires_at: "2026-08-10T10:00:00Z", created_at: "2026-08-10T09:18:00Z", decided_at: "2026-08-10T09:19:00Z", consumed_at: "2026-08-10T09:19:10Z", revision: 2 },
 ]
 
 const requiredChecks = {
@@ -422,7 +450,7 @@ const requiredChecks = {
   create: ["replacement-created", "mutation-resolved", "generation-recorded"],
   store: ["secret-stored", "consumer-accessible", "plaintext-isolated"],
   deploy: ["candidate-deployed", "version-bound", "generation-tagged", "rollback-ready"],
-  verify: ["provider-valid", "store-valid", "deployment-valid", "functional-valid", "downstream-valid", "telemetry-healthy", "coverage-complete", "rollback-ready"],
+  verify: ["provider-valid", "store-valid", "deployment-valid", "telemetry-healthy", "coverage-complete", "rollback-ready"],
   rollout: ["production-promoted", "rollout-healthy"],
   observe: ["telemetry-healthy", "old-use-clear", "consumers-current"],
   approval: ["approval-valid", "action-digest-valid", "evidence-current"],
@@ -430,25 +458,40 @@ const requiredChecks = {
   complete: ["consumers-current", "replacement-valid", "old-rejected", "audit-complete"],
 }
 
-export const controlVersions = credentials.map((credential) => ({
+export const controlVersions = credentials.map((credential) => {
+  const browserManaged = connections.find((connection) => connection.id === credential.connection_id)?.interface === "browser"
+  const requireRevokeApproval = ["cred_sendgrid", "cred_stripe", "cred_vendor"].includes(credential.id)
+  const checks = structuredClone(requiredChecks)
+  if (!requireRevokeApproval) {
+    checks.preflight = checks.preflight.filter((check) => check !== "approvers-known")
+    checks.approval = ["approval-not-required", "evidence-current"]
+  }
+  return ({
   id: credential.control_version,
   organisation_id: credential.organisation_id,
   credential_id: credential.id,
   number: 1,
   definition: {
-    required_checks: structuredClone(requiredChecks),
-    allowed_tools: ["provider.listCredentialMetadata", "provider.getCredentialStatus", "provider.createCredential", "provider.revokeCredential", "provider.testCredential", "secretStore.getVersion", "secretStore.testConsumerAccess", "secretStore.disableVersion", "secretStore.destroyVersion", "runtime.inspectSecretBindings", "runtime.deployCandidate", "runtime.shiftTraffic", "runtime.rollback", "telemetry.queryHealth", "telemetry.queryCredentialUsage", "verification.run"],
-    protected_tools: ["provider.revokeCredential", "secretStore.disableVersion", "secretStore.destroyVersion"],
+    required_checks: checks,
+    allowed_tools: browserManaged
+      ? ["browser.click", "browser.secure-capture", "browser.revokeCredential", "provider.testCredential", "secretStore.getVersion", "secretStore.testConsumerAccess", "secretStore.disableVersion", "secretStore.destroyVersion", "runtime.inspectSecretBindings", "runtime.deployCandidate", "runtime.shiftTraffic", "runtime.rollback", "telemetry.queryHealth", "telemetry.queryCredentialUsage", "verification.run"]
+      : ["provider.listCredentialMetadata", "provider.getCredentialStatus", "provider.createCredential", "provider.revokeCredential", "provider.testCredential", "secretStore.getVersion", "secretStore.testConsumerAccess", "secretStore.disableVersion", "secretStore.destroyVersion", "runtime.inspectSecretBindings", "runtime.deployCandidate", "runtime.shiftTraffic", "runtime.rollback", "telemetry.queryHealth", "telemetry.queryCredentialUsage", "verification.run"],
+    protected_tools: requireRevokeApproval
+      ? browserManaged
+        ? ["browser.revokeCredential", "secretStore.disableVersion", "secretStore.destroyVersion"]
+        : ["provider.revokeCredential", "secretStore.disableVersion", "secretStore.destroyVersion"]
+      : [],
     allowed_recovery_modes: ["rollback"],
     maximum_observation_seconds: 1800,
+    require_revoke_approval: requireRevokeApproval,
     preserve_old_generation: true,
-    require_functional_probe: true,
     require_generation_telemetry: true,
     rotate_before_expiry_seconds: 604800,
     maximum_metadata_age_seconds: 86400,
     require_runtime_alignment: true,
-    automatic_triggers: ["expiry", "drift", "verified-exposure"],
-    emergency_triggers: ["verified-exposure"],
+    automatic_triggers: ["credential-expiring", "credential-rotation-due", "credential-inventory-drift", "credential-provider-drift", "credential-runtime-drift"],
+    emergency_triggers: [],
+    exposure_sources: [],
     minimum_automatic_confidence: "verified",
     probe_versions: {},
     recovery: {},
@@ -456,7 +499,8 @@ export const controlVersions = credentials.map((credential) => ({
   digest: hash("a"),
   created_by: "actor_chigozie",
   created_at: credential.updated_at,
-}))
+  })
+})
 
 export const playbooks = [
   { id: "play_vendor", organisation_id: "org_acme", name: "Vendor console credential rotation", platform: "internal-vendor", latest_version: 1, latest_version_id: "play_vendor_v1", active_version_id: "play_vendor_v1", created_at: earlier, updated_at: "2026-08-10T11:00:00Z", revision: 1 },
@@ -464,8 +508,14 @@ export const playbooks = [
 ]
 
 export const playbookVersions = [
-  { id: "play_vendor_v1", organisation_id: "org_acme", playbook_id: "play_vendor", number: 1, state: "published", definition: { name: "Vendor console credential rotation", platform: "internal-vendor", allowed_domains: ["*.vendor.example.com"], login_url_pattern: "https://login.vendor.example.com/*", steps: [{ id: "action_create", stage: "create", effect: "create-credential", tool: "browser.secure-capture", secure_field: { name: "credential" } }, { id: "action_revoke", stage: "revoke", effect: "revoke-credential", tool: "browser.click", secure_field: null }] }, source_ids: ["source_vendor_text"], published_by: "actor_chigozie", published_at: earlier, created_at: earlier },
-  { id: "play_partner_v1", organisation_id: "org_acme", playbook_id: "play_partner", number: 1, state: "draft", definition: { name: "Partner portal credential rotation", platform: "partner-portal", allowed_domains: ["*.partner.example.com"], login_url_pattern: "https://login.partner.example.com/*", steps: [{ id: "action_create", stage: "create", effect: "create-credential", tool: "browser.secure-capture", objective: "Create and capture the replacement credential", secure_field: { name: "credential" } }, { id: "action_revoke", stage: "revoke", effect: "revoke-credential", tool: "browser.click", objective: "Revoke the previous credential", secure_field: null }] }, source_ids: ["source_partner_text"], published_by: null, published_at: null, created_at: now },
+  { id: "play_vendor_v1", organisation_id: "org_acme", playbook_id: "play_vendor", number: 1, state: "published", definition: { name: "Vendor console credential rotation", platform: "internal-vendor", allowed_domains: ["*.vendor.example.com"], login_url_pattern: "https://login.vendor.example.com/*", steps: [
+    { id: "action_open_credentials", stage: "create", effect: "none", tool: "browser.navigate", operation: "navigate", objective: "Open the API credentials page", parameters: { url: "https://console.vendor.example.com/credentials" }, protected: false, evidence_checks: ["credential-page-open"], selectors: [], checkpoint: { url_pattern: "https://console.vendor.example.com/credentials*", required_text: ["API credentials"], forbidden_text: [] }, secure_field: null, outputs: [], timeout_seconds: 30, retry_limit: 1 },
+    { id: "action_start_create", stage: "create", effect: "none", tool: "browser.click", operation: "click", objective: "Open the credential creation form", parameters: {}, protected: false, evidence_checks: ["credential-form-open"], selectors: [{ kind: "test-id", value: "create-credential", name: null, exact: true }], checkpoint: { url_pattern: "https://console.vendor.example.com/credentials*", required_text: ["API credentials"], forbidden_text: [] }, secure_field: null, outputs: [], timeout_seconds: 30, retry_limit: 1 },
+    { id: "action_capture_create", stage: "create", effect: "create-credential", tool: "browser.secure-capture", operation: "capture", objective: "Submit the credential creation form", parameters: {}, protected: false, evidence_checks: ["credential-captured"], selectors: [{ kind: "test-id", value: "confirm-create-credential", name: null, exact: true }], checkpoint: { url_pattern: "https://console.vendor.example.com/credentials*", required_text: ["API credentials"], forbidden_text: [] }, secure_field: { name: "credential", selector: { kind: "test-id", value: "generated-credential", name: null, exact: true }, provider_id_selector: { kind: "test-id", value: "credential-id", name: null, exact: true } }, outputs: [], timeout_seconds: 30, retry_limit: 1 },
+    { id: "action_select_previous", stage: "revoke", effect: "none", tool: "browser.click", operation: "click", objective: "Select the previous credential", parameters: {}, protected: false, evidence_checks: ["previous-credential-selected"], selectors: [{ kind: "test-id", value: "previous-credential", name: null, exact: true }], checkpoint: { url_pattern: "https://console.vendor.example.com/credentials*", required_text: ["API credentials"], forbidden_text: [] }, secure_field: null, outputs: [], timeout_seconds: 30, retry_limit: 1 },
+    { id: "action_revoke_previous", stage: "revoke", effect: "revoke-credential", tool: "browser.revokeCredential", operation: "revoke", objective: "Revoke the previous credential", parameters: {}, protected: false, evidence_checks: ["credential-revoked"], selectors: [{ kind: "test-id", value: "revoke-credential", name: null, exact: true }], checkpoint: { url_pattern: "https://console.vendor.example.com/credentials*", required_text: ["API credentials"], forbidden_text: [] }, secure_field: null, outputs: [], timeout_seconds: 30, retry_limit: 1 },
+  ] }, source_ids: ["source_vendor_text"], published_by: "actor_chigozie", published_at: earlier, created_at: earlier },
+  { id: "play_partner_v1", organisation_id: "org_acme", playbook_id: "play_partner", number: 1, state: "draft", definition: { name: "Partner portal credential rotation", platform: "partner-portal", allowed_domains: ["*.partner.example.com"], login_url_pattern: "https://login.partner.example.com/*", steps: [{ id: "action_create", stage: "create", effect: "create-credential", tool: "browser.secure-capture", objective: "Submit the credential creation form", secure_field: { name: "credential" } }, { id: "action_revoke", stage: "revoke", effect: "revoke-credential", tool: "browser.revokeCredential", objective: "Revoke the previous credential", secure_field: null }] }, source_ids: ["source_partner_text"], published_by: null, published_at: null, created_at: now },
 ]
 
 export const playbookSources = [
@@ -512,6 +562,55 @@ export const notifications = [
   { id: "notification_auth", organisation_id: "org_acme", kind: "connection-unhealthy", severity: "high", title: "Vendor connection requires authentication", body: "An authorised user must renew the isolated browser session before the run can resume.", link_path: "/connections", resource_id: "conn_vendor", run_id: "run_vendor_failed", incident_id: null, approval_id: null, read_at: null, created_at: "2026-08-16T17:50:00Z", revision: 1 },
 ]
 
+export const notificationSecrets = [
+  { reference: "projects/firekey-control/secrets/firekey-email/versions/2", state: "ENABLED", created_at: earlier },
+]
+
+export const notificationTopics = [
+  { id: "incidents", label: "Incidents", event_kinds: ["incident", "incident-confirmation"] },
+  { id: "rotation-failures", label: "Rotation failures", event_kinds: ["rotation-failed", "recovery-started", "cleanup-required"] },
+  { id: "approvals", label: "Approval requests", event_kinds: ["approval-required"] },
+  { id: "credential-use", label: "Previous credential use", event_kinds: ["old-key-used"] },
+  { id: "connection-health", label: "Connection issues", event_kinds: ["connection-unhealthy"] },
+  { id: "playbook-review", label: "Playbook reviews", event_kinds: ["playbook-review"] },
+  { id: "rotation-due", label: "Upcoming rotations", event_kinds: ["rotation-due"] },
+  { id: "rotation-completed", label: "Completed rotations", event_kinds: ["revocation-succeeded", "rotation-completed"] },
+]
+
+export const notificationEndpoints = [
+  {
+    id: "endpoint_security_email",
+    organisation_id: "org_acme",
+    principal_id: "member_chigozie",
+    display_name: "Security email",
+    channel: "email",
+    provider: "resend",
+    auth_reference: "projects/firekey-control/secrets/firekey-email/versions/2",
+    event_kinds: ["incident", "incident-confirmation", "rotation-failed", "recovery-started", "approval-required", "old-key-used", "connection-unhealthy", "playbook-review", "cleanup-required"],
+    recipients: ["security@acme.example"],
+    sender: "alerts@acme.example",
+    enabled: true,
+    created_at: earlier,
+    updated_at: now,
+    revision: 1,
+  },
+]
+
+export const profile = {
+  id: "member_chigozie",
+  organisation_id: "org_acme",
+  display_name: "Chigozie Okafor",
+  email: "chigozie@acme.example",
+  connected_via: "Google",
+  role: "administrator",
+  revision: 1,
+}
+
+export const team = [
+  { id: "member_chigozie", organisation_id: "org_acme", display_name: "Chigozie Okafor", email: "chigozie@acme.example", connected_via: "Google", role: "administrator", status: "active", created_at: earlier, updated_at: now, revision: 1 },
+  { id: "member_ada", organisation_id: "org_acme", display_name: "Ada Nwosu", email: "ada@acme.example", connected_via: "Organisation SSO", role: "operator", status: "active", created_at: earlier, updated_at: now, revision: 1 },
+]
+
 export function createStore() {
-  return structuredClone({ overview, connections, applications, environments, services, runtimeResources, credentials, providerCredentials, credentialImports, generations, bindings, runs, incidents, approvals, controlVersions, playbooks, playbookVersions, playbookSources, agents, audits, notifications, setups: [] })
+  return structuredClone({ overview, connections, applications, environments, services, runtimeResources, credentials, providerCredentials, credentialImports, generations, bindings, runs, incidents, approvals, controlVersions, playbooks, playbookVersions, playbookSources, agents, audits, notifications, notificationEndpoints, notificationSecrets, notificationTopics, profile, team, setups: [] })
 }

@@ -4,6 +4,7 @@ export function titleCase(value: string): string {
   const terms: Record<string, string> = {
     api: "API",
     cli: "CLI",
+    github: "GitHub",
     http: "HTTP",
     id: "ID",
     mfa: "MFA",
@@ -31,6 +32,7 @@ export function shortId(value: string | null, size = 14): string {
 export function providerName(value: string): string {
   const names: Record<string, string> = {
     "cloud-run": "Cloud Run",
+    "google-cloud": "Google Cloud",
     "cloud-monitoring": "Cloud Monitoring",
     "google-secret-manager": "Secret Manager",
     "internal-vendor": "Internal Vendor",

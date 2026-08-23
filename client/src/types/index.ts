@@ -1,5 +1,62 @@
 export type Identifier = string
 
+export type MemberRole = "viewer" | "operator" | "administrator"
+export type MemberStatus = "pending" | "active" | "disabled"
+
+export interface AccountProfile {
+  id: Identifier
+  organisation_id: Identifier
+  display_name: string
+  email: string
+  connected_via: string
+  role: MemberRole
+  revision: number
+}
+
+export interface TeamMember {
+  id: Identifier
+  organisation_id: Identifier
+  display_name: string | null
+  email: string
+  connected_via: string | null
+  role: MemberRole
+  status: MemberStatus
+  created_at: string
+  updated_at: string
+  revision: number
+}
+
+export type NotificationKind =
+  | "incident"
+  | "incident-confirmation"
+  | "rotation-due"
+  | "rotation-failed"
+  | "recovery-started"
+  | "approval-required"
+  | "old-key-used"
+  | "connection-unhealthy"
+  | "playbook-review"
+  | "revocation-succeeded"
+  | "rotation-completed"
+  | "cleanup-required"
+
+export interface EmailNotificationEndpoint {
+  id: Identifier
+  organisation_id: Identifier
+  email_address: string
+  event_kinds: NotificationKind[]
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  revision: number
+}
+
+export interface NotificationTopic {
+  id: Identifier
+  label: string
+  event_kinds: NotificationKind[]
+}
+
 export type ConnectionRole = "provider" | "secret-store" | "runtime" | "telemetry" | "incident"
 export type ConnectionInterface = "api" | "browser"
 export type ConnectionAuthorization = "oauth" | "workload-identity" | "api-key" | "browser-session"
@@ -78,17 +135,15 @@ export interface RuntimeResourceMetadata {
   display_name: string
   endpoint: string | null
   identity: string | null
-}
-
-export interface Application {
-  id: Identifier
-  organisation_id: Identifier
-  display_name: string
-  repository_ids: string[]
-  created_at: string
-  updated_at: string
-  archived_at?: string | null
-  revision: number
+  region: string | null
+  environment_name: string | null
+  production: boolean | null
+  secret_bindings: Array<{
+    name: string
+    secret: string
+    version: string
+    container: string | null
+  }>
 }
 
 export interface Environment {
@@ -104,24 +159,6 @@ export interface Environment {
   revision: number
 }
 
-export interface FunctionalVerification {
-  kind: "http" | "email"
-  target: string
-  method: "GET" | "POST"
-  expected_status: number[]
-  required_fields: Record<string, string | number | boolean>
-  confirmation: null | {
-    target: string
-    method: string
-    headers: Record<string, string>
-    expected_status: number[]
-    required_fields: Record<string, string | number | boolean>
-    correlation_field: string
-    interval_seconds: number
-  }
-  timeout_seconds: number
-}
-
 export interface ConsumerService {
   id: Identifier
   organisation_id: Identifier
@@ -131,7 +168,7 @@ export interface ConsumerService {
   telemetry_connection_ids: Identifier[]
   runtime_resource: string
   display_name: string
-  verification: FunctionalVerification | null
+  endpoint: string | null
   repository: string | null
   identity: string | null
   created_at: string
@@ -188,10 +225,11 @@ export interface ConsumerBinding {
   runtime_connection_id: Identifier
   runtime_resource: string
   runtime_secret_name: string
+  runtime_container_name: string | null
   secret_reference: string
   current_generation_id: Identifier
   target_generation_id: Identifier | null
-  verification_id: Identifier
+  verification_report_id: Identifier | null
   required: boolean
   revision: number
 }
@@ -221,6 +259,7 @@ export interface Incident {
   organisation_id: Identifier
   event_id: Identifier
   source: string
+  kind: string
   source_event_id: string
   severity: "critical" | "high" | "medium" | "low"
   confidence: "verified" | "high" | "medium" | "low"
@@ -262,10 +301,11 @@ export type StageName =
   | "revoke"
   | "complete"
 
-export type RunStatus = "pending" | "running" | "paused" | "recovering" | "cleanup-required" | "failed" | "compensated" | "completed"
+export type RunStatus = "pending" | "running" | "paused" | "recovering" | "cleanup-required" | "failed" | "cancelled" | "compensated" | "completed"
 
 export interface Trigger {
   source: string
+  kind: string
   event_id: string
   actor_id: Identifier
   reason: string
@@ -299,6 +339,72 @@ export interface RotationRun {
   revision: number
 }
 
+export type StageExecutionStatus = "succeeded" | "paused" | "failed" | "recovered"
+
+export interface AgentDecisionSummary {
+  agent: "inventory" | "planner" | "playbook" | "operator"
+  decision: string
+  explanation: string
+}
+
+export interface BrowserActionSummary {
+  step_id: Identifier
+  objective: string
+  operation: string
+  outcome: string
+}
+
+export interface StageDetail {
+  label: string
+  value: string
+}
+
+export interface RunStageActivity {
+  id: Identifier
+  stage: StageName
+  status: StageExecutionStatus
+  checks: string[]
+  evidence_count: number
+  summary: string | null
+  details: StageDetail[]
+  agent_decisions: AgentDecisionSummary[]
+  browser_actions: BrowserActionSummary[]
+  reason: string | null
+  retryable: boolean
+  started_at: string
+  completed_at: string
+}
+
+export interface ComputerUseActivity {
+  id: Identifier
+  organisation_id: Identifier
+  session_id: Identifier
+  run_id: Identifier
+  step_id: Identifier
+  stage: StageName
+  turn: number
+  phase: "input" | "thought" | "response" | "proposal" | "validation" | "execution"
+  status: "sent" | "streaming" | "proposed" | "validated" | "succeeded" | "paused" | "failed" | "completed"
+  effect: "none" | "create-credential" | "revoke-credential" | null
+  prompt: string | null
+  instruction: string | null
+  image_reference: string | null
+  image_digest: string | null
+  content: string | null
+  action: "navigate" | "click" | "type" | "select" | "scroll" | "key" | "wait" | null
+  arguments: Record<string, unknown>
+  intent: string | null
+  safety_decision: string | null
+  target: string | null
+  recorded_at: string
+}
+
+export interface RotationHistory {
+  run_id: Identifier
+  stages: RunStageActivity[]
+  computer_use: ComputerUseActivity[]
+}
+
 export interface Approval {
   id: Identifier
   organisation_id: Identifier
@@ -310,13 +416,23 @@ export interface Approval {
   generation_id: Identifier
   requested_by: Identifier
   capability_hash: string
-  decision: "pending" | "approved" | "rejected" | "more-evidence" | "extend-observation"
+  decision: "pending" | "approved" | "rejected" | "cancelled" | "more-evidence" | "extend-observation"
   approver_id: Identifier | null
   expires_at: string
   created_at: string
   decided_at: string | null
   consumed_at: string | null
   revision: number
+}
+
+export interface ApprovalEvidenceSnapshot {
+  approval_id: Identifier
+  evidence_hash: string
+  kind: "verification" | "plan"
+  status: string
+  checks: string[]
+  evidence_count: number
+  recorded_at: string
 }
 
 export interface AuditEvent {

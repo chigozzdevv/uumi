@@ -1,21 +1,25 @@
 import type {
-  Application,
+  AccountProfile,
   Approval,
+  ApprovalEvidenceSnapshot,
   AuditEvent,
   Connection,
-  ConsumerBinding,
-  ConsumerService,
   CredentialGeneration,
   Environment,
   Incident,
   Identifier,
   InventoryGraph,
   ManagedCredential,
+  EmailNotificationEndpoint,
+  NotificationTopic,
   OverviewSummary,
   Playbook,
   ProviderCredentialMetadata,
   RuntimeResourceMetadata,
+  RotationHistory,
   RotationRun,
+  TeamMember,
+  MemberRole,
 } from "../types";
 
 const ORG_ID = "org_acme"
@@ -24,7 +28,17 @@ const ROOT = `/v1/organisations/${ORG_ID}`
 export interface ImportCredentialInput {
   credential: ManagedCredential
   generation: CredentialGeneration
-  bindings: ConsumerBinding[]
+  consumer: {
+    application_id: Identifier
+    environment_id: Identifier
+    service_id: Identifier
+    binding_id: Identifier
+    runtime_connection_id: Identifier
+    runtime_resource: string
+    runtime_secret_name: string
+    runtime_container_name?: string
+    environment_name?: string
+  }
   controls: ControlPreferences
 }
 
@@ -32,12 +46,6 @@ export interface CreateConnectionInput {
   connection: Connection
   playbook_id?: Identifier
   playbook_version_id?: Identifier
-}
-
-export interface CreateApplicationInput {
-  application: Application
-  environment: Environment
-  service: ConsumerService
 }
 
 export interface PlaybookDefinition {
@@ -64,16 +72,35 @@ export interface PlaybookDefinition {
   }>
 }
 
-export interface CreatePlaybookInput {
+export interface PreparePlaybookInput {
   playbook_id: Identifier
   version_id: Identifier
-  definition: PlaybookDefinition
   source: {
     id: Identifier
-    kind: "text" | "link" | "video"
-    content: string
-    resource_url?: string
+    kind: "text" | "video"
+    text?: string
+    file?: File
+    resource?: string
   }
+  objective: string
+}
+
+export interface PreparedPlaybook {
+  playbook_id: Identifier
+  version_id: Identifier
+  source_id: Identifier
+  definition: PlaybookDefinition
+}
+
+interface WalkthroughSource {
+  id: Identifier
+  status: "uploading" | "analysing" | "ready" | "failed"
+  failure?: string | null
+}
+
+interface BeginWalkthroughResponse {
+  source: WalkthroughSource
+  upload_url: string
 }
 
 export interface ControlDefinition {
@@ -82,14 +109,15 @@ export interface ControlDefinition {
   protected_tools: string[]
   allowed_recovery_modes: Array<"retry" | "rollback" | "rollforward" | "cleanup" | "escalate">
   maximum_observation_seconds: number
+  require_revoke_approval: boolean
   preserve_old_generation: boolean
-  require_functional_probe: boolean
   require_generation_telemetry: boolean
   rotate_before_expiry_seconds: number
   maximum_metadata_age_seconds: number
   require_runtime_alignment: boolean
   automatic_triggers: string[]
   emergency_triggers: string[]
+  exposure_sources: ExposureSource[]
   minimum_automatic_confidence: "verified" | "high" | "medium" | "low"
   probe_versions: Record<string, string[]>
   recovery: Record<string, unknown>
@@ -99,6 +127,13 @@ export interface ControlPreferences {
   automatic_triggers: string[]
   rotate_before_expiry_seconds: number
   maximum_observation_seconds: number
+  require_revoke_approval: boolean
+  exposure_sources: ExposureSource[]
+}
+
+export interface ExposureSource {
+  connection_id: Identifier
+  resource: string
 }
 
 export interface SecretResourceMetadata {
@@ -110,6 +145,12 @@ export interface SecretVersionMetadata {
   reference: string
   state: string
   created_at: string | null
+}
+
+export interface CreateNotificationEndpointInput {
+  id: Identifier
+  email_address: string
+  topics: Identifier[]
 }
 
 export interface StartRotationInput {
@@ -124,6 +165,74 @@ export interface BrowserSetupResponse {
   token: string
   gateway_url: string
   expires_at: string
+}
+
+export interface GitHubOnboardingResponse {
+  session: { id: Identifier; expires_at: string }
+  state: string
+  pkce_verifier: string
+  installation_url: string
+  authorization_url: string
+}
+
+export interface GitHubRepositoryCandidate {
+  repository_id: number
+  full_name: string
+  private: boolean
+  default_branch: string
+  secret_scanning: "enabled" | "disabled" | "unavailable"
+}
+
+export interface GitHubDiscoveryResponse {
+  session: { id: Identifier; status: "discovered" | "complete"; expires_at: string }
+  installation: {
+    installation_id: number
+    account_login: string
+    ready: boolean
+  }
+  repositories: GitHubRepositoryCandidate[]
+}
+
+export interface GitHubCompletionResponse extends GitHubDiscoveryResponse {
+  session: { id: Identifier; status: "complete"; expires_at: string }
+  repositories: GitHubRepositoryCandidate[]
+}
+
+export interface GoogleCloudService {
+  reference: string
+  display_name: string
+  region: string
+  runtime_identity: string | null
+}
+
+export interface GoogleCloudServiceAccount {
+  email: string
+  display_name: string
+}
+
+export interface GoogleCloudProject {
+  project_id: string
+  project_number: string
+  display_name: string
+  services: GoogleCloudService[]
+  service_accounts: GoogleCloudServiceAccount[]
+}
+
+export interface GoogleCloudOnboardingResponse {
+  session: { id: Identifier; expires_at: string }
+  state: string
+  pkce_verifier: string
+  authorization_url: string
+}
+
+export interface GoogleCloudDiscoveryResponse {
+  session: { id: Identifier; expires_at: string; completed_at: string }
+  projects: GoogleCloudProject[]
+}
+
+export interface GoogleCloudConnectionResponse {
+  connection: Connection
+  grant_command: string
 }
 
 export interface PlaybookVersion {
@@ -192,6 +301,30 @@ class ApiClient {
       )
     }
     return response.json() as Promise<T>
+  }
+
+  private async requestBlob(path: string): Promise<Blob> {
+    const response = await fetch(`${import.meta.env.VITE_API_URL ?? ""}${path}`, {
+      credentials: "include",
+      headers: { Accept: "image/png" },
+    })
+    if (!response.ok) {
+      const problem = (await response.json().catch(() => null)) as { code?: string; message?: string } | null
+      throw new ApiError(
+        problem?.message ?? `FireKey API request failed (${response.status})`,
+        response.status,
+        problem?.code ?? "request-failed",
+      )
+    }
+    return response.blob()
+  }
+
+  async logout(): Promise<void> {
+    const response = await fetch(`${import.meta.env.VITE_API_URL ?? ""}/v1/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    })
+    if (!response.ok) throw new ApiError("Could not end this session", response.status, "logout-failed")
   }
 
   async getOverview(): Promise<OverviewSummary> {
@@ -288,10 +421,70 @@ class ApiClient {
     })
   }
 
-  async beginBrowserSetup(connectionId: Identifier, secretContainer: string): Promise<BrowserSetupResponse> {
+  async beginBrowserSetup(connectionId: Identifier): Promise<BrowserSetupResponse> {
     return this.request(`${ROOT}/inventory/connections/${connectionId}/setup`, {
       method: "POST",
-      body: JSON.stringify({ secret_container: secretContainer, extra_domains: [] }),
+      body: JSON.stringify({ extra_domains: [] }),
+    })
+  }
+
+  async beginGitHubOnboarding(): Promise<GitHubOnboardingResponse> {
+    return this.request(`${ROOT}/github/onboarding`, { method: "POST", body: JSON.stringify({}) })
+  }
+
+  async discoverGitHubOnboarding(
+    sessionId: Identifier,
+    input: { state: string; pkce_verifier: string; code: string; installation_id: number },
+  ): Promise<GitHubDiscoveryResponse> {
+    return this.request(`${ROOT}/github/onboarding/${sessionId}/discover`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  }
+
+  async completeGitHubOnboarding(
+    sessionId: Identifier,
+  ): Promise<GitHubCompletionResponse> {
+    return this.request(`${ROOT}/github/onboarding/${sessionId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    })
+  }
+
+  async beginGoogleCloudOnboarding(): Promise<GoogleCloudOnboardingResponse> {
+    return this.request(`${ROOT}/google-cloud/onboarding`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    })
+  }
+
+  async completeGoogleCloudOnboarding(
+    sessionId: Identifier,
+    input: { state: string; pkce_verifier: string; code: string },
+  ): Promise<GoogleCloudDiscoveryResponse> {
+    return this.request(`${ROOT}/google-cloud/onboarding/${sessionId}`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  }
+
+  async prepareGoogleCloudConnection(
+    sessionId: Identifier,
+    input: { project_id: string; automation_identity: string },
+  ): Promise<GoogleCloudConnectionResponse> {
+    return this.request(`${ROOT}/google-cloud/onboarding/${sessionId}/connection`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  }
+
+  async verifyGoogleCloudConnection(
+    sessionId: Identifier,
+    expectedRevision: number,
+  ): Promise<Connection> {
+    return this.request(`${ROOT}/google-cloud/onboarding/${sessionId}/connection/verify`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: expectedRevision }),
     })
   }
 
@@ -302,77 +495,70 @@ class ApiClient {
     })
   }
 
-  async createApplication(input: CreateApplicationInput): Promise<Application> {
-    const setup = await this.request<CreateApplicationInput>(`${ROOT}/inventory/application-setups`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    })
-    return setup.application
-  }
-
-  async getApplication(applicationId: Identifier): Promise<Application> {
-    return this.request(`${ROOT}/inventory/applications/${applicationId}`)
-  }
-
-  async updateApplication(applicationId: Identifier, input: { expected_revision: number; display_name?: string; repository_ids?: string[] }): Promise<Application> {
-    return this.request(`${ROOT}/inventory/applications/${applicationId}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    })
-  }
-
-  async archiveApplication(applicationId: Identifier, expectedRevision: number): Promise<Application> {
-    return this.archive(`${ROOT}/inventory/applications/${applicationId}`, expectedRevision)
-  }
-
-  async getEnvironment(environmentId: Identifier): Promise<Environment> {
-    return this.request(`${ROOT}/inventory/environments/${environmentId}`)
-  }
-
-  async updateEnvironment(environmentId: Identifier, input: { expected_revision: number; display_name?: string; production?: boolean; region?: string }): Promise<Environment> {
-    return this.request(`${ROOT}/inventory/environments/${environmentId}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    })
-  }
-
-  async archiveEnvironment(environmentId: Identifier, expectedRevision: number): Promise<Environment> {
-    return this.archive(`${ROOT}/inventory/environments/${environmentId}`, expectedRevision)
-  }
-
-  async createService(service: ConsumerService): Promise<ConsumerService> {
-    return this.request(`${ROOT}/inventory/services`, {
-      method: "POST",
-      body: JSON.stringify(service),
-    })
-  }
-
-  async getService(serviceId: Identifier): Promise<ConsumerService> {
-    return this.request(`${ROOT}/inventory/services/${serviceId}`)
-  }
-
-  async updateService(serviceId: Identifier, input: { expected_revision: number; display_name?: string; runtime_connection_id?: Identifier; telemetry_connection_ids?: Identifier[]; runtime_resource?: string; verification?: ConsumerService["verification"]; repository?: string | null; identity?: string | null }): Promise<ConsumerService> {
-    return this.request(`${ROOT}/inventory/services/${serviceId}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    })
-  }
-
-  async archiveService(serviceId: Identifier, expectedRevision: number): Promise<ConsumerService> {
-    return this.archive(`${ROOT}/inventory/services/${serviceId}`, expectedRevision)
-  }
-
-  async createPlaybook(input: CreatePlaybookInput): Promise<Playbook> {
-    const source = await this.request<{ id: Identifier }>(`${ROOT}/playbooks/${input.playbook_id}/walkthroughs/references`, {
-      method: "POST",
-      body: JSON.stringify({ source_id: input.source.id, kind: input.source.kind, content: input.source.content, resource_url: input.source.resource_url }),
-    })
-    const created = await this.request<{ playbook: Playbook }>(`${ROOT}/playbooks/${input.playbook_id}/build`, {
+  async preparePlaybook(input: PreparePlaybookInput): Promise<PreparedPlaybook> {
+    let source: WalkthroughSource
+    if (input.source.kind === "text") {
+      source = await this.request(`${ROOT}/playbooks/${input.playbook_id}/walkthroughs/references`, {
+        method: "POST",
+        body: JSON.stringify({ source_id: input.source.id, kind: "text", content: input.source.text }),
+      })
+    } else if (input.source.file) {
+      const file = input.source.file
+      const contentType = videoContentType(file)
+      const started = await this.request<BeginWalkthroughResponse>(`${ROOT}/playbooks/${input.playbook_id}/walkthroughs`, {
+        method: "POST",
+        body: JSON.stringify({
+          source_id: input.source.id,
+          content_type: contentType,
+          size: file.size,
+          crc32c: await crc32c(file),
+        }),
+      })
+      const uploaded = await fetch(started.upload_url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": contentType,
+          "Content-Range": `bytes 0-${file.size - 1}/${file.size}`,
+        },
+        body: file,
+      })
+      if (!uploaded.ok) throw new ApiError(`Video upload failed (${uploaded.status})`, uploaded.status, "upload-failed")
+      source = await this.request(`${ROOT}/playbooks/${input.playbook_id}/walkthroughs/${input.source.id}/complete`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      })
+    } else {
+      source = await this.request(`${ROOT}/playbooks/${input.playbook_id}/walkthroughs/video-references`, {
+        method: "POST",
+        body: JSON.stringify({ source_id: input.source.id, resource: input.source.resource }),
+      })
+    }
+    source = await this.waitForWalkthrough(input.playbook_id, source)
+    const draft = await this.request<{ definition: PlaybookDefinition }>(`${ROOT}/playbooks/${input.playbook_id}/draft`, {
       method: "POST",
       headers: { "Idempotency-Key": crypto.randomUUID() },
-      body: JSON.stringify({ version_id: input.version_id, objective: JSON.stringify(input.definition), source_ids: [source.id] }),
+      body: JSON.stringify({ objective: input.objective, source_ids: [source.id] }),
+    })
+    return { playbook_id: input.playbook_id, version_id: input.version_id, source_id: source.id, definition: draft.definition }
+  }
+
+  async savePlaybook(input: PreparedPlaybook): Promise<Playbook> {
+    const created = await this.request<{ playbook: Playbook }>(`${ROOT}/playbooks/${input.playbook_id}/versions`, {
+      method: "POST",
+      body: JSON.stringify({ version_id: input.version_id, definition: input.definition, source_ids: [input.source_id] }),
     })
     return created.playbook
+  }
+
+  private async waitForWalkthrough(playbookId: Identifier, initial: WalkthroughSource): Promise<WalkthroughSource> {
+    let source = initial
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      if (source.status === "ready") return source
+      if (source.status === "failed") throw new ApiError(source.failure ?? "Video analysis failed", 422, "video-analysis-failed")
+      if (attempt > 0) await wait(1500)
+      source = await this.request(`${ROOT}/playbooks/${playbookId}/walkthroughs/${source.id}`)
+    }
+    throw new ApiError("Video analysis did not finish in time", 408, "video-analysis-timeout")
   }
 
   async publishPlaybook(playbookId: Identifier, versionId: Identifier): Promise<PlaybookVersion> {
@@ -382,16 +568,34 @@ class ApiClient {
     })
   }
 
-  async getApplications(): Promise<Application[]> {
-    return this.request(`${ROOT}/inventory/applications`)
-  }
-
   async getEnvironments(): Promise<Environment[]> {
     return this.request(`${ROOT}/inventory/environments`)
   }
 
   async getIncidents(): Promise<Incident[]> {
     return this.request(`${ROOT}/incidents`)
+  }
+
+  async confirmIncident(incidentId: Identifier, expectedRevision: number, credentialId: Identifier): Promise<Incident> {
+    return this.request(`${ROOT}/incidents/${incidentId}/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: expectedRevision, credential_id: credentialId }),
+    })
+  }
+
+  async startIncidentRotation(incidentId: Identifier, controlVersion: Identifier, reason: string, urgency: "routine" | "urgent" | "emergency"): Promise<{ incident: Incident; run: RotationRun; applied: boolean }> {
+    return this.request(`${ROOT}/incidents/${incidentId}/rotate`, {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ control_version: controlVersion, reason, urgency, received_at: new Date().toISOString() }),
+    })
+  }
+
+  async dismissIncident(incidentId: Identifier, expectedRevision: number, reason: string): Promise<Incident> {
+    return this.request(`${ROOT}/incidents/${incidentId}/dismiss`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: expectedRevision, reason }),
+    })
   }
 
   async getRotations(): Promise<RotationRun[]> {
@@ -411,8 +615,20 @@ class ApiClient {
     return this.request(`${ROOT}/runs/${runId}`)
   }
 
+  async getRotationHistory(runId: string): Promise<RotationHistory> {
+    return this.request(`${ROOT}/runs/${runId}/history`)
+  }
+
+  async getComputerUseInputImage(runId: string, activityId: string): Promise<Blob> {
+    return this.requestBlob(`${ROOT}/runs/${runId}/computer-use/${activityId}/image`)
+  }
+
   async getApprovals(): Promise<Approval[]> {
     return this.request(`${ROOT}/approvals`)
+  }
+
+  async getApprovalEvidence(approvalId: Identifier): Promise<ApprovalEvidenceSnapshot> {
+    return this.request(`${ROOT}/approvals/${approvalId}/evidence`)
   }
 
   async decideApproval(approvalId: string, expectedRevision: number, decision: "approved" | "rejected" | "more-evidence" | "extend-observation"): Promise<Approval> {
@@ -449,6 +665,64 @@ class ApiClient {
     return this.request(`${ROOT}/audit`)
   }
 
+  async getProfile(): Promise<AccountProfile> {
+    return this.request(`${ROOT}/settings/profile`)
+  }
+
+  async updateProfile(expectedRevision: number, displayName: string): Promise<AccountProfile> {
+    return this.request(`${ROOT}/settings/profile`, {
+      method: "PATCH",
+      body: JSON.stringify({ expected_revision: expectedRevision, display_name: displayName }),
+    })
+  }
+
+  async getTeam(): Promise<TeamMember[]> {
+    return this.request(`${ROOT}/settings/team`)
+  }
+
+  async inviteTeamMember(email: string, role: MemberRole): Promise<TeamMember> {
+    return this.request(`${ROOT}/settings/team/invitations`, {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
+    })
+  }
+
+  async updateTeamMember(member: TeamMember, role: MemberRole, enabled: boolean): Promise<TeamMember> {
+    return this.request(`${ROOT}/settings/team/members/${member.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ expected_revision: member.revision, role, enabled }),
+    })
+  }
+
+  async cancelTeamInvitation(member: TeamMember): Promise<TeamMember> {
+    return this.request(`${ROOT}/settings/team/invitations/${member.id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: member.revision }),
+    })
+  }
+
+  async getNotificationTopics(): Promise<NotificationTopic[]> {
+    return this.request(`${ROOT}/notifications/topics`)
+  }
+
+  async getNotificationEndpoints(): Promise<EmailNotificationEndpoint[]> {
+    return this.request(`${ROOT}/notifications/endpoints`)
+  }
+
+  async createNotificationEndpoint(input: CreateNotificationEndpointInput): Promise<EmailNotificationEndpoint> {
+    return this.request(`${ROOT}/notifications/endpoints`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  }
+
+  async setNotificationEndpointEnabled(endpointId: Identifier, expectedRevision: number, enabled: boolean): Promise<EmailNotificationEndpoint> {
+    return this.request(`${ROOT}/notifications/endpoints/${endpointId}/state`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: expectedRevision, enabled }),
+    })
+  }
+
   private async archive<T>(resourcePath: string, expectedRevision: number): Promise<T> {
     return this.request(`${resourcePath}/archive`, {
       method: "POST",
@@ -457,17 +731,55 @@ class ApiClient {
   }
 }
 
+function videoContentType(file: File) {
+  const supported = new Set(["video/mp4", "video/webm", "video/quicktime"])
+  if (supported.has(file.type)) return file.type
+  const extension = file.name.toLowerCase().split(".").pop()
+  const inferred = extension === "mp4" ? "video/mp4" : extension === "webm" ? "video/webm" : extension === "mov" ? "video/quicktime" : ""
+  if (!inferred) throw new ApiError("Choose an MP4, WebM, or MOV video", 422, "video-type-invalid")
+  return inferred
+}
+
+async function crc32c(file: File) {
+  if (file.size <= 0 || file.size > 2_000_000_000) {
+    throw new ApiError("Video size must be between 1 byte and 2 GB", 422, "video-size-invalid")
+  }
+  let checksum = 0xffffffff
+  const reader = file.stream().getReader()
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    for (const byte of value) {
+      checksum ^= byte
+      for (let bit = 0; bit < 8; bit += 1) {
+        checksum = (checksum >>> 1) ^ ((checksum & 1) ? 0x82f63b78 : 0)
+      }
+    }
+  }
+  checksum = (checksum ^ 0xffffffff) >>> 0
+  const bytes = new Uint8Array([
+    (checksum >>> 24) & 0xff,
+    (checksum >>> 16) & 0xff,
+    (checksum >>> 8) & 0xff,
+    checksum & 0xff,
+  ])
+  return btoa(String.fromCharCode(...bytes))
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
 export const api = new ApiClient()
 
 export type {
-  Application,
   Approval,
   AuditEvent,
   Connection,
-  ConsumerService,
   Environment,
   Incident,
   ManagedCredential,
+  EmailNotificationEndpoint,
   OverviewSummary,
   Playbook,
   RotationRun,

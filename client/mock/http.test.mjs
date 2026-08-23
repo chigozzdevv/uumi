@@ -5,8 +5,8 @@ import { createStore } from "./data.mjs"
 const port = 20000 + Math.floor(Math.random() * 10000)
 const root = `http://127.0.0.1:${port}/v1/organisations/org_acme`
 const server = spawn(process.execPath, [new URL("./server.mjs", import.meta.url).pathname], {
-  env: { ...process.env, FIREKEY_MOCK_PORT: String(port) },
-  stdio: "ignore",
+  env: { ...process.env, FIREKEY_MOCK_PORT: String(port), FIREKEY_MOCK_ROTATION_STEP_MS: "150" },
+  stdio: ["ignore", "ignore", "inherit"],
 })
 
 async function request(path, options) {
@@ -28,6 +28,128 @@ try {
     }
   }
   assert(ready, "mock server did not start")
+
+  const rotationHistory = await request("/runs/run_vendor_failed/history")
+  assert.equal(rotationHistory.response.status, 200)
+  assert.equal(rotationHistory.body.stages.some((entry) => entry.agent_decisions.some((decision) => decision.agent === "operator")), false)
+  assert.equal(rotationHistory.body.stages.some((entry) => entry.browser_actions.length > 0), false)
+  assert.deepEqual(rotationHistory.body.computer_use, [])
+  assert.equal("replay" in rotationHistory.body, false)
+
+  const computerHistory = await request("/runs/run_vendor_complete/history")
+  const modelInputs = computerHistory.body.computer_use.filter((entry) => entry.phase === "input")
+  const modelInput = modelInputs[0]
+  assert(modelInput)
+  assert.deepEqual(modelInputs.map((entry) => entry.stage), ["create", "create", "revoke", "revoke"])
+  assert.deepEqual(modelInputs.map((entry) => entry.prompt), [
+    "Open the credential creation form",
+    "Submit the credential creation form",
+    "Select the previous credential",
+    "Revoke the previous credential",
+  ])
+  assert.deepEqual(modelInputs.map((entry) => entry.effect), [
+    "none",
+    "create-credential",
+    "none",
+    "revoke-credential",
+  ])
+  assert(modelInputs.every((entry) => !entry.prompt.includes("approved playbook")))
+  assert(computerHistory.body.computer_use.some((entry) => entry.phase === "thought"))
+  assert(computerHistory.body.computer_use.some((entry) => entry.phase === "validation"))
+  const modelImage = await fetch(`${root}/runs/run_vendor_complete/computer-use/${modelInput.id}/image`)
+  assert.equal(modelImage.status, 200)
+  assert.equal(modelImage.headers.get("cache-control"), "private, no-store")
+  assert.match(modelImage.headers.get("content-type"), /^image\//)
+  assert.equal((await modelImage.text()).includes("sg_key_"), false)
+  const revokeInput = modelInputs.find((entry) => entry.stage === "revoke")
+  assert(revokeInput)
+  const revokeImage = await fetch(`${root}/runs/run_vendor_complete/computer-use/${revokeInput.id}/image`)
+  assert.equal(revokeImage.status, 200)
+  assert.equal((await revokeImage.text()).includes("Revoke credential"), true)
+  assert.equal(computerHistory.body.stages.find((entry) => entry.stage === "approval").summary, "Revocation approved")
+  assert.deepEqual(computerHistory.body.stages.find((entry) => entry.stage === "complete").details, [])
+
+  const triggerHistory = await request("/runs/run_emergency_sendgrid/history")
+  const triggerStage = triggerHistory.body.stages.find((entry) => entry.stage === "trigger")
+  assert.equal(triggerStage.summary, "Exposure alert started rotation")
+  assert.deepEqual(triggerStage.details, [
+    { label: "Configured trigger", value: "GitHub Secret Scanning" },
+    { label: "Reason", value: "Verified SendGrid key exposure in a public repository" },
+  ])
+
+  const approvalEvidence = await request("/approvals/approval_sendgrid_revoke/evidence")
+  assert.equal(approvalEvidence.response.status, 200)
+  assert.equal(approvalEvidence.body.status, "passed")
+  assert.deepEqual(approvalEvidence.body.checks, ["provider-valid", "store-valid", "deployment-valid", "old-use-clear", "rollback-ready"])
+
+  const scheduledHistory = await request("/runs/run_github_schedule/history")
+  const scheduledTrigger = scheduledHistory.body.stages.find((entry) => entry.stage === "trigger")
+  assert.equal(scheduledTrigger.summary, "Rotation started on schedule")
+  assert.deepEqual(scheduledTrigger.details, [
+    { label: "Configured trigger", value: "Scheduled rotation" },
+    { label: "Reason", value: "The configured rotation time was reached." },
+  ])
+
+  const githubOnboarding = await request("/github/onboarding", { method: "POST", body: "{}" })
+  assert.equal(githubOnboarding.response.status, 201)
+  assert.equal(githubOnboarding.body.session.status, "pending")
+  const githubInstall = new URL(githubOnboarding.body.installation_url)
+  assert.equal(githubInstall.searchParams.get("installation_id"), "123")
+  const githubCallback = new URL(githubOnboarding.body.authorization_url)
+  const githubDiscovery = await request(`/github/onboarding/${githubOnboarding.body.session.id}/discover`, {
+    method: "POST",
+    body: JSON.stringify({ state: githubCallback.searchParams.get("state"), pkce_verifier: githubOnboarding.body.pkce_verifier, code: githubCallback.searchParams.get("code"), installation_id: 123 }),
+  })
+  assert.equal(githubDiscovery.response.status, 200)
+  assert.equal(githubDiscovery.body.session.status, "discovered")
+  assert.equal(githubDiscovery.body.repositories[0].full_name, "acme/store-workers")
+  const githubCompletion = await request(`/github/onboarding/${githubOnboarding.body.session.id}/complete`, {
+    method: "POST",
+    body: "{}",
+  })
+  assert.equal(githubCompletion.response.status, 200)
+  assert.equal(githubCompletion.body.session.status, "complete")
+  assert.equal(githubCompletion.body.repositories[0].full_name, "acme/store-workers")
+
+  const googleOnboarding = await request("/google-cloud/onboarding", { method: "POST", body: "{}" })
+  assert.equal(googleOnboarding.response.status, 201)
+  assert.equal(googleOnboarding.body.session.status, "pending")
+  const callback = new URL(googleOnboarding.body.authorization_url)
+  const googleDiscovery = await request(`/google-cloud/onboarding/${googleOnboarding.body.session.id}`, {
+    method: "POST",
+    body: JSON.stringify({ state: callback.searchParams.get("state"), pkce_verifier: googleOnboarding.body.pkce_verifier, code: callback.searchParams.get("code") }),
+  })
+  assert.equal(googleDiscovery.response.status, 200)
+  assert.equal(googleDiscovery.body.projects[0].project_id, "acme-prod")
+  assert.equal(googleDiscovery.body.projects[0].services[0].region, "us-central1")
+  const googleConnection = await request(`/google-cloud/onboarding/${googleOnboarding.body.session.id}/connection`, {
+    method: "POST",
+    body: JSON.stringify({ project_id: "acme-prod", automation_identity: "firekey-automation@acme-prod.iam.gserviceaccount.com" }),
+  })
+  assert.equal(googleConnection.response.status, 201)
+  assert.equal(googleConnection.body.connection.platform, "google-cloud")
+  assert.deepEqual(googleConnection.body.connection.roles, ["runtime", "secret-store"])
+  assert.match(googleConnection.body.grant_command, /firekey-broker@/)
+  const verifiedGoogleConnection = await request(`/google-cloud/onboarding/${googleOnboarding.body.session.id}/connection/verify`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: googleConnection.body.connection.revision }),
+  })
+  assert.equal(verifiedGoogleConnection.response.status, 200)
+  assert.equal(verifiedGoogleConnection.body.status, "ready")
+
+  const setupFixture = createStore()
+  for (const [sourceId, newId] of [
+    ["conn_sendgrid", "conn_http_test"],
+    ["conn_runtime", "conn_runtime_test"],
+    ["conn_secrets", "conn_secrets_test"],
+  ]) {
+    const source = setupFixture.connections.find((entry) => entry.id === sourceId)
+    const candidate = { ...structuredClone(source), id: newId, display_name: `${source.display_name} test`, status: "setup-required", authenticated_at: null, last_validated_at: null, revision: 0 }
+    const connected = await request("/inventory/connections", { method: "POST", body: JSON.stringify(candidate) })
+    assert.equal(connected.response.status, 201)
+    assert.equal(connected.body.status, "ready")
+    assert(connected.body.last_validated_at)
+  }
 
   const providerCredentials = await request("/inventory/connections/conn_sendgrid/credential-metadata")
   assert.equal(providerCredentials.response.status, 200)
@@ -80,7 +202,7 @@ try {
 
   const controlsUpdate = await request("/inventory/credentials/cred_sendgrid/controls", {
     method: "POST",
-    body: JSON.stringify({ expected_revision: 9, version_id: "control_sendgrid_v2", controls: { automatic_triggers: ["expiry", "drift"], rotate_before_expiry_seconds: 604800, maximum_observation_seconds: 1800 } }),
+    body: JSON.stringify({ expected_revision: 9, version_id: "control_sendgrid_v2", controls: { automatic_triggers: ["expiry", "drift"], rotate_before_expiry_seconds: 604800, maximum_observation_seconds: 1800, require_revoke_approval: false, exposure_sources: [] } }),
   })
   assert.equal(controlsUpdate.response.status, 201)
   assert.equal(controlsUpdate.body.credential.control_version, "control_sendgrid_v2")
@@ -92,25 +214,27 @@ try {
 
   const staleControls = await request("/inventory/credentials/cred_sendgrid/controls", {
     method: "POST",
-    body: JSON.stringify({ expected_revision: 9, version_id: "control_sendgrid_v3", controls: { automatic_triggers: ["expiry"], rotate_before_expiry_seconds: 604800, maximum_observation_seconds: 1800 } }),
+    body: JSON.stringify({ expected_revision: 9, version_id: "control_sendgrid_v3", controls: { automatic_triggers: ["expiry"], rotate_before_expiry_seconds: 604800, maximum_observation_seconds: 1800, require_revoke_approval: false, exposure_sources: [] } }),
   })
   assert.equal(staleControls.response.status, 409)
 
   const fixture = createStore()
-  const service = fixture.services.find((entry) => entry.id === "svc_notifications")
+  const runtimeResource = fixture.runtimeResources.find((entry) => entry.display_name === "customer-sync")
   const createdAt = new Date().toISOString()
   const secretReference = "projects/acme-prod/secrets/customer-notifications/versions/1"
   const imported = await request("/inventory/credentials", {
     method: "POST",
     body: JSON.stringify({
-      credential: { id: "cred_new_mailer", organisation_id: "org_acme", connection_id: "conn_sendgrid", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/customer-notifications", secret_reference: secretReference, provider: "sendgrid", kind: "api-key", display_name: "new-mailer", provider_id: "sg_key_7710", scopes: ["mail.send"], consumer_ids: [service.id], active_generation_id: "gen_new_mailer", control_version: "control_new_mailer_v1", created_at: createdAt, updated_at: createdAt, revision: 0 },
+      credential: { id: "cred_new_mailer", organisation_id: "org_acme", connection_id: "conn_sendgrid", secret_store_connection_id: "conn_secrets", secret_resource: "projects/acme-prod/secrets/customer-notifications", secret_reference: secretReference, provider: "sendgrid", kind: "api-key", display_name: "new-mailer", provider_id: "sg_key_7710", scopes: ["mail.send"], consumer_ids: ["svc_new_mailer"], active_generation_id: "gen_new_mailer", control_version: "control_new_mailer_v1", created_at: createdAt, updated_at: createdAt, revision: 0 },
       generation: { id: "gen_new_mailer", organisation_id: "org_acme", credential_id: "cred_new_mailer", provider_id: "sg_key_7710", fingerprint: null, scopes: ["mail.send"], state: "active", attempt_id: "attempt_new_mailer", secret_reference: secretReference, predecessor_id: null, successor_id: null, created_at: createdAt, revoked_at: null },
-      bindings: [{ id: "binding_new_mailer", organisation_id: "org_acme", credential_id: "cred_new_mailer", service_id: service.id, environment_id: service.environment_id, runtime_connection_id: service.runtime_connection_id, runtime_resource: service.runtime_resource, runtime_secret_name: "NEW_MAILER_KEY", secret_reference: secretReference, current_generation_id: "gen_new_mailer", target_generation_id: null, verification_id: "verify_new_mailer", required: true, revision: 0 }],
-      controls: { automatic_triggers: ["expiry", "drift"], rotate_before_expiry_seconds: 604800, maximum_observation_seconds: 1800 },
+      consumer: { application_id: "app_new_mailer", environment_id: "env_new_mailer", service_id: "svc_new_mailer", binding_id: "binding_new_mailer", runtime_connection_id: runtimeResource.connection_id, runtime_resource: runtimeResource.reference, runtime_secret_name: "CUSTOMER_NOTIFICATIONS" },
+      controls: { automatic_triggers: ["expiry", "drift"], rotate_before_expiry_seconds: 604800, maximum_observation_seconds: 1800, require_revoke_approval: true, exposure_sources: [] },
     }),
   })
   assert.equal(imported.response.status, 201)
   assert.equal(imported.body.control_version, "control_new_mailer_v1")
+  const importedGraph = await request("/inventory/graph")
+  assert(importedGraph.body.services.some((entry) => entry.id === "svc_new_mailer" && entry.display_name === "customer-sync"))
   const importedControls = await request("/inventory/credentials/cred_new_mailer/controls/control_new_mailer_v1")
   assert.equal(importedControls.response.status, 200)
   assert.equal(importedControls.body.number, 1)
@@ -133,17 +257,71 @@ try {
     body: JSON.stringify({ expected_revision: approval.revision, decision: "approved" }),
   })
   assert.equal(approved.response.status, 200)
-  assert.equal(approved.body.consumed_at, approved.body.decided_at)
+  assert.equal(approved.body.consumed_at, null)
   await new Promise((resolve) => setTimeout(resolve, 350))
   const completed = await request(`/runs/${started.body.run.id}`)
   assert.equal(completed.body.stage, "complete")
   assert.equal(completed.body.status, "completed")
+
+  const automaticControls = await request("/inventory/credentials/cred_new_mailer/controls", {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: 0, version_id: "control_new_mailer_v2", controls: { automatic_triggers: ["expiry", "drift"], rotate_before_expiry_seconds: 604800, maximum_observation_seconds: 1800, require_revoke_approval: false, exposure_sources: [] } }),
+  })
+  assert.equal(automaticControls.response.status, 201)
+  assert.equal(automaticControls.body.controls.definition.require_revoke_approval, false)
+  assert.deepEqual(automaticControls.body.controls.definition.protected_tools, [])
+
+  const automatic = await request("/runs", {
+    method: "POST",
+    body: JSON.stringify({ credential_id: "cred_new_mailer", control_version: "control_new_mailer_v2", event_id: "manual-automatic-test", reason: "Verify the automatic mock lifecycle", urgency: "routine", received_at: createdAt }),
+  })
+  assert.equal(automatic.response.status, 201)
+  await new Promise((resolve) => setTimeout(resolve, 1800))
+  const automaticCompleted = await request(`/runs/${automatic.body.run.id}`)
+  assert.equal(automaticCompleted.body.stage, "complete")
+  assert.equal(automaticCompleted.body.status, "completed")
+  const automaticApprovals = await request("/approvals")
+  assert.equal(automaticApprovals.body.some((entry) => entry.run_id === automatic.body.run.id), false)
 
   const source = await request("/playbooks/playbook_http_test/walkthroughs/references", {
     method: "POST",
     body: JSON.stringify({ source_id: "source_http_test", kind: "text", content: "Create and capture the replacement, then revoke the prior credential." }),
   })
   assert.equal(source.response.status, 201)
+  const video = await request("/playbooks/playbook_video_test/walkthroughs", {
+    method: "POST",
+    body: JSON.stringify({ source_id: "source_video_test", content_type: "video/mp4", size: 5, crc32c: "mnG7TA==" }),
+  })
+  assert.equal(video.response.status, 201)
+  const uploaded = await fetch(video.body.upload_url, {
+    method: "PUT",
+    headers: { "Content-Type": "video/mp4", "Content-Range": "bytes 0-4/5" },
+    body: Buffer.from("video"),
+  })
+  assert.equal(uploaded.status, 200)
+  const analysed = await request("/playbooks/playbook_video_test/walkthroughs/source_video_test/complete", { method: "POST", body: "{}" })
+  assert.equal(analysed.body.status, "ready")
+  assert.equal(analysed.body.analysis.processor, "google-video-intelligence")
+  const preview = await request("/playbooks/playbook_video_test/draft", {
+    method: "POST",
+    headers: { "Idempotency-Key": "draft-video-test" },
+    body: JSON.stringify({ objective: "Build a browser credential-rotation procedure for the exact platform \"internal-vendor\".", source_ids: ["source_video_test"] }),
+  })
+  assert.equal(preview.response.status, 200)
+  assert.equal(preview.body.definition.platform, "internal-vendor")
+  assert(preview.body.definition.steps.every((step) => step.objective && step.checkpoint))
+  const secureCreate = preview.body.definition.steps.find((step) => step.effect === "create-credential")
+  const protectedRevoke = preview.body.definition.steps.find((step) => step.effect === "revoke-credential")
+  assert.notEqual(secureCreate.selectors[0].value, secureCreate.secure_field.selector.value)
+  assert.equal(protectedRevoke.tool, "browser.revokeCredential")
+  const unpersisted = await request("/playbooks/playbook_video_test")
+  assert.equal(unpersisted.response.status, 404)
+  const savedVideoPlaybook = await request("/playbooks/playbook_video_test/versions", {
+    method: "POST",
+    body: JSON.stringify({ version_id: "playbook_video_test_v1", definition: preview.body.definition, source_ids: ["source_video_test"] }),
+  })
+  assert.equal(savedVideoPlaybook.response.status, 201)
+  assert.equal(savedVideoPlaybook.body.playbook.latest_version, 1)
   const definition = { ...fixture.playbookVersions[0].definition, name: "HTTP lifecycle test", platform: "internal-vendor" }
   const draft = await request("/playbooks/playbook_http_test/build", {
     method: "POST",
@@ -168,11 +346,17 @@ try {
   })
   assert.equal(blockedArchive.response.status, 409)
 
-  const cascadedArchive = await request("/inventory/credentials/cred_sendgrid/archive", {
+  const activeArchive = await request("/inventory/credentials/cred_sendgrid/archive", {
     method: "POST",
     body: JSON.stringify({ expected_revision: 10, cascade: true }),
   })
-  assert.equal(cascadedArchive.response.status, 200)
+  assert.equal(activeArchive.response.status, 200)
+  const cancelledRun = await request("/runs/run_emergency_sendgrid")
+  assert.equal(cancelledRun.body.status, "cancelled")
+  const dismissedIncident = await request("/incidents/incident_github_1842")
+  assert.equal(dismissedIncident.body.status, "dismissed")
+  const cancelledApprovals = await request("/approvals")
+  assert.equal(cancelledApprovals.body.find((entry) => entry.id === "approval_sendgrid_revoke").decision, "cancelled")
   const archivedGraph = await request("/inventory/graph")
   assert.equal(archivedGraph.body.credentials.some((entry) => entry.id === "cred_sendgrid"), false)
   assert.equal(archivedGraph.body.bindings.some((entry) => entry.credential_id === "cred_sendgrid"), false)
@@ -181,7 +365,68 @@ try {
   assert.equal(graph.response.status, 200)
   assert.equal(graph.body.credentials.some((entry) => entry.id === "cred_sendgrid"), false)
 
-  process.stdout.write("Validated provider metadata, detail, immutable controls, lifecycle progression, approvals, draft review, archive, and refresh behavior.\n")
+  const incident = await request("/incidents/incident_scc_9921")
+  assert.equal(incident.body.credential_id, null)
+  const confirmedIncident = await request("/incidents/incident_scc_9921/confirm", {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: incident.body.revision, credential_id: "cred_vendor" }),
+  })
+  assert.equal(confirmedIncident.response.status, 200)
+  assert.equal(confirmedIncident.body.credential_id, "cred_vendor")
+  const incidentRotation = await request("/incidents/incident_scc_9921/rotate", {
+    method: "POST",
+    body: JSON.stringify({ control_version: "control_vendor_v1", reason: "Respond to verified exposure", urgency: "urgent", received_at: new Date().toISOString() }),
+  })
+  assert.equal(incidentRotation.response.status, 201)
+  assert.equal(incidentRotation.body.incident.status, "rotation-started")
+  assert.equal(incidentRotation.body.run.trigger.source, "security-command-center")
+
+  const destinations = await request("/notifications/endpoints")
+  assert.equal(destinations.response.status, 200)
+  assert.equal(destinations.body[0].email_address, "security@acme.example")
+  assert.equal(Object.hasOwn(destinations.body[0], "auth_reference"), false)
+  const notificationTopics = await request("/notifications/topics")
+  assert.equal(notificationTopics.response.status, 200)
+  assert.ok(notificationTopics.body.some((entry) => entry.id === "approvals"))
+  const createdDestination = await request("/notifications/endpoints", {
+    method: "POST",
+    body: JSON.stringify({
+      id: "endpoint_http_email",
+      email_address: "security@acme.example",
+      topics: ["rotation-failures", "approvals"],
+    }),
+  })
+  assert.equal(createdDestination.response.status, 201)
+  assert.equal(createdDestination.body.enabled, true)
+  const pausedDestination = await request("/notifications/endpoints/endpoint_http_email/state", {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: 0, enabled: false }),
+  })
+  assert.equal(pausedDestination.response.status, 200)
+  assert.equal(pausedDestination.body.enabled, false)
+
+  const profile = await request("/settings/profile")
+  assert.equal(profile.response.status, 200)
+  assert.equal(profile.body.connected_via, "Google")
+  const updatedProfile = await request("/settings/profile", {
+    method: "PATCH",
+    body: JSON.stringify({ expected_revision: profile.body.revision, display_name: "Chigozie O." }),
+  })
+  assert.equal(updatedProfile.response.status, 200)
+  assert.equal(updatedProfile.body.display_name, "Chigozie O.")
+  const invitedMember = await request("/settings/team/invitations", {
+    method: "POST",
+    body: JSON.stringify({ email: "new.member@acme.example", role: "viewer" }),
+  })
+  assert.equal(invitedMember.response.status, 201)
+  assert.equal(invitedMember.body.status, "pending")
+  const team = await request("/settings/team")
+  assert(team.body.some((member) => member.email === "new.member@acme.example"))
+  const logout = await fetch(`http://127.0.0.1:${port}/v1/auth/logout`, { method: "POST" })
+  assert.equal(logout.status, 204)
+  assert.equal(logout.headers.get("clear-site-data"), '"cache", "cookies", "storage"')
+
+  process.stdout.write("Validated Computer Use model history, provider metadata, detail, immutable controls, lifecycle progression, approvals, settings, notifications, draft review, archive, and refresh behavior.\n")
 } finally {
   server.kill("SIGTERM")
 }
