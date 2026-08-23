@@ -14,6 +14,7 @@ from contracts import (
 )
 from core.auth import Permission
 from core.errors import PlaybookError
+from core.playbook import validate_definition
 from fastapi import APIRouter, Query, Request, status
 from pydantic import Field
 
@@ -43,6 +44,16 @@ class BuildVersionRequest(Contract):
 
 
 class BuildVersionResponse(VersionResponse):
+    agent: AgentResult
+
+
+class GenerateDraftRequest(Contract):
+    objective: str = Field(min_length=1, max_length=2048)
+    source_ids: tuple[Identifier, ...] = Field(min_length=1)
+
+
+class GenerateDraftResponse(Contract):
+    definition: PlaybookDraft
     agent: AgentResult
 
 
@@ -176,6 +187,32 @@ async def create_version(
 
 
 @router.post(
+    "/{playbook_id}/draft",
+    response_model=GenerateDraftResponse,
+)
+async def generate_draft(
+    organisation_id: Identifier,
+    playbook_id: Identifier,
+    body: GenerateDraftRequest,
+    identity: Identity,
+    key: IdempotencyKey,
+    request: Request,
+) -> GenerateDraftResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    definition, result = await _generate_definition(
+        api,
+        organisation_id,
+        playbook_id,
+        body.objective,
+        body.source_ids,
+        identity,
+        key,
+    )
+    return GenerateDraftResponse(definition=definition, agent=result)
+
+
+@router.post(
     "/{playbook_id}/build",
     response_model=BuildVersionResponse,
     status_code=status.HTTP_201_CREATED,
@@ -190,10 +227,39 @@ async def build_version(
 ) -> BuildVersionResponse:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    definition, result = await _generate_definition(
+        api,
+        organisation_id,
+        playbook_id,
+        body.objective,
+        body.source_ids,
+        identity,
+        key,
+    )
+    root, version = await required(api.playbooks, "playbooks").create_version(
+        organisation_id,
+        playbook_id,
+        body.version_id,
+        definition,
+        identity.actor_id,
+        body.source_ids,
+    )
+    return BuildVersionResponse(playbook=root, version=version, agent=result)
+
+
+async def _generate_definition(
+    api: ApiServices,
+    organisation_id: str,
+    playbook_id: str,
+    objective: str,
+    source_ids: tuple[str, ...],
+    identity: Identity,
+    key: str,
+) -> tuple[PlaybookDraft, AgentResult]:
     sources = await required(api.walkthroughs, "walkthroughs").ready(
         organisation_id,
         playbook_id,
-        body.source_ids,
+        source_ids,
     )
     task_id = command_id(identity, organisation_id, key).replace("cmd_", "task_", 1)
     result = await required(api.agents, "agents").execute(
@@ -204,10 +270,10 @@ async def build_version(
             agent=AgentKind.PLAYBOOK,
             skill="build_playbook",
             objective=(
-                f"{body.objective}\nBuild playbook {playbook_id} from the declared sanitised "
-                f"evidence IDs: {', '.join(body.source_ids)}."
+                f"{objective}\nBuild playbook {playbook_id} from the declared sanitised "
+                f"evidence IDs: {', '.join(source_ids)}."
             ),
-            evidence_ids=body.source_ids,
+            evidence_ids=source_ids,
             context={
                 "walkthroughs": tuple(
                     source.analysis.model_dump(mode="json")
@@ -225,15 +291,8 @@ async def build_version(
         definition = PlaybookDraft.model_validate(candidate)
     except ValueError as error:
         raise PlaybookError("Playbook Builder Agent returned an invalid definition") from error
-    root, version = await required(api.playbooks, "playbooks").create_version(
-        organisation_id,
-        playbook_id,
-        body.version_id,
-        definition,
-        identity.actor_id,
-        body.source_ids,
-    )
-    return BuildVersionResponse(playbook=root, version=version, agent=result)
+    validate_definition(definition)
+    return definition, result
 
 
 @router.post("/{playbook_id}/versions/{version_id}/publish", response_model=PlaybookVersion)

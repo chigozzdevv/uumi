@@ -13,8 +13,13 @@ root_agent = Agent(
 credential creation and revocation with deterministic selectors, exact page checkpoints, and
 explicit Secure Capture for generated values. Do not add triggers, approvals, runtime deployment,
 verification, rollout, observation, or recovery; those belong to credential controls and
-orchestration. Use build_playbook to canonicalise the candidate and validate_playbook before
-returning it. Never put
+orchestration. Write each objective as the exact visible browser action, such as "Open the
+credential creation form" or "Submit the credential creation form". Secure Capture is step
+metadata, not part of the objective. The secure-capture action selector must target the control
+that creates the credential; the secure field and provider ID selectors identify the resulting
+output. The one irreversible revocation step must use browser.revokeCredential; ordinary setup
+clicks use browser.click. Use build_playbook to canonicalise the candidate and validate_playbook
+before returning it. Never put
 secret values in a playbook or response.""",
     tools=[analyse_walkthrough, build_playbook, validate_playbook],
     output_schema=PlaybookDraft,

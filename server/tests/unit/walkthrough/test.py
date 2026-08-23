@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from connectors.base.errors import ConnectorError
+from connectors.storage import GcsUploadConnector
 from connectors.video import VideoIntelligenceConnector
 from contracts import (
     TimedText,
@@ -74,10 +76,21 @@ class Uploads:
         assert (content_type, size, crc32c) == ("video/mp4", 120, "ImIEBA==")
         return "7"
 
+    async def import_video(self, resource: str, object_name: str) -> tuple[str, str, int, str, str]:
+        assert resource == "https://storage.googleapis.com/customer-videos/rotation.mp4"
+        assert object_name.endswith("/walkthroughs/source_one/video")
+        return (
+            "gs://walkthroughs/organisations/org_one/playbooks/playbook_one/walkthroughs/source_one/video",
+            "9",
+            120,
+            "ImIEBA==",
+            "video/mp4",
+        )
+
 
 class Video:
     async def start(self, resource: str) -> str:
-        assert resource.startswith("gs://walkthroughs/")
+        assert resource.startswith(("gs://walkthroughs/", "gs://customer-videos/"))
         return "operations/video-one"
 
     async def result(
@@ -125,6 +138,33 @@ async def test_walkthrough_upload_analysis_and_ready_handoff() -> None:
     assert ready.status is WalkthroughStatus.READY
     assert ready.analysis is not None
     assert ready.analysis.transcript[0].text == "Open settings"
+
+
+@pytest.mark.anyio
+async def test_cloud_storage_video_reference_is_analysed_and_generation_pinned() -> None:
+    repository = Repository()
+    service = WalkthroughService(
+        repository,
+        Uploads(),
+        Video(),
+        "walkthroughs",
+        lambda: NOW,
+    )
+
+    analysing, created = await service.reference_video(
+        "org_one",
+        "playbook_one",
+        "source_one",
+        "https://storage.googleapis.com/customer-videos/rotation.mp4",
+        "user_one",
+    )
+    ready = await service.refresh("org_one", "playbook_one", "source_one")
+
+    assert created is True
+    assert analysing.status is WalkthroughStatus.ANALYSING
+    assert analysing.resource.endswith("/walkthroughs/source_one/video#9")
+    assert ready.status is WalkthroughStatus.READY
+    assert ready.analysis is not None
 
 
 @pytest.mark.anyio
@@ -231,6 +271,96 @@ class Google:
                 ]
             },
         }
+
+
+class StorageGoogle:
+    async def request(
+        self,
+        method: str,
+        url: str,
+        **_: Any,
+    ) -> dict[str, Any]:
+        assert method == "GET"
+        assert url.endswith("/b/customer-videos/o/folder%2Frotation.mp4")
+        return {
+            "contentType": "video/mp4",
+            "size": "120",
+            "crc32c": "ImIEBA==",
+            "generation": "9",
+        }
+
+
+class ImportGoogle(StorageGoogle):
+    async def request(
+        self,
+        method: str,
+        url: str,
+        **options: Any,
+    ) -> dict[str, Any]:
+        if method == "GET":
+            return await super().request(method, url, **options)
+        assert method == "POST"
+        assert "/rewriteTo/b/walkthroughs/o/" in url
+        assert options["params"] == {
+            "ifSourceGenerationMatch": "9",
+            "ifGenerationMatch": "0",
+        }
+        return {
+            "done": True,
+            "resource": {
+                "name": (
+                    "organisations/org_one/playbooks/playbook_one/walkthroughs/source_one/video"
+                ),
+                "contentType": "video/mp4",
+                "size": "120",
+                "crc32c": "ImIEBA==",
+                "generation": "11",
+            },
+        }
+
+
+@pytest.mark.anyio
+async def test_cloud_storage_video_inspection_pins_object_metadata() -> None:
+    connector = GcsUploadConnector(StorageGoogle(), "walkthroughs")  # type: ignore[arg-type]
+
+    inspected = await connector.inspect(
+        "https://storage.googleapis.com/customer-videos/folder/rotation.mp4"
+    )
+
+    assert inspected == (
+        "gs://customer-videos/folder/rotation.mp4",
+        "9",
+        120,
+        "ImIEBA==",
+        "video/mp4",
+    )
+
+
+@pytest.mark.anyio
+async def test_video_inspection_rejects_arbitrary_https_sources() -> None:
+    connector = GcsUploadConnector(StorageGoogle(), "walkthroughs")  # type: ignore[arg-type]
+
+    with pytest.raises(ConnectorError, match="Cloud Storage object"):
+        await connector.inspect("https://videos.example.com/rotation.mp4")
+
+
+@pytest.mark.anyio
+async def test_cloud_storage_video_import_copies_the_pinned_source_generation() -> None:
+    connector = GcsUploadConnector(ImportGoogle(), "walkthroughs")  # type: ignore[arg-type]
+    object_name = "organisations/org_one/playbooks/playbook_one/walkthroughs/source_one/video"
+
+    imported = await connector.import_video(
+        "https://storage.googleapis.com/customer-videos/folder/rotation.mp4",
+        object_name,
+    )
+
+    assert imported == (
+        f"gs://walkthroughs/{object_name}",
+        "11",
+        120,
+        "ImIEBA==",
+        "video/mp4",
+    )
 
 
 @pytest.mark.anyio

@@ -50,6 +50,10 @@ class UploadProvider(Protocol):
         crc32c: str,
     ) -> str: ...
 
+    async def import_video(
+        self, resource: str, object_name: str
+    ) -> tuple[str, str, int, str, str]: ...
+
 
 class VideoProvider(Protocol):
     async def start(self, resource: str) -> str: ...
@@ -182,6 +186,64 @@ class WalkthroughService:
             }
         )
         return await self._repository.replace(source, changed)
+
+    async def reference_video(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        source_id: str,
+        resource: str,
+        actor_id: str,
+    ) -> tuple[WalkthroughSource, bool]:
+        object_name = (
+            f"organisations/{organisation_id}/playbooks/{playbook_id}/"
+            f"walkthroughs/{source_id}/video"
+        )
+        canonical, generation, size, crc32c, content_type = await self._uploads.import_video(
+            resource, object_name
+        )
+        now = self._clock()
+        candidate = WalkthroughSource(
+            id=source_id,
+            organisation_id=organisation_id,
+            playbook_id=playbook_id,
+            kind=WalkthroughKind.VIDEO,
+            object_name=object_name,
+            resource=f"{canonical}#{generation}",
+            content_type=content_type,
+            size=size,
+            crc32c=crc32c,
+            status=WalkthroughStatus.ANALYSING,
+            operation="pending",
+            created_by=actor_id,
+            created_at=now,
+            updated_at=now,
+        )
+        source, created = await self._repository.reserve(candidate)
+        if not created:
+            return source, False
+        try:
+            operation = await self._video.start(canonical)
+        except Exception:
+            failed = source.model_copy(
+                update={
+                    "status": WalkthroughStatus.FAILED,
+                    "operation": None,
+                    "failure": "video analysis could not start",
+                    "updated_at": self._clock(),
+                    "revision": source.revision + 1,
+                }
+            )
+            await self._repository.replace(source, failed)
+            raise
+        analysing = source.model_copy(
+            update={
+                "operation": operation,
+                "updated_at": self._clock(),
+                "revision": source.revision + 1,
+            }
+        )
+        return await self._repository.replace(source, analysing), True
 
     async def refresh(
         self,

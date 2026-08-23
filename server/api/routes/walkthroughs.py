@@ -1,5 +1,7 @@
+from connectors.base.errors import ConnectorError
 from contracts import Contract, Identifier, WalkthroughKind, WalkthroughSource
 from core.auth import Permission
+from core.errors import PlaybookError
 from fastapi import APIRouter, Request, Response, status
 from pydantic import Field
 
@@ -30,6 +32,11 @@ class RegisterSourceRequest(Contract):
     resource_url: str | None = Field(default=None, max_length=2048)
 
 
+class RegisterVideoRequest(Contract):
+    source_id: Identifier
+    resource: str = Field(min_length=8, max_length=2048)
+
+
 @router.post("/references", response_model=WalkthroughSource, status_code=status.HTTP_201_CREATED)
 async def register(
     organisation_id: Identifier,
@@ -50,6 +57,36 @@ async def register(
         identity.actor_id,
         body.resource_url,
     )
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return source
+
+
+@router.post(
+    "/video-references",
+    response_model=WalkthroughSource,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register_video(
+    organisation_id: Identifier,
+    playbook_id: Identifier,
+    body: RegisterVideoRequest,
+    identity: Identity,
+    request: Request,
+    response: Response,
+) -> WalkthroughSource:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
+    try:
+        source, created = await required(api.walkthroughs, "walkthroughs").reference_video(
+            organisation_id,
+            playbook_id,
+            body.source_id,
+            body.resource,
+            identity.actor_id,
+        )
+    except ConnectorError as error:
+        raise PlaybookError(str(error)) from error
     if not created:
         response.status_code = status.HTTP_200_OK
     return source
@@ -90,11 +127,14 @@ async def complete(
 ) -> WalkthroughSource:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.PLAYBOOK_WRITE)
-    return await required(api.walkthroughs, "walkthroughs").complete(
-        organisation_id,
-        playbook_id,
-        source_id,
-    )
+    try:
+        return await required(api.walkthroughs, "walkthroughs").complete(
+            organisation_id,
+            playbook_id,
+            source_id,
+        )
+    except ConnectorError as error:
+        raise PlaybookError(str(error)) from error
 
 
 @router.get("/{source_id}", response_model=WalkthroughSource)
