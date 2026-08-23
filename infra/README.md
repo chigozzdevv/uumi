@@ -54,21 +54,30 @@ a distinct random HMAC secret per configured source. Provider signatures cover
 rejects timestamps outside the configured replay window. Do not
 place private or HMAC values in Terraform variables, plans, state, commands, or shell history.
 
-For each Google API connection, create a customer-managed service account with only the roles
-needed on that connection's declared resources. Add its full resource name to
-`workload_identity_service_accounts`. Terraform grants only the FireKey API, broker, and
-coordinator permission to impersonate that identity. A browser worker receives an encrypted,
+Register a Google OAuth web client with the FireKey callback URL ending in
+`?google_cloud=callback`. Add its client secret as an immutable Secret Manager version, then set
+the three `google_cloud_*` variables together. The short-lived user token is used only to discover
+visible projects, Cloud Run services, and service accounts during onboarding; it is cleared before
+the response and is never stored in Firestore or returned to the dashboard.
+
+For each Google Cloud connection, select a customer-managed service account with only the roles
+needed on that connection's declared resources. The connection journey gives the administrator
+one exact IAM grant for the FireKey broker identity, verifies runtime and Secret Manager access,
+and only then marks the connection ready. Customer identities are not Terraform inputs, so a new
+connection never requires a FireKey redeployment. A browser worker receives an encrypted,
 short-lived token for its selected secret-store connection only when Secure Capture or authorised
-takeover needs it; the worker never receives impersonation permission. Store
+takeover needs it; the worker never receives impersonation permission. FireKey stores
 `workload-identity://SERVICE_ACCOUNT_EMAIL` as the connection's authorisation reference; it is
 identity metadata, not a credential. FireKey uses that selected identity for runtime,
-secret-store, telemetry, detection, and verification calls and rejects fallback to its own process
-identity. The Terraform operator must already be authorised to update the target service account's
-IAM policy; FireKey cannot grant itself access to a customer account.
+secret-store, and connection-verification calls and rejects fallback to its own process identity.
+The customer administrator applying the displayed grant must be authorised to update the selected
+service account's IAM policy; FireKey cannot grant itself access to a customer account.
 
 Register the customer-facing GitHub App with the FireKey ingestion URL ending in `/v1/github`,
-the configured HTTPS callback URL, read access to secret scanning alerts, and the
-`secret_scanning_alert` event. Add the App OAuth client secret and webhook HMAC as Secret Manager
+the configured HTTPS URL as both the OAuth callback and post-install setup URL, read access to
+secret scanning alerts, and the `secret_scanning_alert` event. Keep GitHub's automatic OAuth-on-
+install option disabled: FireKey receives the installation first, then starts its PKCE-bound user
+authorization automatically. Add the App OAuth client secret and webhook HMAC as Secret Manager
 versions outside Terraform, then set their full immutable version references in the second-phase
 variables. GitHub sends installation and installation-repository lifecycle events to Apps by
 default; FireKey uses them to disable stale routing. FireKey never changes security settings on its
@@ -185,8 +194,9 @@ Before enabling schedules or webhooks, verify:
 - every workload-identity connection can impersonate only its selected customer service account,
   and a connection-scoped read fails when its required resource role is removed;
 - a customer GitHub App installation completes PKCE user verification, receives a signed
-installation delivery, reports secret scanning enabled for every selected repository, and maps
-each repository to exactly one managed credential;
+  installation delivery, and reports secret scanning enabled for every selected repository;
+- credential Controls pin verified-exposure sources independently of the GitHub connection and
+  ambiguous repository correlations require confirmation;
 - adding or removing an installation repository invalidates readiness until onboarding is repeated;
 - Workflows can complete a controlled dry-run assignment in an isolated non-production
   environment;
@@ -205,7 +215,8 @@ No credential value is an infrastructure input. API-key and OAuth connection mat
 and governed in Secret Manager after the platform foundation exists; workload-identity
 connections store only the selected service-account reference.
 
-For browser connection setup, grant the FireKey API service account version-list access and the
-isolated browser worker service account `roles/secretmanager.secretVersionAdder` only on the
-chosen session secret container. The setup worker writes the filtered browser state directly to
-that container; the API receives only the resulting version reference and fingerprint.
+The storage module creates one CMEK-protected browser-session secret container per configured
+FireKey organisation. The API can list and reconcile its versions, while the isolated browser
+worker can only add and access versions. Connection setup selects no workload secret: the setup
+worker writes filtered provider state to the organisation container and the API receives only the
+resulting version reference and fingerprint.
