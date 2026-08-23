@@ -7,6 +7,64 @@ export interface ResourceDependency {
   items: string[]
 }
 
+export interface DeleteResourceDependency {
+  label: string
+  items: string[]
+}
+
+export function DeleteResourceModal({
+  isOpen,
+  onClose,
+  resourceLabel,
+  description,
+  retainedResourceNote,
+  dependencies = [],
+  onDelete,
+  deleting = false,
+  error,
+}: {
+  isOpen: boolean
+  onClose: () => void
+  resourceLabel: string
+  description?: string
+  retainedResourceNote?: string
+  dependencies?: DeleteResourceDependency[]
+  onDelete: () => void
+  deleting?: boolean
+  error?: string
+}) {
+  const activeDependencies = dependencies.filter((dependency) => dependency.items.length > 0)
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`Delete ${resourceLabel}?`}
+      description={description}
+      actions={<Button variant="danger" onClick={onDelete} disabled={deleting}>{deleting ? "Deleting…" : `Delete ${resourceLabel}`}</Button>}
+    >
+      <div className="space-y-5">
+        {activeDependencies.length > 0 && (
+          <div className="space-y-3">
+            {activeDependencies.map((dependency) => (
+              <div key={dependency.label} className="grid gap-1 sm:grid-cols-[9rem_1fr] sm:gap-4">
+                <div className="text-[9px] font-semibold text-[var(--ink-muted)]">{dependency.label}</div>
+                <div className="text-[10px] leading-4 text-[var(--ink)]">
+                  {dependency.items.map((item) => (
+                    <div key={item} className="font-medium">{item}</div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {retainedResourceNote && <p className="text-[9px] leading-4 text-[var(--ink-muted)]">{retainedResourceNote}</p>}
+        {error && <div role="alert" className="text-[10px] text-[var(--red)]">{error}</div>}
+      </div>
+    </Modal>
+  )
+}
+
 export function ManageResourceModal({
   isOpen,
   onClose,

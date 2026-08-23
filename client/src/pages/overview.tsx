@@ -1,105 +1,207 @@
 import { useQueries } from "@tanstack/react-query"
-import { ArrowUpRight, CircleAlert, Clock3, LoaderCircle } from "lucide-react"
+import { ArrowUpRight, Check, ChevronRight, ChevronUp } from "lucide-react"
+import { useState } from "react"
 import { PageHeader } from "../components/header"
-import { Failure, Loading } from "../components/state"
-import { Badge } from "../components/ui/badge"
 import { Provider } from "../components/provider"
 import type { NavItem } from "../components/sidebar"
+import { Failure, Loading } from "../components/state"
+import { Button } from "../components/ui/button"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import { api } from "../lib/api"
 import { titleCase } from "../lib/format"
+import type { RotationRun } from "../types"
 
-const stages = ["trigger", "preflight", "plan", "create", "store", "deploy", "verify", "rollout", "observe", "approval", "revoke", "complete"]
+function failureTask(run: RotationRun) {
+  if (run.failure?.code === "provider-authentication-expired") return "Reconnect provider"
+  if (run.status === "cleanup-required") return "Complete recovery"
+  return "Resolve failed rotation"
+}
 
-export function OverviewPage({ onNavigate }: { onNavigate: (nav: NavItem) => void }) {
-  const [summary, runs, incidents, approvals, graph] = useQueries({
+function activityLabel(run: RotationRun) {
+  if (run.status === "completed") return "Rotation completed"
+  if (run.status === "compensated") return "Recovery completed"
+  if (run.status === "cancelled") return "Rotation cancelled"
+  if (run.status === "recovering") return "Recovery started"
+  if (run.status === "pending") return "Rotation queued"
+  if (run.stage === "trigger") return "Rotation started"
+  return `${titleCase(run.stage)} started`
+}
+
+type OverviewProps = {
+  onNavigate: (nav: NavItem) => void
+  onNavigateRotation: (runId: string) => void
+  onNavigateIncident: (incidentId: string) => void
+  onNavigateApproval: (approvalId: string) => void
+}
+
+export function OverviewPage({ onNavigate, onNavigateRotation, onNavigateIncident, onNavigateApproval }: OverviewProps) {
+  const [showAllAttention, setShowAllAttention] = useState(false)
+  const [showAllActivities, setShowAllActivities] = useState(false)
+  const [runs, incidents, approvals, graph, connections, playbooks] = useQueries({
     queries: [
-      { queryKey: ["overview"], queryFn: () => api.getOverview() },
-      { queryKey: ["rotations"], queryFn: () => api.getRotations() },
-      { queryKey: ["incidents"], queryFn: () => api.getIncidents() },
-      { queryKey: ["approvals"], queryFn: () => api.getApprovals() },
+      { queryKey: ["rotations"], queryFn: () => api.getRotations(), refetchInterval: 5_000 },
+      { queryKey: ["incidents"], queryFn: () => api.getIncidents(), refetchInterval: 10_000 },
+      { queryKey: ["approvals"], queryFn: () => api.getApprovals(), refetchInterval: 10_000 },
       { queryKey: ["graph"], queryFn: () => api.getGraph() },
+      { queryKey: ["connections"], queryFn: () => api.getConnections() },
+      { queryKey: ["playbooks"], queryFn: () => api.getPlaybooks() },
     ],
   })
 
-  const queries = [summary, runs, incidents, approvals, graph]
+  const queries = [runs, incidents, approvals, graph, connections, playbooks]
   if (queries.some((query) => query.isLoading)) return <div className="page"><Loading /></div>
   const error = queries.find((query) => query.error)?.error
   if (error) return <div className="page"><Failure error={error} /></div>
 
-  const values = summary.data!
-  const activeRuns = runs.data!.filter((run) => ["pending", "running", "paused", "recovering"].includes(run.status))
-  const urgentIncidents = incidents.data!.filter((incident) => !["resolved", "dismissed"].includes(incident.status))
-  const pendingApprovals = approvals.data!.filter((approval) => approval.decision === "pending")
-  const credential = (id: string) => graph.data!.credentials.find((item) => item.id === id)
+  const credentials = graph.data!.credentials.filter((item) => !item.archived_at)
+  const activeConnections = connections.data!.filter((item) => !item.archived_at)
+  const activePlaybooks = playbooks.data!.filter((item) => !item.archived_at)
+  const credential = (id: string | null | undefined) => credentials.find((item) => item.id === id)
+  const pendingApprovals = approvals.data!.filter((approval) => approval.decision === "pending" && Date.parse(approval.expires_at) > Date.now())
+  const approvalRunIds = new Set(pendingApprovals.map((approval) => approval.run_id))
+  const actionableIncidents = incidents.data!.filter((incident) => incident.status === "action-required")
+  const interruptedRuns = runs.data!.filter((run) => ["failed", "cleanup-required"].includes(run.status) || (run.status === "paused" && !approvalRunIds.has(run.id)))
+  const recentRuns = [...runs.data!]
+    .filter((run) => !["failed", "cleanup-required", "paused"].includes(run.status))
+    .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))
+    .slice(0, 5)
 
-  const metrics = [
-    { label: "Managed credentials", value: values.credentials, target: "credentials" as NavItem },
-    { label: "Rotations in progress", value: values.rotations_in_progress, target: "rotations" as NavItem },
-    { label: "Open incidents", value: values.open_incidents, target: "incidents" as NavItem },
-    { label: "Awaiting approval", value: values.pending_approvals, target: "approvals" as NavItem },
-    { label: "Failed rotations", value: values.failed_rotations, target: "rotations" as NavItem },
+  const metrics: Array<{ label: string; value: number; target: NavItem }> = [
+    { label: "Credentials", value: credentials.length, target: "credentials" },
+    { label: "Connections", value: activeConnections.length, target: "connections" },
+    { label: "Playbooks", value: activePlaybooks.length, target: "playbooks" },
+    { label: "Rotations", value: runs.data!.length, target: "rotations" },
   ]
 
-  return (
-    <div className="page">
-      <PageHeader section="Overview" />
+  const actionRows = [
+    ...pendingApprovals.map((approval) => {
+      const run = runs.data!.find((item) => item.id === approval.run_id)
+      const item = credential(run?.credential_id)
+      return {
+        id: `approval:${approval.id}`,
+        task: "Review revocation",
+        resource: item?.display_name ?? "Credential",
+        provider: item?.provider ?? "firekey",
+        reason: "Approval is required before revocation.",
+        action: "Review",
+        open: () => onNavigateApproval(approval.id),
+      }
+    }),
+    ...actionableIncidents.map((incident) => {
+      const candidateId = incident.credential_id ?? (incident.candidates.length === 1 ? incident.candidates[0].credential_id : null)
+      const item = credential(candidateId)
+      return {
+        id: `incident:${incident.id}`,
+        task: incident.credential_id ? "Start incident rotation" : "Confirm affected credential",
+        resource: item?.display_name ?? incident.resource.service ?? incident.resource.repository ?? "Affected resource",
+        provider: item?.provider ?? incident.resource.provider ?? "firekey",
+        reason: `${titleCase(incident.source)} reported a credential exposure.`,
+        action: "Review",
+        open: () => onNavigateIncident(incident.id),
+      }
+    }),
+    ...interruptedRuns.map((run) => {
+      const item = credential(run.credential_id)
+      return {
+        id: `rotation:${run.id}`,
+        task: run.status === "paused" ? "Resume rotation" : failureTask(run),
+        resource: item?.display_name ?? "Credential",
+        provider: item?.provider ?? "firekey",
+        reason: run.failure?.message ?? `Rotation stopped during ${titleCase(run.stage)}.`,
+        action: "Open",
+        open: () => onNavigateRotation(run.id),
+      }
+    }),
+  ]
 
-      <section className="mb-10 grid overflow-hidden rounded-[16px] border border-[var(--border)] bg-white/55 sm:grid-cols-2 xl:grid-cols-5">
-        {metrics.map((metric, index) => (
-          <button key={metric.label} className={`focus-ring p-5 text-left transition hover:bg-white ${index ? "border-t border-[var(--border-soft)] sm:border-l sm:border-t-0" : ""}`} onClick={() => onNavigate(metric.target)}>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.065em] text-[var(--ink-muted)]">{metric.label}</div>
-            <div className="mt-4 text-[2rem] font-semibold leading-none tracking-[-0.055em]">{metric.value}</div>
-          </button>
-        ))}
+  const browserConnectionExists = activeConnections.some((connection) => connection.interface === "browser")
+  const quickStart = [
+    { label: "Add a connection", done: activeConnections.length > 0, target: "connections" as NavItem },
+    { label: "Add a credential", done: credentials.length > 0, target: "credentials" as NavItem },
+    ...(browserConnectionExists ? [{ label: "Add a Computer Use playbook", done: activePlaybooks.length > 0, target: "playbooks" as NavItem }] : []),
+    { label: "Start a rotation", done: runs.data!.length > 0, target: "credentials" as NavItem },
+  ]
+  const visibleActionRows = showAllAttention ? actionRows : actionRows.slice(0, 2)
+  const visibleRecentRuns = showAllActivities ? recentRuns : recentRuns.slice(0, 3)
+
+  return <div className="page">
+    <PageHeader title="Overview" />
+
+    <section aria-label="Inventory" className="mb-10 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {metrics.map((metric) => <button
+        key={metric.label}
+        className="focus-ring group flex min-h-24 items-center justify-between rounded-2xl border border-[var(--border)] bg-white px-5 text-left transition hover:border-[#cfd2d4]"
+        onClick={() => onNavigate(metric.target)}
+      >
+        <span>
+          <span className="block text-[11px] font-medium text-[var(--ink-soft)]">{metric.label}</span>
+          <span className="mt-2 block text-[28px] font-semibold leading-none tracking-[-0.05em] text-[var(--ink)]">{metric.value}</span>
+        </span>
+        <ChevronRight className="size-4 text-[var(--ink-muted)] transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+      </button>)}
+    </section>
+
+    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.8fr)]">
+      <section>
+        <h2 className="mb-4 text-[15px] font-semibold tracking-[-0.025em] text-[var(--ink)]">Needs attention</h2>
+        <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-white">
+          <Table className="min-w-full table-fixed">
+            <TableHeader><TableRow><TableHead className="w-[47%]">Item</TableHead><TableHead className="w-[36%]">Resource</TableHead><TableHead className="w-[17%]" aria-label="Action" /></TableRow></TableHeader>
+            <TableBody>
+              {visibleActionRows.map((item) => <TableRow key={item.id}>
+                <TableCell>
+                  <div className="font-medium">{item.task}</div>
+                  <div className="mt-1 max-w-[350px] text-[10px] leading-4 text-[var(--ink-muted)]">{item.reason}</div>
+                </TableCell>
+                <TableCell><div className="flex items-center gap-3"><Provider value={item.provider} label={false} /><span className="font-medium">{item.resource}</span></div></TableCell>
+                <TableCell className="pr-3"><div className="flex justify-end"><Button variant="ghost" size="sm" className="pr-1" onClick={item.open}>{item.action} <ChevronRight className="size-3.5" /></Button></div></TableCell>
+              </TableRow>)}
+              {!actionRows.length && <TableRow><TableCell colSpan={3} className="py-16 text-center text-[11px] text-[var(--ink-muted)]">Nothing needs attention.</TableCell></TableRow>}
+              {actionRows.length > 2 && <TableRow>
+                <TableCell colSpan={3} className="px-3 py-2">
+                  <button className="focus-ring flex w-full items-center justify-center gap-2 rounded-lg py-2 text-[11px] font-semibold text-[var(--ink-soft)] transition hover:text-[var(--ink)]" onClick={() => setShowAllAttention((value) => !value)}>
+                    {showAllAttention ? "Show less" : "View all"}
+                    {showAllAttention ? <ChevronUp className="size-3.5" aria-hidden="true" /> : <ArrowUpRight className="size-3.5" aria-hidden="true" />}
+                  </button>
+                </TableCell>
+              </TableRow>}
+            </TableBody>
+          </Table>
+        </div>
       </section>
 
-      <div className="grid gap-8 xl:grid-cols-[1.55fr_1fr]">
-        <section>
-          <div className="mb-4 flex items-end justify-between">
-            <div><h2 className="text-lg font-semibold tracking-[-0.035em]">Active rotations</h2></div>
-            <button className="focus-ring flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-semibold text-[var(--accent)] hover:bg-white/70" onClick={() => onNavigate("rotations")}>View all <ArrowUpRight className="size-3" /></button>
-          </div>
-          <div className="panel overflow-hidden divide-y divide-[var(--border-soft)]">
-            {activeRuns.map((run) => {
+      <section>
+        <h2 className="mb-4 text-[15px] font-semibold tracking-[-0.025em] text-[var(--ink)]">Recent activities</h2>
+        <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-white">
+          {recentRuns.length ? <div className="divide-y divide-[var(--border-soft)]">
+            {visibleRecentRuns.map((run) => {
               const item = credential(run.credential_id)
-              const progress = Math.max(4, ((stages.indexOf(run.stage) + 1) / stages.length) * 100)
-              return (
-                <button key={run.id} className="focus-ring block w-full px-5 py-5 text-left transition hover:bg-white/65" onClick={() => onNavigate("rotations")}>
-                  <div className="flex items-start gap-4">
-                    <Provider value={item?.provider ?? "firekey"} label={false} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2"><span className="truncate text-[12px] font-semibold">{item?.display_name ?? "Credential"}</span><Badge variant={run.status === "paused" ? "warning" : "active"} className="gap-1.5">{["running", "recovering"].includes(run.status) && <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />}{titleCase(run.status)}</Badge></div>
-                      <div className="mt-4 h-1 overflow-hidden rounded-full bg-[#e3e3e0]"><div className="h-full rounded-full bg-[var(--accent)] transition-all" style={{ width: `${progress}%` }} /></div>
-                      <div className="mt-2 flex justify-between text-[9px] font-medium uppercase tracking-[0.06em] text-[var(--ink-muted)]"><span>{titleCase(run.stage)}</span><span>{Math.round(progress)}%</span></div>
-                    </div>
-                  </div>
-                </button>
-              )
+              return <button key={run.id} className="focus-ring group flex w-full items-center gap-3 px-5 py-[18px] text-left transition hover:bg-[var(--surface-soft)]" onClick={() => onNavigateRotation(run.id)}>
+                <Provider value={item?.provider ?? "firekey"} label={false} />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-[var(--ink)]">{activityLabel(run)}</span>
+                  <span className="mt-1 block truncate text-[10px] text-[var(--ink-muted)]">{item?.display_name ?? "Credential"}</span>
+                </span>
+                <ChevronRight className="size-4 shrink-0 text-[var(--ink-muted)] transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+              </button>
             })}
-          </div>
-        </section>
-
-        <section>
-          <div className="mb-4"><h2 className="text-lg font-semibold tracking-[-0.035em]">Requires attention</h2></div>
-          <div className="panel overflow-hidden divide-y divide-[var(--border-soft)]">
-            {urgentIncidents.slice(0, 2).map((incident) => (
-              <button key={incident.id} className="focus-ring flex w-full gap-3 px-5 py-4 text-left hover:bg-white/65" onClick={() => onNavigate("incidents")}>
-                <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-[var(--red-soft)] text-[var(--red)]"><CircleAlert className="size-3.5" /></span>
-                <span className="min-w-0 flex-1"><span className="block text-[11px] font-semibold">{titleCase(incident.severity)} incident</span><span className="mt-1 block truncate text-[10px] text-[var(--ink-soft)]">{incident.resource.service ?? incident.resource.repository}</span></span>
-                <ArrowUpRight className="mt-1 size-3 text-[var(--ink-muted)]" />
-              </button>
-            ))}
-            {pendingApprovals.slice(0, 2).map((approval) => (
-              <button key={approval.id} className="focus-ring flex w-full gap-3 px-5 py-4 text-left hover:bg-white/65" onClick={() => onNavigate("approvals")}>
-                <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-[var(--amber-soft)] text-[var(--amber)]"><Clock3 className="size-3.5" /></span>
-                <span className="min-w-0 flex-1"><span className="block text-[11px] font-semibold">Protected action approval</span><span className="mt-1 block truncate text-[10px] text-[var(--ink-soft)]">{credential(runs.data!.find((run) => run.id === approval.run_id)?.credential_id ?? "")?.display_name ?? "Credential"}</span></span>
-                <ArrowUpRight className="mt-1 size-3 text-[var(--ink-muted)]" />
-              </button>
-            ))}
-          </div>
-        </section>
-      </div>
-
+            {recentRuns.length > 3 && <button className="focus-ring flex w-full items-center justify-center gap-2 px-5 py-4 text-[11px] font-semibold text-[var(--ink-soft)] transition hover:bg-[var(--surface-soft)] hover:text-[var(--ink)]" onClick={() => setShowAllActivities((value) => !value)}>
+              {showAllActivities ? "Show less" : "View all"}
+              {showAllActivities ? <ChevronUp className="size-3.5" aria-hidden="true" /> : <ArrowUpRight className="size-3.5" aria-hidden="true" />}
+            </button>}
+          </div> : <div className="grid min-h-[318px] place-items-center px-8 py-10">
+            <div className="w-full max-w-[260px] text-center">
+              <h3 className="text-[15px] font-semibold tracking-[-0.025em] text-[var(--ink)]">Quick start</h3>
+              <div className="mt-6 space-y-3 text-left">
+                {quickStart.map((step) => step.done
+                  ? <div key={step.label} className="flex items-center gap-3 text-[11px] text-[var(--ink-muted)]"><Check className="size-3.5 shrink-0" aria-hidden="true" /><span className="line-through">{step.label}</span></div>
+                  : <button key={step.label} className="focus-ring group flex w-full items-center justify-between gap-3 rounded-lg text-[11px] font-medium text-[var(--ink)]" onClick={() => onNavigate(step.target)}><span>{step.label}</span><ChevronRight className="size-3.5 text-[var(--ink-muted)] transition-transform group-hover:translate-x-0.5" aria-hidden="true" /></button>
+                )}
+              </div>
+            </div>
+          </div>}
+        </div>
+      </section>
     </div>
-  )
+  </div>
 }

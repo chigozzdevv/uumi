@@ -1,23 +1,23 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   ChevronDown,
   House,
   KeyRound,
+  LogOut,
   Menu,
   ScrollText,
-  ShieldCheck,
   SlidersHorizontal,
   Workflow,
   X,
   type LucideIcon,
 } from "lucide-react"
+import firekeyLogo from "../assets/firekey-logo.png"
 import { api } from "../lib/api"
 
 export type NavItem =
   | "overview"
   | "credentials"
-  | "applications"
   | "incidents"
   | "rotations"
   | "approvals"
@@ -25,7 +25,6 @@ export type NavItem =
   | "connections"
   | "audits"
   | "settings"
-  | "help"
 
 interface NavEntry {
   id: NavItem
@@ -34,7 +33,7 @@ interface NavEntry {
 }
 
 interface NavGroup {
-  id: "inventory" | "operations" | "management"
+  id: "inventory" | "operations"
   label: string
   icon: LucideIcon
   items: NavEntry[]
@@ -47,7 +46,8 @@ const groups: NavGroup[] = [
     icon: KeyRound,
     items: [
       { id: "credentials", label: "Credentials" },
-      { id: "applications", label: "Applications" },
+      { id: "connections", label: "Connections" },
+      { id: "playbooks", label: "Playbooks" },
     ],
   },
   {
@@ -57,42 +57,41 @@ const groups: NavGroup[] = [
     items: [
       { id: "incidents", label: "Incidents" },
       { id: "rotations", label: "Rotations" },
-      { id: "approvals", label: "Approvals", count: 2 },
-    ],
-  },
-  {
-    id: "management",
-    label: "Management",
-    icon: ShieldCheck,
-    items: [
-      { id: "connections", label: "Connections" },
-      { id: "playbooks", label: "Playbooks" },
+      { id: "approvals", label: "Approvals" },
     ],
   },
 ]
 
 function Brand() {
   return (
-    <div className="flex items-center gap-3 px-3 text-[1.35rem] font-semibold tracking-[-0.045em] text-[var(--ink)]">
-      <span className="grid size-10 place-items-center rounded-xl bg-[var(--accent)] text-white shadow-[0_7px_18px_rgba(25,27,30,0.12)]">
-        <KeyRound className="size-5" strokeWidth={2} />
-      </span>
-      FireKey
+    <div className="flex h-10 items-center px-3">
+      <img src={firekeyLogo} alt="FireKey" className="h-auto w-[112px] object-contain object-left" />
     </div>
   )
 }
 
-function SidebarContent({ currentNav, onNavigate }: { currentNav: NavItem; onNavigate: (item: NavItem) => void }) {
+function SidebarContent({ currentNav, onNavigate, onLogout }: { currentNav: NavItem; onNavigate: (item: NavItem) => void; onLogout: () => void }) {
   const summary = useQuery({ queryKey: ["overview"], queryFn: () => api.getOverview() })
+  const profile = useQuery({ queryKey: ["profile"], queryFn: () => api.getProfile() })
   const [expanded, setExpanded] = useState<Record<NavGroup["id"], boolean>>({
     inventory: true,
     operations: true,
-    management: true,
   })
+  const [accountOpen, setAccountOpen] = useState(false)
+  const accountMenu = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!accountOpen) return
+    const close = (event: PointerEvent) => {
+      if (!accountMenu.current?.contains(event.target as Node)) setAccountOpen(false)
+    }
+    window.addEventListener("pointerdown", close)
+    return () => window.removeEventListener("pointerdown", close)
+  }, [accountOpen])
 
   return (
     <>
-      <div className="px-4 pt-8">
+      <div className="px-4 pt-5">
         <Brand />
       </div>
 
@@ -158,15 +157,24 @@ function SidebarContent({ currentNav, onNavigate }: { currentNav: NavItem; onNav
       </nav>
 
       <div className="px-4 pb-5">
-        <PrimaryItem icon={SlidersHorizontal} label="Settings" active={currentNav === "settings"} onClick={() => onNavigate("settings")} />
-        <button className="focus-ring mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition hover:bg-white/35">
-          <span className="grid size-8 place-items-center rounded-lg bg-[var(--surface-active)] text-[10px] font-semibold text-[var(--accent)]">CO</span>
-          <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[var(--ink)]">Chigozie Okafor</span>
-          <ChevronDown className="size-3.5 text-[var(--accent)]" />
-        </button>
+        <div ref={accountMenu} className="relative">
+          {accountOpen && <div role="menu" className="absolute bottom-[calc(100%+8px)] left-0 right-0 overflow-hidden rounded-xl border border-[var(--border)] bg-white p-1.5 shadow-[0_14px_32px_rgba(24,26,29,0.12)]">
+            <button role="menuitem" className="focus-ring flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[11px] font-medium text-[var(--ink-soft)] hover:bg-[var(--surface-soft)] hover:text-[var(--ink)]" onClick={() => { setAccountOpen(false); onNavigate("settings") }}><SlidersHorizontal className="size-4" strokeWidth={1.8} />Settings</button>
+            <button role="menuitem" className="focus-ring flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[11px] font-medium text-[var(--ink-soft)] hover:bg-[var(--surface-soft)] hover:text-[var(--ink)]" onClick={() => { setAccountOpen(false); onLogout() }}><LogOut className="size-4" strokeWidth={1.8} />Log out</button>
+          </div>}
+          <button className={`focus-ring flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition hover:bg-white/35 ${currentNav === "settings" ? "bg-[var(--surface-active)]" : ""}`} aria-expanded={accountOpen} aria-haspopup="menu" onClick={() => setAccountOpen((open) => !open)}>
+            <span className="grid size-8 place-items-center rounded-lg bg-white text-[10px] font-semibold text-[var(--accent)]">{initials(profile.data?.display_name ?? "User")}</span>
+            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[var(--ink)]">{profile.data?.display_name ?? "Account"}</span>
+            <ChevronDown className={`size-3.5 text-[var(--accent)] transition-transform ${accountOpen ? "rotate-180" : ""}`} />
+          </button>
+        </div>
       </div>
     </>
   )
+}
+
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "U"
 }
 
 function PrimaryItem({ icon: Icon, label, active, onClick }: { icon: LucideIcon; label: string; active: boolean; onClick: () => void }) {
@@ -184,7 +192,7 @@ function PrimaryItem({ icon: Icon, label, active, onClick }: { icon: LucideIcon;
   )
 }
 
-export function Shell({ currentNav, onNavigate, children }: { currentNav: NavItem; onNavigate: (item: NavItem) => void; children: ReactNode }) {
+export function Shell({ currentNav, onNavigate, onLogout, children }: { currentNav: NavItem; onNavigate: (item: NavItem) => void; onLogout: () => void; children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   useEffect(() => {
@@ -194,7 +202,7 @@ export function Shell({ currentNav, onNavigate, children }: { currentNav: NavIte
   return (
     <div className="app-shell">
       <aside className="sticky top-6 hidden h-[calc(100vh-48px)] w-[240px] shrink-0 flex-col overflow-hidden rounded-2xl bg-[var(--sidebar)] lg:flex">
-        <SidebarContent currentNav={currentNav} onNavigate={onNavigate} />
+        <SidebarContent currentNav={currentNav} onNavigate={onNavigate} onLogout={onLogout} />
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
@@ -219,7 +227,7 @@ export function Shell({ currentNav, onNavigate, children }: { currentNav: NavIte
                 <X className="size-5" />
               </button>
             </div>
-            <SidebarContent currentNav={currentNav} onNavigate={(item) => { onNavigate(item); setMobileOpen(false) }} />
+            <SidebarContent currentNav={currentNav} onNavigate={(item) => { onNavigate(item); setMobileOpen(false) }} onLogout={onLogout} />
           </div>
         </div>
       )}

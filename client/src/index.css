@@ -129,7 +129,7 @@
   }
 
   .focus-ring:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--ink-muted);
     outline-offset: 2px;
   }
 }

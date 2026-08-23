@@ -1,6 +1,5 @@
-import { ChevronDown } from "lucide-react"
+import { ChevronDown, X } from "lucide-react"
 import type { ReactNode, SelectHTMLAttributes } from "react"
-import { Journey } from "./journey"
 import { PageHeader } from "./header"
 import { Button } from "./ui/button"
 
@@ -11,6 +10,7 @@ export function SetupPage({
   steps,
   current,
   onBack,
+  onExit,
   onCancel,
   primary,
   children,
@@ -22,6 +22,7 @@ export function SetupPage({
   steps: string[]
   current: number
   onBack: () => void
+  onExit?: () => void
   onCancel: () => void
   primary: ReactNode
   children: ReactNode
@@ -29,12 +30,15 @@ export function SetupPage({
 }) {
   return (
     <div className="page max-w-[960px]">
-      <PageHeader eyebrow={eyebrow} title={title} description={description} onBack={onCancel} />
+      <PageHeader eyebrow={eyebrow} title={title} description={description} onBack={onExit ?? onCancel} />
       <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-white">
-        <div className="border-b border-[var(--border-soft)] px-6 pt-6 sm:px-8"><div className="mx-auto w-full max-w-[760px]"><Journey steps={steps} current={current} /></div></div>
+        <div className="mx-auto flex w-full max-w-[760px] items-center justify-between px-6 pt-6 sm:px-8">
+          <span className="text-[11px] font-semibold text-[var(--ink)]">{steps[current]}</span>
+          <span className="text-[10px] font-medium text-[var(--ink-muted)]">Step {current + 1} of {steps.length}</span>
+        </div>
         <div className="mx-auto min-h-[360px] w-full max-w-[760px] px-6 py-7 sm:px-8">{children}</div>
         {error && <div role="alert" className="mx-6 mb-5 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)] sm:mx-8">{error}</div>}
-        <footer className="flex items-center gap-3 border-t border-[var(--border-soft)] bg-white px-6 py-4 sm:px-8">
+        <footer className="flex items-center gap-3 bg-white px-6 py-4 sm:px-8">
           <div className="flex-1">{current > 0 && <Button variant="ghost" onClick={onBack}>Back</Button>}</div>
           <Button variant="secondary" onClick={onCancel}>Cancel</Button>
           {primary}
@@ -42,6 +46,39 @@ export function SetupPage({
       </section>
     </div>
   )
+}
+
+export function ConnectPage({
+  eyebrow,
+  title,
+  onBack,
+  onClose,
+  action,
+  children,
+  error,
+}: {
+  eyebrow: string
+  title: string
+  onBack: () => void
+  onClose: () => void
+  action: ReactNode
+  children: ReactNode
+  error?: string
+}) {
+  return <div className="page max-w-[960px]">
+    <PageHeader
+      eyebrow={eyebrow}
+      title={title}
+      onBack={onBack}
+      actions={<button className="focus-ring grid size-8 place-items-center rounded-lg text-[var(--ink-muted)] transition hover:bg-white hover:text-[var(--ink)]" aria-label="Close" onClick={onClose}><X className="size-4" /></button>}
+    />
+    <section className="rounded-2xl border border-[var(--border)] bg-white">
+      <div className="flex min-h-[420px] items-center justify-center px-6 py-12">
+        <div className="flex flex-col items-center gap-7">{children}{action}</div>
+      </div>
+      {error && <div role="alert" className="mx-6 mb-6 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)] sm:mx-8">{error}</div>}
+    </section>
+  </div>
 }
 
 export function SuccessPage({ eyebrow, title, description, onBack, actions, children }: { eyebrow: string; title: string; description?: string; onBack: () => void; actions: ReactNode; children?: ReactNode }) {

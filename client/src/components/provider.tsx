@@ -21,6 +21,7 @@ const visuals: Record<string, ProviderVisual> = {
   segment: { logo: segmentIcon },
   snowflake: { logo: snowflakeIcon },
   "cloud-run": { logo: googleCloud },
+  "google-cloud": { logo: googleCloud },
   "google-secret-manager": { logo: googleCloud },
   "cloud-monitoring": { logo: googleCloud },
   firekey: { icon: KeyRound },
