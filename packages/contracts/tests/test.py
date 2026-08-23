@@ -8,6 +8,9 @@ from contracts import (
     BrowserPolicy,
     BrowserSession,
     BrowserStatus,
+    ComputerUseActivity,
+    ComputerUseActivityPhase,
+    ComputerUseActivityStatus,
     ControlDefinition,
     ControlVersion,
     EventKind,
@@ -96,6 +99,55 @@ def test_contracts_are_immutable() -> None:
         setattr(mutation, "compensation", "retry")  # noqa: B010
 
 
+def test_computer_use_input_records_the_exact_safe_model_request() -> None:
+    activity = ComputerUseActivity(
+        id="activity_one",
+        organisation_id="org_one",
+        session_id="browser_one",
+        run_id="run_one",
+        step_id="step_one",
+        stage=Stage.CREATE,
+        turn=1,
+        phase=ComputerUseActivityPhase.INPUT,
+        status=ComputerUseActivityStatus.SENT,
+        effect=PlaybookEffect.CREATE_CREDENTIAL,
+        prompt="Create the replacement credential.",
+        instruction="Do not handle secrets.",
+        image_reference="gs://evidence/input#1",
+        image_digest="a" * 64,
+        recorded_at=NOW,
+    )
+
+    public = activity.model_dump_json()
+
+    assert "Create the replacement credential" in public
+    assert "Do not handle secrets" in public
+    assert "gs://evidence/input#1" in public
+
+
+def test_computer_use_activity_keeps_returned_function_arguments() -> None:
+    activity = ComputerUseActivity.model_validate(
+        {
+            "id": "activity_one",
+            "organisation_id": "org_one",
+            "session_id": "browser_one",
+            "run_id": "run_one",
+            "step_id": "step_one",
+            "stage": "create",
+            "turn": 1,
+            "phase": "proposal",
+            "status": "proposed",
+            "action": "click",
+            "target": "Create credential",
+            "arguments": {"x": 500, "y": 400},
+            "intent": "Open the approved form",
+            "recorded_at": NOW,
+        }
+    )
+
+    assert activity.arguments == {"x": 500, "y": 400}
+
+
 def test_outbox_lease_must_be_complete() -> None:
     event = RunEvent(
         id="event_one",
@@ -153,8 +205,8 @@ def test_browser_playbook_requires_a_login_url_pattern() -> None:
                     effect=PlaybookEffect.CREATE_CREDENTIAL,
                     tool="browser.secure-capture",
                     operation="capture",
-                    objective="Capture the created key",
-                    selectors=(Selector(kind=SelectorKind.TEST_ID, value="new-api-key"),),
+                    objective="Submit the credential creation form",
+                    selectors=(Selector(kind=SelectorKind.TEST_ID, value="create-api-key"),),
                     checkpoint=PageCheckpoint(url_pattern="https://vendor.example.com/keys"),
                     secure_field=SecureField(
                         name="api_key",
@@ -192,6 +244,28 @@ def test_browser_playbook_requires_secure_capture() -> None:
         )
 
 
+def test_secure_capture_action_cannot_target_the_generated_credential() -> None:
+    output = Selector(kind=SelectorKind.TEST_ID, value="new-api-key")
+
+    with pytest.raises(ValidationError, match="credential creation control"):
+        PlaybookStep(
+            id="create_key",
+            stage=Stage.CREATE,
+            effect=PlaybookEffect.CREATE_CREDENTIAL,
+            tool="browser.secure-capture",
+            operation="capture",
+            objective="Submit the credential creation form",
+            selectors=(output,),
+            checkpoint=PageCheckpoint(url_pattern="https://vendor.example.com/keys"),
+            secure_field=SecureField(
+                name="api_key",
+                selector=output,
+                provider_id_selector=Selector(kind=SelectorKind.TEST_ID, value="new-key-id"),
+            ),
+            evidence_checks=frozenset({"captured"}),
+        )
+
+
 def test_browser_playbook_cannot_embed_approval_policy() -> None:
     selector = Selector(kind=SelectorKind.TEST_ID, value="credential-control")
     checkpoint = PageCheckpoint(url_pattern="https://vendor.example.com/keys")
@@ -209,8 +283,8 @@ def test_browser_playbook_cannot_embed_approval_policy() -> None:
                     effect=PlaybookEffect.CREATE_CREDENTIAL,
                     tool="browser.secure-capture",
                     operation="capture",
-                    objective="Capture the replacement credential",
-                    selectors=(selector,),
+                    objective="Submit the credential creation form",
+                    selectors=(Selector(kind=SelectorKind.TEST_ID, value="create-credential"),),
                     checkpoint=checkpoint,
                     protected=True,
                     secure_field=SecureField(
@@ -226,7 +300,7 @@ def test_browser_playbook_cannot_embed_approval_policy() -> None:
                     id="revoke_key",
                     stage=Stage.REVOKE,
                     effect=PlaybookEffect.REVOKE_CREDENTIAL,
-                    tool="browser.click",
+                    tool="browser.revokeCredential",
                     operation="revoke",
                     objective="Revoke the prior credential",
                     selectors=(selector,),
@@ -254,6 +328,21 @@ def test_browser_playbook_rejects_unprotected_credential_creation() -> None:
         )
 
 
+def test_browser_playbook_requires_a_typed_revocation_action() -> None:
+    with pytest.raises(ValidationError, match="protected browser revoke tool"):
+        PlaybookStep(
+            id="revoke_key",
+            stage=Stage.REVOKE,
+            effect=PlaybookEffect.REVOKE_CREDENTIAL,
+            tool="browser.click",
+            operation="revoke",
+            objective="Revoke the previous credential",
+            selectors=(Selector(kind=SelectorKind.TEST_ID, value="revoke"),),
+            checkpoint=PageCheckpoint(url_pattern="https://vendor.example.com/keys"),
+            evidence_checks=frozenset({"revoked"}),
+        )
+
+
 def test_browser_playbook_rejects_secret_output_extraction() -> None:
     selector = Selector(kind=SelectorKind.TEST_ID, value="credential")
     checkpoint = PageCheckpoint(url_pattern="https://vendor.example.com/keys")
@@ -271,8 +360,8 @@ def test_browser_playbook_rejects_secret_output_extraction() -> None:
                     effect=PlaybookEffect.CREATE_CREDENTIAL,
                     tool="browser.secure-capture",
                     operation="capture",
-                    objective="Create and capture the replacement credential",
-                    selectors=(selector,),
+                    objective="Submit the credential creation form",
+                    selectors=(Selector(kind=SelectorKind.TEST_ID, value="create-credential"),),
                     checkpoint=checkpoint,
                     secure_field=SecureField(
                         name="api_key",
@@ -288,7 +377,7 @@ def test_browser_playbook_rejects_secret_output_extraction() -> None:
                     id="revoke_key",
                     stage=Stage.REVOKE,
                     effect=PlaybookEffect.REVOKE_CREDENTIAL,
-                    tool="browser.click",
+                    tool="browser.revokeCredential",
                     operation="revoke",
                     objective="Revoke the previous credential",
                     selectors=(Selector(kind=SelectorKind.TEST_ID, value="revoke"),),
@@ -330,6 +419,7 @@ def test_controls_require_all_stage_checks() -> None:
         allowed_tools=frozenset({"provider.create", "verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
         maximum_observation_seconds=1800,
+        require_revoke_approval=True,
     )
 
     version = ControlVersion(
@@ -350,4 +440,35 @@ def test_controls_require_all_stage_checks() -> None:
             allowed_tools=frozenset({"provider.create", "verification.run"}),
             allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
             maximum_observation_seconds=1800,
+        )
+
+
+def test_controls_can_advance_without_human_revocation_approval() -> None:
+    checks = dict(REQUIRED_CHECKS)
+    checks[Stage.PREFLIGHT] = checks[Stage.PREFLIGHT].difference({"approvers-known"})
+    checks[Stage.APPROVAL] = frozenset({"approval-not-required", "evidence-current"})
+
+    definition = ControlDefinition(
+        required_checks=checks,
+        allowed_tools=frozenset({"provider.revoke", "verification.run"}),
+        allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
+        maximum_observation_seconds=1800,
+        require_revoke_approval=False,
+    )
+
+    assert definition.protected_tools == frozenset()
+    assert definition.required_checks[Stage.APPROVAL] == frozenset(
+        {"approval-not-required", "evidence-current"}
+    )
+
+    required_checks = dict(checks)
+    required_checks[Stage.PREFLIGHT] = REQUIRED_CHECKS[Stage.PREFLIGHT]
+    with pytest.raises(ValidationError, match="approval-valid"):
+        ControlDefinition(
+            required_checks=required_checks,
+            allowed_tools=frozenset({"provider.revoke", "verification.run"}),
+            protected_tools=frozenset({"provider.revoke"}),
+            allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
+            maximum_observation_seconds=1800,
+            require_revoke_approval=True,
         )

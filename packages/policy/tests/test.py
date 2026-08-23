@@ -31,6 +31,7 @@ def test_digest_is_stable_for_unordered_policy_values() -> None:
         allowed_tools=frozenset({"provider.create", "verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK, RecoveryMode.RETRY}),
         maximum_observation_seconds=1800,
+        require_revoke_approval=True,
     )
     payload = first.model_dump(mode="json")
     payload["required_checks"] = {

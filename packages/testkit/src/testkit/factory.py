@@ -69,6 +69,7 @@ def make_control_version(
         allowed_tools=frozenset({"provider.create", "verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
         maximum_observation_seconds=1800,
+        require_revoke_approval=True,
     )
     return ControlVersion(
         id=version_id,

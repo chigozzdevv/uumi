@@ -9,6 +9,7 @@ from contracts.state import RunStatus, Stage
 
 class Trigger(Contract):
     source: str = Field(min_length=1, max_length=64)
+    kind: str = Field(default="rotation-requested", min_length=1, max_length=96)
     event_id: str = Field(min_length=1, max_length=256)
     actor_id: Identifier
     reason: str = Field(min_length=1, max_length=1024)

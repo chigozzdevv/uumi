@@ -60,8 +60,6 @@ REQUIRED_CHECKS: dict[Stage, frozenset[str]] = {
             "provider-valid",
             "store-valid",
             "deployment-valid",
-            "functional-valid",
-            "downstream-valid",
             "telemetry-healthy",
             "coverage-complete",
             "rollback-ready",

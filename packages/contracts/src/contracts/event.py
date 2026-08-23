@@ -15,6 +15,7 @@ class EventKind(StrEnum):
     RUN_RESUMED = "run.resumed"
     CLEANUP_REQUIRED = "run.cleanup-required"
     RUN_FAILED = "run.failed"
+    RUN_CANCELLED = "run.cancelled"
     RECOVERY_STARTED = "run.recovery-started"
     RECOVERY_COMPLETED = "run.recovery-completed"
     RUN_COMPLETED = "run.completed"

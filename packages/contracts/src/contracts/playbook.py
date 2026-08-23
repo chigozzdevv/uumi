@@ -73,10 +73,22 @@ class PlaybookStep(OperationStep):
             raise ValueError("credential creation must use secure capture in the create stage")
         if self.secure_field is not None and self.effect is not PlaybookEffect.CREATE_CREDENTIAL:
             raise ValueError("secure fields require the create-credential effect")
-        if self.effect is PlaybookEffect.REVOKE_CREDENTIAL and (
-            self.stage is not Stage.REVOKE or self.secure_field is not None
+        if (
+            self.effect is PlaybookEffect.CREATE_CREDENTIAL
+            and self.secure_field is not None
+            and self.selectors
+            and self.selectors[0]
+            in {self.secure_field.selector, self.secure_field.provider_id_selector}
         ):
-            raise ValueError("credential revocation must be an unprivileged revoke-stage step")
+            raise ValueError(
+                "secure capture must target the credential creation control, not captured output"
+            )
+        if self.effect is PlaybookEffect.REVOKE_CREDENTIAL and (
+            self.stage is not Stage.REVOKE
+            or self.tool != "browser.revokeCredential"
+            or self.secure_field is not None
+        ):
+            raise ValueError("credential revocation must use the protected browser revoke tool")
         if self.tool.startswith("browser.") and self.operation != "navigate" and not self.selectors:
             raise ValueError("browser actions require deterministic selectors")
         if self.tool.startswith("browser.") and len(self.selectors) > 1:
@@ -122,7 +134,7 @@ class PlaybookDraft(Contract):
             if step.effect is PlaybookEffect.CREATE_CREDENTIAL
         )
         if len(creation) != 1:
-            raise ValueError("browser playbooks require exactly one protected credential creation")
+            raise ValueError("browser playbooks require exactly one secure credential creation")
         if any(step.stage is Stage.CREATE for step in self.steps[creation[0] + 1 :]):
             raise ValueError("secure credential creation must be the final create-stage step")
         revocation = tuple(

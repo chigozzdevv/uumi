@@ -5,7 +5,6 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, Identifier
 from contracts.http import HttpAuthScheme, HttpProviderApi
-from contracts.verification import DownstreamConfirmation, ProbeKind
 
 
 class ConnectionRole(StrEnum):
@@ -159,35 +158,34 @@ class Environment(Contract):
     revision: int = Field(default=0, ge=0)
 
 
+class RuntimeSecretBindingMetadata(Contract):
+    name: str = Field(min_length=1, max_length=32768)
+    secret: str = Field(min_length=1, max_length=512)
+    version: str = Field(min_length=1, max_length=128)
+    container: str | None = Field(default=None, min_length=1, max_length=63)
+
+
 class RuntimeResourceMetadata(Contract):
     reference: str = Field(min_length=1, max_length=512)
     display_name: str = Field(min_length=1, max_length=160)
     endpoint: str | None = Field(default=None, max_length=2048)
     identity: str | None = Field(default=None, min_length=1, max_length=512)
+    region: str | None = Field(default=None, min_length=3, max_length=32)
+    environment_name: str | None = Field(default=None, min_length=1, max_length=160)
+    production: bool | None = None
+    secret_bindings: tuple[RuntimeSecretBindingMetadata, ...] = ()
 
 
-class FunctionalVerification(Contract):
-    kind: ProbeKind
-    target: str = Field(min_length=12, max_length=1024)
-    method: str = Field(default="POST", pattern=r"^(GET|POST)$")
-    expected_status: tuple[int, ...] = Field(default=(200,), min_length=1)
-    required_fields: dict[str, str | int | bool] = Field(default_factory=dict)
-    confirmation: DownstreamConfirmation | None = None
-    timeout_seconds: int = Field(default=30, ge=1, le=300)
-
-    @model_validator(mode="after")
-    def validate_functional_verification(self) -> "FunctionalVerification":
-        if self.kind not in {ProbeKind.HTTP, ProbeKind.EMAIL}:
-            raise ValueError("service verification must use an HTTP or email probe")
-        if self.kind is ProbeKind.HTTP and not self.required_fields:
-            raise ValueError("HTTP service verification requires an expected result field")
-        if self.kind is ProbeKind.EMAIL and self.confirmation is None:
-            raise ValueError("email service verification requires downstream confirmation")
-        if self.kind is ProbeKind.HTTP and self.confirmation is not None:
-            raise ValueError("downstream confirmation is only valid for email verification")
-        if any(not 100 <= status <= 599 for status in self.expected_status):
-            raise ValueError("service verification statuses must be valid HTTP status codes")
-        return self
+class RuntimeConsumerSetup(Contract):
+    application_id: Identifier
+    environment_id: Identifier
+    service_id: Identifier
+    binding_id: Identifier
+    runtime_connection_id: Identifier
+    runtime_resource: str = Field(min_length=1, max_length=512)
+    runtime_secret_name: str = Field(min_length=1, max_length=256)
+    runtime_container_name: str | None = Field(default=None, min_length=1, max_length=63)
+    environment_name: str | None = Field(default=None, min_length=1, max_length=160)
 
 
 class ConsumerService(Contract):
@@ -199,7 +197,7 @@ class ConsumerService(Contract):
     telemetry_connection_ids: tuple[Identifier, ...] = ()
     runtime_resource: str = Field(min_length=1, max_length=512)
     display_name: str = Field(min_length=1, max_length=160)
-    verification: FunctionalVerification | None = None
+    endpoint: str | None = Field(default=None, max_length=2048)
     repository: str | None = Field(default=None, max_length=256)
     identity: str | None = Field(default=None, min_length=1, max_length=512)
     created_at: AwareDatetime

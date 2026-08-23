@@ -7,6 +7,7 @@ from contracts.base import Contract, Identifier
 
 class GitHubOnboardingStatus(StrEnum):
     PENDING = "pending"
+    DISCOVERED = "discovered"
     COMPLETE = "complete"
 
 
@@ -24,15 +25,43 @@ class GitHubOnboardingSession(Contract):
     verifier_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     status: GitHubOnboardingStatus
     installation_id: int | None = Field(default=None, gt=0)
+    installation: "GitHubInstallation | None" = None
+    repositories: tuple["GitHubRepositoryCandidate", ...] = ()
     created_at: AwareDatetime
     expires_at: AwareDatetime
     completed_at: AwareDatetime | None = None
 
     @model_validator(mode="after")
     def validate_completion(self) -> "GitHubOnboardingSession":
+        pending = self.status is GitHubOnboardingStatus.PENDING
+        discovered = self.status is GitHubOnboardingStatus.DISCOVERED
         complete = self.status is GitHubOnboardingStatus.COMPLETE
-        if complete != (self.installation_id is not None and self.completed_at is not None):
+        if pending and (
+            self.installation_id is not None
+            or self.installation is not None
+            or self.repositories
+            or self.completed_at is not None
+        ):
+            raise ValueError("pending GitHub onboarding cannot contain installation metadata")
+        if discovered and (
+            self.installation_id is None
+            or self.installation is None
+            or not self.repositories
+            or self.completed_at is not None
+        ):
+            raise ValueError("GitHub onboarding requires discovered repositories")
+        if complete and (
+            self.installation_id is None
+            or self.installation is None
+            or not self.repositories
+            or self.completed_at is None
+        ):
             raise ValueError("completed GitHub onboarding requires installation metadata")
+        if (
+            self.installation is not None
+            and self.installation.installation_id != self.installation_id
+        ):
+            raise ValueError("GitHub onboarding installation identity changed")
         return self
 
 
@@ -86,6 +115,14 @@ class GitHubInstallationIndex(Contract):
         return self
 
 
+class GitHubRepositoryCandidate(Contract):
+    repository_id: int = Field(gt=0)
+    full_name: str = Field(min_length=3, max_length=256, pattern=r"^[^/]+/[^/]+$")
+    private: bool
+    default_branch: str = Field(min_length=1, max_length=256)
+    secret_scanning: GitHubSecretScanningStatus
+
+
 class GitHubRepository(Contract):
     repository_id: int = Field(gt=0)
     installation_id: int = Field(gt=0)
@@ -94,7 +131,6 @@ class GitHubRepository(Contract):
     private: bool
     default_branch: str = Field(min_length=1, max_length=256)
     secret_scanning: GitHubSecretScanningStatus
-    credential_id: Identifier
     updated_at: AwareDatetime
 
 

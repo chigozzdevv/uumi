@@ -9,8 +9,24 @@ class ApprovalDecision(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    CANCELLED = "cancelled"
     MORE_EVIDENCE = "more-evidence"
     EXTEND = "extend-observation"
+
+
+class ApprovalEvidenceKind(StrEnum):
+    VERIFICATION = "verification"
+    PLAN = "plan"
+
+
+class ApprovalEvidenceSnapshot(Contract):
+    approval_id: Identifier
+    evidence_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    kind: ApprovalEvidenceKind
+    status: str = Field(min_length=1, max_length=32)
+    checks: tuple[str, ...] = ()
+    evidence_count: int = Field(default=0, ge=0)
+    recorded_at: AwareDatetime
 
 
 class Approval(Contract):
@@ -39,6 +55,10 @@ class Approval(Contract):
             raise ValueError("a decision requires an approver and decision time")
         if self.consumed_at is not None and self.decision is not ApprovalDecision.APPROVED:
             raise ValueError("only an approved action can be consumed")
-        if self.decided_at is not None and self.decided_at > self.expires_at:
+        if (
+            self.decision is not ApprovalDecision.CANCELLED
+            and self.decided_at is not None
+            and self.decided_at > self.expires_at
+        ):
             raise ValueError("an approval decision cannot be recorded after expiry")
         return self

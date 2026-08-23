@@ -32,6 +32,7 @@ class RunStatus(StrEnum):
     RECOVERING = "recovering"
     CLEANUP = "cleanup-required"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     COMPENSATED = "compensated"
     COMPLETED = "completed"
 

@@ -74,6 +74,10 @@ class FailRunCommand(RunCommand):
     failure: Failure
 
 
+class CancelRunCommand(RunCommand):
+    operation: Literal["cancel"] = "cancel"
+
+
 class CleanupRunCommand(RunCommand):
     operation: Literal["cleanup"] = "cleanup"
     fencing_token: int = Field(gt=0)

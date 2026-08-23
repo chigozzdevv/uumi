@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from contracts.base import Contract, Identifier
 from contracts.incident import Severity
@@ -43,6 +43,7 @@ class NotificationState(StrEnum):
 class NotificationEndpoint(Contract):
     id: Identifier
     organisation_id: Identifier
+    principal_id: Identifier | None = None
     display_name: str = Field(min_length=1, max_length=160)
     channel: NotificationChannel
     provider: NotificationProvider
@@ -75,6 +76,31 @@ class NotificationEndpoint(Contract):
         elif self.recipients or self.sender is not None:
             raise ValueError("non-email notification endpoints cannot contain email addresses")
         return self
+
+
+class EmailNotificationEndpoint(Contract):
+    id: Identifier
+    organisation_id: Identifier
+    email_address: str = Field(min_length=3, max_length=320)
+    event_kinds: frozenset[NotificationKind] = Field(min_length=1)
+    enabled: bool = True
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    revision: int = Field(default=0, ge=0)
+
+    @field_validator("email_address")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalised = value.strip().lower()
+        if not _email(normalised):
+            raise ValueError("email address is invalid")
+        return normalised
+
+
+class NotificationTopic(Contract):
+    id: Identifier
+    label: str = Field(min_length=1, max_length=80)
+    event_kinds: frozenset[NotificationKind] = Field(min_length=1)
 
 
 class Notification(Contract):

@@ -30,6 +30,7 @@ class IncidentStatus(StrEnum):
 
 
 class SourceResource(Contract):
+    connection_id: Identifier | None = None
     credential_id: Identifier | None = None
     repository: str | None = Field(default=None, max_length=256)
     project: str | None = Field(default=None, max_length=256)
@@ -68,6 +69,7 @@ class Incident(Contract):
     organisation_id: Identifier
     event_id: Identifier
     source: str = Field(min_length=1, max_length=64)
+    kind: str = Field(default="security-signal", min_length=1, max_length=96)
     source_event_id: str = Field(min_length=1, max_length=256)
     severity: Severity
     confidence: Confidence

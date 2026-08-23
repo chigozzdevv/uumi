@@ -1,3 +1,10 @@
+from contracts.account import (
+    AccountProfile,
+    MemberRole,
+    MemberStatus,
+    TeamInvitation,
+    TeamMember,
+)
 from contracts.action import ProtectedAction
 from contracts.agent import (
     AgentKind,
@@ -8,7 +15,12 @@ from contracts.agent import (
     AgentStatus,
     AgentTask,
 )
-from contracts.approval import Approval, ApprovalDecision
+from contracts.approval import (
+    Approval,
+    ApprovalDecision,
+    ApprovalEvidenceKind,
+    ApprovalEvidenceSnapshot,
+)
 from contracts.audit import AuditEvent, AuditOutbox, Evidence
 from contracts.base import Contract, Identifier
 from contracts.binding import ConsumerBinding
@@ -26,13 +38,16 @@ from contracts.browser import (
     BrowserSecretKeyRequest,
     BrowserSession,
     BrowserStatus,
+    ComputerUseActivity,
+    ComputerUseActivityPhase,
+    ComputerUseActivityStatus,
     ConnectionWaiter,
-    ReplayCheckpoint,
     SecureCaptureResult,
     SetupSession,
     SetupStatus,
 )
 from contracts.command import (
+    CancelRunCommand,
     CleanupRunCommand,
     CompleteRecoveryCommand,
     CompleteStageCommand,
@@ -46,7 +61,7 @@ from contracts.command import (
     StageBindings,
     StartRunCommand,
 )
-from contracts.control import ControlDefinition, ControlPreferences, ControlVersion
+from contracts.control import ControlDefinition, ControlPreferences, ControlVersion, ExposureSource
 from contracts.coordinator import (
     StageExecutionRequest,
     StageExecutionResult,
@@ -62,8 +77,23 @@ from contracts.github import (
     GitHubOnboardingSession,
     GitHubOnboardingStatus,
     GitHubRepository,
+    GitHubRepositoryCandidate,
     GitHubSecretScanningStatus,
     GitHubWebhookReceipt,
+)
+from contracts.googlecloud import (
+    GoogleCloudOnboardingSession,
+    GoogleCloudOnboardingStatus,
+    GoogleCloudProject,
+    GoogleCloudService,
+    GoogleCloudServiceAccount,
+)
+from contracts.history import (
+    AgentDecisionSummary,
+    BrowserActionSummary,
+    RotationHistory,
+    RunStageActivity,
+    StageDetail,
 )
 from contracts.http import HttpAuth, HttpAuthScheme, HttpOperation, HttpProviderApi
 from contracts.incident import (
@@ -84,10 +114,12 @@ from contracts.inventory import (
     ConnectionStatus,
     ConsumerService,
     Environment,
-    FunctionalVerification,
+    RuntimeConsumerSetup,
     RuntimeResourceMetadata,
+    RuntimeSecretBindingMetadata,
 )
 from contracts.notification import (
+    EmailNotificationEndpoint,
     Notification,
     NotificationChannel,
     NotificationDelivery,
@@ -95,6 +127,7 @@ from contracts.notification import (
     NotificationKind,
     NotificationProvider,
     NotificationState,
+    NotificationTopic,
 )
 from contracts.overview import OverviewSummary
 from contracts.plan import OperationStep, RotationPlan, RotationStrategy, RuntimeDeployment
@@ -151,6 +184,8 @@ from contracts.walkthrough import (
 )
 
 __all__ = [
+    "AccountProfile",
+    "AgentDecisionSummary",
     "AgentKind",
     "AgentMemory",
     "AgentRegistration",
@@ -161,6 +196,8 @@ __all__ = [
     "Application",
     "Approval",
     "ApprovalDecision",
+    "ApprovalEvidenceKind",
+    "ApprovalEvidenceSnapshot",
     "AuditEvent",
     "AuditOutbox",
     "BrowserAccessGrant",
@@ -169,6 +206,7 @@ __all__ = [
     "BrowserActionKind",
     "BrowserActionRecord",
     "BrowserActionStatus",
+    "BrowserActionSummary",
     "BrowserPolicy",
     "BrowserSecretAccessEnvelope",
     "BrowserSecretAccessReceipt",
@@ -176,9 +214,13 @@ __all__ = [
     "BrowserSecretKeyRequest",
     "BrowserSession",
     "BrowserStatus",
+    "CancelRunCommand",
     "CleanupRunCommand",
     "CompleteRecoveryCommand",
     "CompleteStageCommand",
+    "ComputerUseActivity",
+    "ComputerUseActivityPhase",
+    "ComputerUseActivityStatus",
     "Confidence",
     "Connection",
     "ConnectionAuthorization",
@@ -197,12 +239,13 @@ __all__ = [
     "CreateRunCommand",
     "CredentialGeneration",
     "DownstreamConfirmation",
+    "EmailNotificationEndpoint",
     "Environment",
     "EventKind",
     "Evidence",
+    "ExposureSource",
     "FailRunCommand",
     "Failure",
-    "FunctionalVerification",
     "GenerationBinding",
     "GenerationState",
     "GitHubInstallation",
@@ -210,8 +253,14 @@ __all__ = [
     "GitHubOnboardingSession",
     "GitHubOnboardingStatus",
     "GitHubRepository",
+    "GitHubRepositoryCandidate",
     "GitHubSecretScanningStatus",
     "GitHubWebhookReceipt",
+    "GoogleCloudOnboardingSession",
+    "GoogleCloudOnboardingStatus",
+    "GoogleCloudProject",
+    "GoogleCloudService",
+    "GoogleCloudServiceAccount",
     "HttpAuth",
     "HttpAuthScheme",
     "HttpOperation",
@@ -222,6 +271,8 @@ __all__ = [
     "IngestionEvent",
     "Lease",
     "ManagedCredential",
+    "MemberRole",
+    "MemberStatus",
     "MutationMode",
     "MutationSemantics",
     "Notification",
@@ -231,6 +282,7 @@ __all__ = [
     "NotificationKind",
     "NotificationProvider",
     "NotificationState",
+    "NotificationTopic",
     "OperationStep",
     "OutboxEvent",
     "OverviewSummary",
@@ -257,17 +309,20 @@ __all__ = [
     "RecoveryPlan",
     "RecoveryResult",
     "RenewLeaseCommand",
-    "ReplayCheckpoint",
     "ResumeRunCommand",
+    "RotationHistory",
     "RotationPlan",
     "RotationRun",
     "RotationStrategy",
     "RunCommand",
     "RunEvent",
+    "RunStageActivity",
     "RunStatus",
     "RunStep",
+    "RuntimeConsumerSetup",
     "RuntimeDeployment",
     "RuntimeResourceMetadata",
+    "RuntimeSecretBindingMetadata",
     "SecretResourceMetadata",
     "SecretVersionMetadata",
     "SecureCaptureResult",
@@ -280,6 +335,7 @@ __all__ = [
     "SourceResource",
     "Stage",
     "StageBindings",
+    "StageDetail",
     "StageExecutionRequest",
     "StageExecutionResult",
     "StageExecutionStatus",
@@ -287,6 +343,8 @@ __all__ = [
     "StartRunCommand",
     "StepOutput",
     "TargetBinding",
+    "TeamInvitation",
+    "TeamMember",
     "TelemetryThresholds",
     "TimedText",
     "ToolAttempt",
