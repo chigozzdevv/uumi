@@ -1,0 +1,258 @@
+import hashlib
+from datetime import UTC, datetime
+
+import httpx
+import pytest
+from api.app import create_app
+from api.deps import ApiServices
+from contracts import MemberRole, MemberStatus, TeamInvitation
+from core.account import AccountService
+from core.auth import AccessControl, AuthenticatedIdentity, PrincipalGrant, Role
+from core.errors import ResourceConflictError, ResourceNotFoundError
+from core.workflow import RunWorkflow
+from testkit import MemoryRunRepository
+
+NOW = datetime(2026, 8, 23, 12, tzinfo=UTC)
+IDENTITY = AuthenticatedIdentity(
+    subject="user-one",
+    issuer="https://securetoken.google.com/firekey-project",
+    email="owner@acme.example",
+    email_verified=True,
+    display_name="Original Owner",
+    connected_via="Google",
+)
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+class Accounts:
+    def __init__(self) -> None:
+        self.principals = {
+            IDENTITY.document_id: PrincipalGrant(
+                subject=IDENTITY.subject,
+                roles=frozenset({Role.ADMINISTRATOR}),
+                email=IDENTITY.email,
+                display_name=IDENTITY.display_name,
+                connected_via=IDENTITY.connected_via,
+                created_at=NOW,
+                updated_at=NOW,
+            ),
+            _document_id("user-two"): PrincipalGrant(
+                subject="user-two",
+                roles=frozenset({Role.OPERATOR}),
+                email="operator@acme.example",
+                display_name="Operator",
+                connected_via="Organisation SSO",
+                created_at=NOW,
+                updated_at=NOW,
+            ),
+        }
+        self.invitations: dict[str, TeamInvitation] = {}
+
+    async def get(
+        self,
+        organisation_id: str,
+        identity: AuthenticatedIdentity,
+    ) -> PrincipalGrant | None:
+        return self.principals.get(identity.document_id)
+
+    async def sync_identity(
+        self,
+        organisation_id: str,
+        identity: AuthenticatedIdentity,
+        updated_at: datetime,
+    ) -> PrincipalGrant:
+        grant = self.principals.get(identity.document_id)
+        if grant is None:
+            raise ResourceNotFoundError("member missing")
+        return grant
+
+    async def update_profile(
+        self,
+        organisation_id: str,
+        identity: AuthenticatedIdentity,
+        expected_revision: int,
+        display_name: str,
+        updated_at: datetime,
+    ) -> PrincipalGrant:
+        current = self.principals[identity.document_id]
+        if current.revision != expected_revision:
+            raise ResourceConflictError("revision changed")
+        changed = current.model_copy(
+            update={
+                "display_name": display_name,
+                "updated_at": updated_at,
+                "revision": current.revision + 1,
+            }
+        )
+        self.principals[identity.document_id] = changed
+        return changed
+
+    async def list_principals(self, organisation_id: str) -> tuple[PrincipalGrant, ...]:
+        return tuple(self.principals.values())
+
+    async def list_invitations(self, organisation_id: str) -> tuple[TeamInvitation, ...]:
+        return tuple(self.invitations.values())
+
+    async def save_invitation(self, invitation: TeamInvitation) -> TeamInvitation:
+        self.invitations[invitation.id] = invitation
+        return invitation
+
+    async def update_member(
+        self,
+        organisation_id: str,
+        member_id: str,
+        expected_revision: int,
+        role: Role,
+        enabled: bool,
+        updated_at: datetime,
+    ) -> PrincipalGrant:
+        document_id = member_id.removeprefix("principal_")
+        current = self.principals[document_id]
+        changed = current.model_copy(
+            update={
+                "roles": frozenset({role}),
+                "enabled": enabled,
+                "updated_at": updated_at,
+                "revision": current.revision + 1,
+            }
+        )
+        self.principals[document_id] = changed
+        return changed
+
+    async def revoke_invitation(
+        self,
+        organisation_id: str,
+        invitation_id: str,
+        expected_revision: int,
+        revoked_at: datetime,
+    ) -> TeamInvitation:
+        current = self.invitations[invitation_id]
+        changed = current.model_copy(
+            update={
+                "revoked_at": revoked_at,
+                "updated_at": revoked_at,
+                "revision": current.revision + 1,
+            }
+        )
+        self.invitations[invitation_id] = changed
+        return changed
+
+
+async def test_profile_uses_identity_metadata_and_updates_only_the_name() -> None:
+    service = AccountService(Accounts(), lambda: NOW)
+
+    profile = await service.profile("org_one", IDENTITY)
+    changed = await service.update_profile(
+        "org_one",
+        IDENTITY,
+        profile.revision,
+        "Chigozie Okafor",
+    )
+
+    assert changed.display_name == "Chigozie Okafor"
+    assert changed.email == "owner@acme.example"
+    assert changed.connected_via == "Google"
+    assert changed.revision == 1
+
+
+async def test_invitation_is_pending_until_the_verified_email_signs_in() -> None:
+    repository = Accounts()
+    service = AccountService(repository, lambda: NOW)
+
+    invited = await service.invite(
+        "org_one",
+        IDENTITY,
+        "new.member@acme.example",
+        MemberRole.VIEWER,
+    )
+    team = await service.team("org_one")
+
+    assert invited.status is MemberStatus.PENDING
+    assert invited.email == "new.member@acme.example"
+    assert any(member.id == invited.id for member in team)
+
+
+async def test_administrator_can_change_or_disable_another_member() -> None:
+    repository = Accounts()
+    service = AccountService(repository, lambda: NOW)
+    member_id = _member_id("user-two")
+
+    changed = await service.update_member(
+        "org_one",
+        IDENTITY,
+        member_id,
+        0,
+        MemberRole.VIEWER,
+        False,
+    )
+
+    assert changed.role is MemberRole.VIEWER
+    assert changed.status is MemberStatus.DISABLED
+
+
+async def test_member_cannot_change_own_access() -> None:
+    service = AccountService(Accounts(), lambda: NOW)
+
+    with pytest.raises(ResourceConflictError, match="another administrator"):
+        await service.update_member(
+            "org_one",
+            IDENTITY,
+            _member_id(IDENTITY.subject),
+            0,
+            MemberRole.VIEWER,
+            True,
+        )
+
+
+async def test_settings_api_exposes_profile_and_team_mutations() -> None:
+    repository = Accounts()
+    service = AccountService(repository, lambda: NOW)
+
+    class Tokens:
+        async def verify(self, token: str) -> AuthenticatedIdentity:
+            assert token == "valid-token"
+            return IDENTITY
+
+    application = create_app(
+        ApiServices(
+            workflow=RunWorkflow(MemoryRunRepository()),
+            access=AccessControl(repository),
+            tokens=Tokens(),
+            accounts=service,
+        )
+    )
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="https://firekey.test") as client:
+        headers = {"Authorization": "Bearer valid-token"}
+        profile = await client.get(
+            "/v1/organisations/org_one/settings/profile",
+            headers=headers,
+        )
+        invited = await client.post(
+            "/v1/organisations/org_one/settings/team/invitations",
+            headers=headers,
+            json={"email": "new.member@acme.example", "role": "viewer"},
+        )
+        team = await client.get(
+            "/v1/organisations/org_one/settings/team",
+            headers=headers,
+        )
+
+    assert profile.status_code == 200
+    assert profile.json()["connected_via"] == "Google"
+    assert invited.status_code == 201
+    assert invited.json()["status"] == "pending"
+    assert any(member["email"] == "new.member@acme.example" for member in team.json())
+
+
+def _member_id(subject: str) -> str:
+    return f"principal_{_document_id(subject)}"
+
+
+def _document_id(subject: str) -> str:
+    return hashlib.sha256(subject.encode()).hexdigest()

@@ -69,7 +69,7 @@ class IncidentAutomation:
                 command_id,
                 "firekey_ingestion",
                 controls.id,
-                f"automatic controls response to {event.kind}",
+                _rotation_reason(event.kind),
                 urgency,
                 event.observed_at,
             )
@@ -110,3 +110,15 @@ class IncidentAutomation:
 
 def _identifier(prefix: str, event_id: str) -> str:
     return f"{prefix}_{hashlib.sha256(event_id.encode()).hexdigest()[:40]}"
+
+
+def _rotation_reason(kind: str) -> str:
+    reasons = {
+        "credential-rotation-due": "The configured rotation time was reached.",
+        "credential-expiring": "The credential reached its configured rotation window.",
+        "credential-exposure-detected": "A verified credential exposure was detected.",
+        "credential-provider-drift": "The provider credential no longer matches inventory.",
+        "credential-inventory-drift": "The credential inventory mapping changed.",
+        "credential-runtime-drift": "A runtime credential binding changed.",
+    }
+    return reasons.get(kind, "A configured credential control started the rotation.")

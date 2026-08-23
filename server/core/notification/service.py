@@ -1,5 +1,6 @@
 import hashlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -11,6 +12,14 @@ from contracts import (
     NotificationProvider,
     Severity,
 )
+
+from core.errors import ResourceConflictError, ResourceNotFoundError
+
+
+@dataclass(frozen=True, slots=True)
+class EmailDeliveryConfiguration:
+    auth_reference: str
+    sender: str
 
 
 class NotificationRepository(Protocol):
@@ -47,9 +56,11 @@ class NotificationService:
         self,
         repository: NotificationRepository,
         clock: Callable[[], datetime],
+        email_delivery: EmailDeliveryConfiguration | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
+        self._email_delivery = email_delivery
 
     async def emit(
         self,
@@ -110,11 +121,13 @@ class NotificationService:
         event_kinds: frozenset[NotificationKind],
         recipients: tuple[str, ...] = (),
         sender: str | None = None,
+        principal_id: str | None = None,
     ) -> NotificationEndpoint:
         now = self._clock()
         endpoint = NotificationEndpoint(
             id=endpoint_id,
             organisation_id=organisation_id,
+            principal_id=principal_id,
             display_name=display_name,
             channel=channel,
             provider=provider,
@@ -127,8 +140,63 @@ class NotificationService:
         )
         return await self._repository.register_endpoint(endpoint)
 
+    async def register_email_endpoint(
+        self,
+        endpoint_id: str,
+        organisation_id: str,
+        principal_id: str,
+        email_address: str,
+        event_kinds: frozenset[NotificationKind],
+    ) -> NotificationEndpoint:
+        if self._email_delivery is None:
+            raise ResourceConflictError("email notifications are not configured")
+        email = email_address.strip().lower()
+        return await self.register_endpoint(
+            endpoint_id,
+            organisation_id,
+            email,
+            NotificationChannel.EMAIL,
+            NotificationProvider.RESEND,
+            self._email_delivery.auth_reference,
+            event_kinds,
+            (email,),
+            self._email_delivery.sender,
+            principal_id,
+        )
+
     async def list_endpoints(self, organisation_id: str) -> tuple[NotificationEndpoint, ...]:
         return await self._repository.list_endpoints(organisation_id)
+
+    async def list_email_endpoints(
+        self,
+        organisation_id: str,
+        principal_id: str,
+    ) -> tuple[NotificationEndpoint, ...]:
+        endpoints = await self.list_endpoints(organisation_id)
+        return tuple(
+            endpoint
+            for endpoint in endpoints
+            if endpoint.provider is NotificationProvider.RESEND
+            and endpoint.principal_id == principal_id
+        )
+
+    async def set_email_endpoint_enabled(
+        self,
+        organisation_id: str,
+        principal_id: str,
+        endpoint_id: str,
+        expected_revision: int,
+        enabled: bool,
+    ) -> NotificationEndpoint:
+        endpoints = await self.list_email_endpoints(organisation_id, principal_id)
+        if not any(endpoint.id == endpoint_id for endpoint in endpoints):
+            raise ResourceNotFoundError(f"email notification endpoint {endpoint_id} was not found")
+        return await self.set_endpoint_enabled(
+            organisation_id,
+            endpoint_id,
+            expected_revision,
+            enabled,
+        )
 
     async def set_endpoint_enabled(
         self,

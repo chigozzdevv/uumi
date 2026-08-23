@@ -1,14 +1,29 @@
 from datetime import UTC, datetime
+from typing import cast
 
+import httpx
 import pytest
+from api.app import create_app
+from api.deps import ApiServices
 from contracts import (
     Notification,
     NotificationEndpoint,
     NotificationKind,
     Severity,
 )
-from core.notification import NotificationService
+from core.auth import AccessControl, AuthenticatedIdentity, Permission
+from core.config import Settings
+from core.errors import (
+    AuthenticationError,
+    AuthorizationError,
+    ResourceConflictError,
+    ResourceNotFoundError,
+)
+from core.notification import EmailDeliveryConfiguration, NotificationService
+from core.workflow import RunWorkflow
+from fastapi import FastAPI
 from pydantic import ValidationError
+from testkit import MemoryRunRepository
 
 NOW = datetime(2026, 8, 14, 12, tzinfo=UTC)
 pytestmark = pytest.mark.anyio
@@ -22,6 +37,7 @@ def anyio_backend() -> str:
 class Notifications:
     def __init__(self) -> None:
         self.values: dict[str, Notification] = {}
+        self.endpoints: dict[str, NotificationEndpoint] = {}
 
     async def emit(self, notification: Notification) -> tuple[Notification, bool]:
         existing = self.values.get(notification.id)
@@ -48,10 +64,11 @@ class Notifications:
         return changed
 
     async def register_endpoint(self, endpoint: NotificationEndpoint) -> NotificationEndpoint:
+        self.endpoints[endpoint.id] = endpoint
         return endpoint
 
     async def list_endpoints(self, organisation_id: str) -> tuple[NotificationEndpoint, ...]:
-        return ()
+        return tuple(self.endpoints.values())
 
     async def set_endpoint_enabled(
         self,
@@ -61,7 +78,18 @@ class Notifications:
         enabled: bool,
         updated_at: datetime,
     ) -> NotificationEndpoint:
-        raise NotImplementedError
+        current = self.endpoints.get(endpoint_id)
+        if current is None:
+            raise ResourceNotFoundError("endpoint missing")
+        changed = current.model_copy(
+            update={
+                "enabled": enabled,
+                "updated_at": updated_at,
+                "revision": current.revision + 1,
+            }
+        )
+        self.endpoints[endpoint_id] = changed
+        return changed
 
 
 async def test_emission_is_deterministic_and_links_cannot_carry_capabilities() -> None:
@@ -97,3 +125,171 @@ async def test_emission_is_deterministic_and_links_cannot_carry_capabilities() -
         Notification.model_validate(
             {**first.model_dump(), "link_path": "/approvals/one?token=secret"}
         )
+
+
+async def test_email_endpoint_uses_platform_delivery_configuration() -> None:
+    repository = Notifications()
+    service = NotificationService(
+        repository,
+        lambda: NOW,
+        EmailDeliveryConfiguration(
+            "projects/firekey-project/secrets/email-delivery/versions/2",
+            "alerts@firekey.example",
+        ),
+    )
+
+    endpoint = await service.register_email_endpoint(
+        "endpoint_one",
+        "org_one",
+        "actor_owner",
+        "OWNER@ACME.EXAMPLE ",
+        frozenset({NotificationKind.APPROVAL_REQUIRED}),
+    )
+
+    assert endpoint.display_name == "owner@acme.example"
+    assert endpoint.principal_id == "actor_owner"
+    assert endpoint.recipients == ("owner@acme.example",)
+    assert endpoint.sender == "alerts@firekey.example"
+    assert endpoint.auth_reference.endswith("/email-delivery/versions/2")
+
+
+async def test_email_endpoint_requires_platform_delivery_configuration() -> None:
+    service = NotificationService(Notifications(), lambda: NOW)
+
+    with pytest.raises(ResourceConflictError, match="not configured"):
+        await service.register_email_endpoint(
+            "endpoint_one",
+            "org_one",
+            "actor_owner",
+            "owner@acme.example",
+            frozenset({NotificationKind.APPROVAL_REQUIRED}),
+        )
+
+
+async def test_api_email_delivery_configuration_is_complete_and_immutable() -> None:
+    base = {
+        "project_id": "firekey-project",
+        "region": "us-central1",
+        "oidc_audience": "https://api.firekey.example",
+        "capability_secret": "projects/firekey-project/secrets/capability/versions/1",
+        "browser_gateway_url": "https://browser.firekey.example",
+        "walkthrough_bucket": "firekey-walkthroughs",
+    }
+    configured = Settings(
+        **base,
+        notification_email_secret_version=(
+            "projects/firekey-project/secrets/email-delivery/versions/2"
+        ),
+        notification_email_sender="alerts@firekey.example",
+    )
+
+    assert configured.notification_email_sender == "alerts@firekey.example"
+    with pytest.raises(ValidationError, match="configuration is incomplete"):
+        Settings(**base, notification_email_sender="alerts@firekey.example")
+    with pytest.raises(ValidationError, match="immutable"):
+        Settings(
+            **base,
+            notification_email_secret_version=(
+                "projects/firekey-project/secrets/email-delivery/versions/latest"
+            ),
+            notification_email_sender="alerts@firekey.example",
+        )
+
+
+IDENTITY = AuthenticatedIdentity(
+    subject="user-one",
+    issuer="https://securetoken.google.com/firekey-project",
+    email="owner@acme.example",
+)
+
+
+class Tokens:
+    async def verify(self, token: str) -> AuthenticatedIdentity:
+        if token != "valid-token":
+            raise AuthenticationError("identity token is invalid")
+        return IDENTITY
+
+
+class TopicAccess:
+    allowed = frozenset({Permission.NOTIFICATION_READ, Permission.APPROVAL_DECIDE})
+
+    async def require(
+        self,
+        identity: AuthenticatedIdentity,
+        organisation_id: str,
+        permission: Permission,
+    ) -> None:
+        assert identity == IDENTITY
+        assert organisation_id == "org_one"
+        if permission not in self.allowed:
+            raise AuthorizationError(f"principal lacks {permission.value}")
+
+    async def permissions(
+        self,
+        identity: AuthenticatedIdentity,
+        organisation_id: str,
+    ) -> frozenset[Permission]:
+        assert identity == IDENTITY
+        assert organisation_id == "org_one"
+        return self.allowed
+
+
+def notification_app() -> FastAPI:
+    notifications = NotificationService(
+        Notifications(),
+        lambda: NOW,
+        EmailDeliveryConfiguration(
+            "projects/firekey-project/secrets/email-delivery/versions/2",
+            "alerts@firekey.example",
+        ),
+    )
+    return create_app(
+        ApiServices(
+            workflow=RunWorkflow(MemoryRunRepository(), clock=lambda: NOW),
+            access=cast(AccessControl, TopicAccess()),
+            tokens=Tokens(),
+            notifications=notifications,
+        )
+    )
+
+
+async def test_topics_and_email_endpoint_are_permission_scoped() -> None:
+    transport = httpx.ASGITransport(app=notification_app(), raise_app_exceptions=False)
+    headers = {"Authorization": "Bearer valid-token"}
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        topics = await client.get(
+            "/v1/organisations/org_one/notifications/topics",
+            headers=headers,
+        )
+        forbidden = await client.post(
+            "/v1/organisations/org_one/notifications/endpoints",
+            headers=headers,
+            json={
+                "id": "endpoint_forbidden",
+                "email_address": "owner@acme.example",
+                "topics": ["incidents"],
+            },
+        )
+        created = await client.post(
+            "/v1/organisations/org_one/notifications/endpoints",
+            headers=headers,
+            json={
+                "id": "endpoint_one",
+                "email_address": "updated@acme.example",
+                "topics": ["approvals"],
+            },
+        )
+
+    assert topics.status_code == 200
+    assert topics.json() == [
+        {
+            "id": "approvals",
+            "label": "Approval requests",
+            "event_kinds": ["approval-required"],
+        }
+    ]
+    assert forbidden.status_code == 403
+    assert created.status_code == 201
+    assert created.json()["email_address"] == "updated@acme.example"
+    assert "auth_reference" not in created.json()
+    assert "sender" not in created.json()

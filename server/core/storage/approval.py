@@ -69,12 +69,17 @@ class FirestoreApprovalRepository:
         return tuple(approvals)
 
     async def count_approvals(
-        self, organisation_id: str, decisions: frozenset[ApprovalDecision]
+        self,
+        organisation_id: str,
+        decisions: frozenset[ApprovalDecision],
+        active_at: datetime | None = None,
     ) -> int:
         path = f"{FirestorePaths.organisation(organisation_id)}/approvals"
         query = self._client.collection(path).where(
             "decision", "in", sorted(decision.value for decision in decisions)
         )
+        if active_at is not None and decisions == frozenset({ApprovalDecision.PENDING}):
+            query = query.where("expires_at", ">", active_at)
         return await aggregate_count(query)
 
     async def decide(
@@ -102,7 +107,7 @@ class FirestoreApprovalRepository:
                 if current.decision is decision and current.approver_id == actor_id:
                     return current
                 raise ApprovalError("approval already has a decision")
-            if decided_at >= current.expires_at:
+            if decision is not ApprovalDecision.CANCELLED and decided_at >= current.expires_at:
                 raise ApprovalError("approval has expired")
             changed = current.model_copy(
                 update={

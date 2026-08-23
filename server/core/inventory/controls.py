@@ -27,6 +27,40 @@ from policy import REQUIRED_CHECKS, digest
 from core.errors import ResourceConflictError
 from core.ids import new_id
 
+_TRIGGER_EVENTS = {
+    "expiry": frozenset({"credential-expiring", "credential-rotation-due"}),
+    "drift": frozenset(
+        {
+            "credential-inventory-drift",
+            "credential-provider-drift",
+            "credential-runtime-drift",
+        }
+    ),
+    "verified-exposure": frozenset({"credential-exposure-detected"}),
+}
+
+
+def validate_exposure_sources(
+    connections: tuple[Connection, ...], preferences: ControlPreferences
+) -> None:
+    by_id = {connection.id: connection for connection in connections}
+    for source in preferences.exposure_sources:
+        connection = by_id.get(source.connection_id)
+        if (
+            connection is None
+            or ConnectionRole.INCIDENT not in connection.roles
+            or connection.interface is not ConnectionInterface.API
+            or connection.status is not ConnectionStatus.READY
+            or source.resource not in connection.allowed_resources
+        ):
+            raise ResourceConflictError("exposure source is not available to this organisation")
+
+
+def _trigger_events(preferences: ControlPreferences) -> frozenset[str]:
+    return frozenset(
+        event for trigger in preferences.automatic_triggers for event in _TRIGGER_EVENTS[trigger]
+    )
+
 
 def compile_controls(
     credential: ManagedCredential,
@@ -37,6 +71,7 @@ def compile_controls(
     actor_id: str,
     now: datetime,
 ) -> tuple[ControlDefinition, tuple[ProbeVersion, ...]]:
+    validate_exposure_sources(connections, preferences)
     by_id = {connection.id: connection for connection in connections}
     management = by_id[credential.connection_id]
     secret_store = by_id[credential.secret_store_connection_id]
@@ -178,27 +213,6 @@ def compile_controls(
             ),
         )
         service = service_by_id[binding.service_id]
-        functional = service.verification
-        if functional is None:
-            raise ResourceConflictError(
-                f"consumer service {service.display_name} has no functional verification"
-            )
-        add(
-            Stage.VERIFY,
-            ProbeDefinition(
-                id=binding.verification_id,
-                organisation_id=credential.organisation_id,
-                kind=functional.kind,
-                connection_id=binding.runtime_connection_id,
-                target=functional.target,
-                method=functional.method,
-                expected_status=functional.expected_status,
-                generation_binding=GenerationBinding.TARGET,
-                required_fields=functional.required_fields,
-                confirmation=functional.confirmation,
-                timeout_seconds=functional.timeout_seconds,
-            ),
-        )
         for connection_id in service.telemetry_connection_ids:
             connection = by_id[connection_id]
             telemetry = _probe(
@@ -238,10 +252,18 @@ def compile_controls(
         "runtime.rollback",
         "verification.run",
     }
-    protected_tools = {"secretStore.disableVersion", "secretStore.destroyVersion"}
+    protected_tools: set[str] = set()
     if management.interface is ConnectionInterface.BROWSER:
-        allowed_tools.update({"browser.click", "browser.secure-capture", "provider.testCredential"})
-        protected_tools.update({"browser.click", "browser.secure-capture"})
+        allowed_tools.update(
+            {
+                "browser.click",
+                "browser.secure-capture",
+                "browser.revokeCredential",
+                "provider.testCredential",
+            }
+        )
+        if preferences.require_revoke_approval:
+            protected_tools.add("browser.revokeCredential")
     else:
         allowed_tools.update(
             {
@@ -252,7 +274,10 @@ def compile_controls(
                 "provider.testCredential",
             }
         )
-        protected_tools.add("provider.revokeCredential")
+        if preferences.require_revoke_approval:
+            protected_tools.add("provider.revokeCredential")
+    if preferences.require_revoke_approval:
+        protected_tools.update({"secretStore.disableVersion", "secretStore.destroyVersion"})
     if telemetry_enabled:
         allowed_tools.update({"telemetry.queryHealth", "telemetry.queryCredentialUsage"})
 
@@ -272,6 +297,11 @@ def compile_controls(
         preserves_old_generation=True,
     )
     required_checks = dict(REQUIRED_CHECKS)
+    if not preferences.require_revoke_approval:
+        required_checks[Stage.PREFLIGHT] = required_checks[Stage.PREFLIGHT].difference(
+            {"approvers-known"}
+        )
+        required_checks[Stage.APPROVAL] = frozenset({"approval-not-required", "evidence-current"})
     if not telemetry_enabled:
         required_checks[Stage.VERIFY] = required_checks[Stage.VERIFY].difference(
             {"telemetry-healthy"}
@@ -285,13 +315,16 @@ def compile_controls(
         protected_tools=frozenset(protected_tools),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
         maximum_observation_seconds=preferences.maximum_observation_seconds,
-        require_functional_probe=True,
+        require_revoke_approval=preferences.require_revoke_approval,
         require_generation_telemetry=telemetry_enabled,
         rotate_before_expiry_seconds=preferences.rotate_before_expiry_seconds,
-        automatic_triggers=preferences.automatic_triggers,
+        automatic_triggers=_trigger_events(preferences),
         emergency_triggers=frozenset(
-            {"verified-exposure"}.intersection(preferences.automatic_triggers)
+            {"credential-exposure-detected"}
+            if "verified-exposure" in preferences.automatic_triggers
+            else ()
         ),
+        exposure_sources=preferences.exposure_sources,
         probe_versions={stage: tuple(ids) for stage, ids in assigned.items()},
         recovery={
             Stage.DEPLOY: rollback,
@@ -309,10 +342,13 @@ def update_controls(
 ) -> ControlDefinition:
     return current.model_copy(
         update={
-            "automatic_triggers": preferences.automatic_triggers,
+            "automatic_triggers": _trigger_events(preferences),
             "emergency_triggers": frozenset(
-                {"verified-exposure"}.intersection(preferences.automatic_triggers)
+                {"credential-exposure-detected"}
+                if "verified-exposure" in preferences.automatic_triggers
+                else ()
             ),
+            "exposure_sources": preferences.exposure_sources,
             "rotate_before_expiry_seconds": preferences.rotate_before_expiry_seconds,
             "maximum_observation_seconds": preferences.maximum_observation_seconds,
         }

@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
@@ -25,6 +26,10 @@ class Permission(StrEnum):
     INCIDENT_WRITE = "incident.write"
     NOTIFICATION_READ = "notification.read"
     NOTIFICATION_WRITE = "notification.write"
+    PROFILE_READ = "profile.read"
+    PROFILE_WRITE = "profile.write"
+    TEAM_READ = "team.read"
+    TEAM_WRITE = "team.write"
     AGENT_READ = "agent.read"
     AGENT_WRITE = "agent.write"
     AUDIT_READ = "audit.read"
@@ -48,6 +53,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.AGENT_READ,
             Permission.AUDIT_READ,
             Permission.NOTIFICATION_READ,
+            Permission.PROFILE_READ,
+            Permission.PROFILE_WRITE,
         }
     ),
     Role.OPERATOR: frozenset(
@@ -63,6 +70,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.AGENT_READ,
             Permission.INCIDENT_WRITE,
             Permission.NOTIFICATION_READ,
+            Permission.PROFILE_READ,
+            Permission.PROFILE_WRITE,
         }
     ),
     Role.AUTOMATION: frozenset(
@@ -88,6 +97,12 @@ class PrincipalGrant(Contract):
     subject: str
     roles: frozenset[Role]
     enabled: bool = True
+    email: str | None = None
+    display_name: str | None = None
+    connected_via: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    revision: int = 0
 
 
 class AccessRepository(Protocol):
@@ -132,9 +147,16 @@ class AccessControl:
         organisation_id: str,
         permission: Permission,
     ) -> None:
+        allowed = await self.permissions(identity, organisation_id)
+        if permission not in allowed:
+            raise AuthorizationError(f"principal lacks {permission.value}")
+
+    async def permissions(
+        self,
+        identity: AuthenticatedIdentity,
+        organisation_id: str,
+    ) -> frozenset[Permission]:
         grant = await self._repository.get(organisation_id, identity)
         if grant is None or not grant.enabled:
             raise AuthorizationError("principal is not enabled for this organisation")
-        allowed = frozenset(item for role in grant.roles for item in ROLE_PERMISSIONS[role])
-        if permission not in allowed:
-            raise AuthorizationError(f"principal lacks {permission.value}")
+        return frozenset(item for role in grant.roles for item in ROLE_PERMISSIONS[role])

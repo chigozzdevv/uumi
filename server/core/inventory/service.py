@@ -15,11 +15,11 @@ from contracts import (
     ControlVersion,
     CredentialGeneration,
     Environment,
-    FunctionalVerification,
     ManagedCredential,
     PlaybookVersion,
     ProbeVersion,
     ProviderCredentialMetadata,
+    RuntimeConsumerSetup,
     RuntimeResourceMetadata,
     SecretResourceMetadata,
     SecretVersionMetadata,
@@ -27,7 +27,7 @@ from contracts import (
 from policy import digest
 
 from core.errors import ResourceConflictError
-from core.inventory.controls import compile_controls
+from core.inventory.controls import compile_controls, validate_exposure_sources
 from core.inventory.controls import update_controls as compile_update
 
 _BROWSER_CAPABILITIES = frozenset({"browser.execute", "browser.authenticate"})
@@ -116,6 +116,7 @@ class InventoryRepository(Protocol):
         bindings: tuple[ConsumerBinding, ...],
         controls: ControlVersion,
         probes: tuple[ProbeVersion, ...],
+        service_setup: tuple[Application, Environment, ConsumerService] | None = None,
     ) -> ManagedCredential: ...
 
     async def replace_controls(
@@ -189,6 +190,10 @@ class InventoryService:
         self._runtime_metadata = runtime_metadata
 
     async def add_connection(self, connection: Connection) -> Connection:
+        if connection.platform == "google-cloud":
+            raise ResourceConflictError(
+                "Google Cloud connections must use the verified onboarding journey"
+            )
         if connection.interface is ConnectionInterface.BROWSER:
             if not connection.allowed_resources or any(
                 not _domain_pattern(value) for value in connection.allowed_resources
@@ -228,6 +233,38 @@ class InventoryService:
                     "updated_at": now,
                 }
             )
+        if (
+            ConnectionRole.RUNTIME in connection.roles
+            and connection.interface is ConnectionInterface.API
+        ):
+            if self._runtime_metadata is None:
+                raise ResourceConflictError("runtime connection validation is unavailable")
+            await self._runtime_metadata.resources_for(connection)
+            now = self._clock()
+            connection = connection.model_copy(
+                update={
+                    "status": ConnectionStatus.READY,
+                    "authenticated_at": now,
+                    "last_validated_at": now,
+                    "updated_at": now,
+                }
+            )
+        if (
+            ConnectionRole.SECRET_STORE in connection.roles
+            and connection.interface is ConnectionInterface.API
+        ):
+            if self._secret_metadata is None:
+                raise ResourceConflictError("secret-store connection validation is unavailable")
+            await self._secret_metadata.resources_for(connection)
+            now = self._clock()
+            connection = connection.model_copy(
+                update={
+                    "status": ConnectionStatus.READY,
+                    "authenticated_at": now,
+                    "last_validated_at": now,
+                    "updated_at": now,
+                }
+            )
         return await self._repository.add_connection(connection)
 
     async def add_application(self, application: Application) -> Application:
@@ -251,6 +288,40 @@ class InventoryService:
         await self._validate_service_connections(service)
         return await self._repository.add_service(service)
 
+    async def add_discovered_service(
+        self,
+        organisation_id: str,
+        service_id: str,
+        application_id: str,
+        environment_id: str,
+        runtime_connection_id: str,
+        runtime_resource: str,
+    ) -> ConsumerService:
+        environment = await self.get_environment(organisation_id, environment_id)
+        if environment.application_id != application_id:
+            raise ResourceConflictError("service application does not match its environment")
+        resources = await self.list_runtime_resources(organisation_id, runtime_connection_id)
+        selected = tuple(item for item in resources if item.reference == runtime_resource)
+        if len(selected) != 1:
+            raise ResourceConflictError("runtime service is no longer available")
+        resource = selected[0]
+        now = self._clock()
+        return await self.add_service(
+            ConsumerService(
+                id=service_id,
+                organisation_id=organisation_id,
+                application_id=application_id,
+                environment_id=environment_id,
+                runtime_connection_id=runtime_connection_id,
+                runtime_resource=resource.reference,
+                display_name=resource.display_name,
+                endpoint=resource.endpoint,
+                identity=resource.identity,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
     async def add_application_setup(
         self,
         application: Application,
@@ -265,6 +336,61 @@ class InventoryService:
             raise ResourceConflictError("service does not belong to the application environment")
         await self._validate_service_connections(service)
         return await self._repository.add_application_setup(application, environment, service)
+
+    async def add_discovered_application_setup(
+        self,
+        organisation_id: str,
+        application_id: str,
+        environment_id: str,
+        service_id: str,
+        runtime_connection_id: str,
+        runtime_resource: str,
+        environment_name: str | None,
+    ) -> tuple[Application, Environment, ConsumerService]:
+        resources = await self.list_runtime_resources(organisation_id, runtime_connection_id)
+        selected = tuple(item for item in resources if item.reference == runtime_resource)
+        if len(selected) != 1:
+            raise ResourceConflictError("runtime service is no longer available")
+        resource = selected[0]
+        resolved_environment = resource.environment_name or environment_name
+        if not resolved_environment:
+            raise ResourceConflictError("runtime service environment is unavailable")
+        now = self._clock()
+        application = Application(
+            id=application_id,
+            organisation_id=organisation_id,
+            display_name=resource.display_name,
+            created_at=now,
+            updated_at=now,
+        )
+        environment = Environment(
+            id=environment_id,
+            organisation_id=organisation_id,
+            application_id=application_id,
+            display_name=resolved_environment,
+            production=(
+                resource.production
+                if resource.production is not None
+                else resolved_environment.lower() == "production"
+            ),
+            region=resource.region or _runtime_region(resource.reference),
+            created_at=now,
+            updated_at=now,
+        )
+        service = ConsumerService(
+            id=service_id,
+            organisation_id=organisation_id,
+            application_id=application_id,
+            environment_id=environment_id,
+            runtime_connection_id=runtime_connection_id,
+            runtime_resource=resource.reference,
+            display_name=resource.display_name,
+            endpoint=resource.endpoint,
+            identity=resource.identity,
+            created_at=now,
+            updated_at=now,
+        )
+        return await self.add_application_setup(application, environment, service)
 
     async def _validate_service_connections(self, service: ConsumerService) -> None:
         runtime = await self._repository.get_connection(
@@ -296,6 +422,7 @@ class InventoryService:
         bindings: tuple[ConsumerBinding, ...],
         preferences: ControlPreferences,
         actor_id: str,
+        service_setup: tuple[Application, Environment, ConsumerService] | None = None,
     ) -> ManagedCredential:
         management = await self._repository.get_connection(
             credential.organisation_id,
@@ -356,6 +483,7 @@ class InventoryService:
             for binding in bindings
         ):
             raise ResourceConflictError("credential binding lineage is inconsistent")
+        setup_service = service_setup[2] if service_setup is not None else None
         services: list[ConsumerService] = []
         connections: dict[str, Connection] = {
             connection.id: connection
@@ -364,9 +492,13 @@ class InventoryService:
         }
         connections.update({management.id: management, secret_store.id: secret_store})
         for binding in bindings:
-            service = await self._repository.get_service(
-                credential.organisation_id,
-                binding.service_id,
+            service = (
+                setup_service
+                if setup_service is not None and setup_service.id == binding.service_id
+                else await self._repository.get_service(
+                    credential.organisation_id,
+                    binding.service_id,
+                )
             )
             if (
                 binding.environment_id != service.environment_id
@@ -389,6 +521,22 @@ class InventoryService:
                 raise ResourceConflictError("credential binding requires an API runtime connection")
             if binding.secret_reference != generation.secret_reference:
                 raise ResourceConflictError("credential binding must use the imported generation")
+            resources = await self.list_runtime_resources(
+                credential.organisation_id, binding.runtime_connection_id
+            )
+            runtime_resource = next(
+                (item for item in resources if item.reference == binding.runtime_resource), None
+            )
+            if runtime_resource is None or not _runtime_binding_matches(
+                runtime_resource,
+                credential.secret_resource,
+                credential.secret_reference,
+                binding.runtime_secret_name,
+                binding.runtime_container_name,
+            ):
+                raise ResourceConflictError(
+                    "runtime service does not use the selected secret version"
+                )
             services.append(service)
             connections[runtime.id] = runtime
             for connection_id in service.telemetry_connection_ids:
@@ -427,7 +575,102 @@ class InventoryService:
             created_at=now,
         )
         return await self._repository.import_credential(
-            credential, generation, bindings, controls, probes
+            credential, generation, bindings, controls, probes, service_setup
+        )
+
+    async def import_discovered_credential(
+        self,
+        credential: ManagedCredential,
+        generation: CredentialGeneration,
+        consumer: RuntimeConsumerSetup,
+        preferences: ControlPreferences,
+        actor_id: str,
+    ) -> ManagedCredential:
+        resources = await self.list_runtime_resources(
+            credential.organisation_id, consumer.runtime_connection_id
+        )
+        selected = tuple(item for item in resources if item.reference == consumer.runtime_resource)
+        if len(selected) != 1:
+            raise ResourceConflictError("runtime service is no longer available")
+        resource = selected[0]
+        existing = tuple(
+            service
+            for service in await self._repository.services(credential.organisation_id)
+            if service.archived_at is None
+            and service.runtime_connection_id == consumer.runtime_connection_id
+            and service.runtime_resource == consumer.runtime_resource
+        )
+        if len(existing) > 1:
+            raise ResourceConflictError("runtime service mapping is ambiguous")
+        service_setup: tuple[Application, Environment, ConsumerService] | None = None
+        if existing:
+            service = existing[0]
+            if (
+                consumer.service_id != service.id
+                or consumer.application_id != service.application_id
+                or consumer.environment_id != service.environment_id
+            ):
+                raise ResourceConflictError("runtime service selection changed before import")
+        else:
+            resolved_environment = resource.environment_name or consumer.environment_name
+            if not resolved_environment:
+                raise ResourceConflictError("runtime service environment is unavailable")
+            now = self._clock()
+            application = Application(
+                id=consumer.application_id,
+                organisation_id=credential.organisation_id,
+                display_name=resource.display_name,
+                created_at=now,
+                updated_at=now,
+            )
+            environment = Environment(
+                id=consumer.environment_id,
+                organisation_id=credential.organisation_id,
+                application_id=application.id,
+                display_name=resolved_environment,
+                production=(
+                    resource.production
+                    if resource.production is not None
+                    else resolved_environment.lower() == "production"
+                ),
+                region=resource.region or _runtime_region(resource.reference),
+                created_at=now,
+                updated_at=now,
+            )
+            service = ConsumerService(
+                id=consumer.service_id,
+                organisation_id=credential.organisation_id,
+                application_id=application.id,
+                environment_id=environment.id,
+                runtime_connection_id=consumer.runtime_connection_id,
+                runtime_resource=resource.reference,
+                display_name=resource.display_name,
+                endpoint=resource.endpoint,
+                identity=resource.identity,
+                created_at=now,
+                updated_at=now,
+            )
+            service_setup = (application, environment, service)
+        binding = ConsumerBinding(
+            id=consumer.binding_id,
+            organisation_id=credential.organisation_id,
+            credential_id=credential.id,
+            service_id=service.id,
+            environment_id=service.environment_id,
+            runtime_connection_id=service.runtime_connection_id,
+            runtime_resource=service.runtime_resource,
+            runtime_secret_name=consumer.runtime_secret_name,
+            runtime_container_name=consumer.runtime_container_name,
+            secret_reference=credential.secret_reference,
+            current_generation_id=generation.id,
+        )
+        return await self.import_credential(
+            credential,
+            generation,
+            (binding,),
+            preferences,
+            actor_id,
+            service_setup,
         )
 
     async def _verify_import_binding(
@@ -506,7 +749,7 @@ class InventoryService:
         matches = tuple(item for item in discovered if item.provider_id == identity)
         if len(matches) != 1 or matches[0].disabled is True:
             raise ResourceConflictError(
-                "stored secret does not match an active provider credential"
+                "This secret is not managed by the selected provider connection"
             )
         if matches[0].kind is None:
             raise ResourceConflictError("provider credential type is unavailable")
@@ -709,7 +952,7 @@ class InventoryService:
         runtime_connection_id: str | None = None,
         telemetry_connection_ids: tuple[str, ...] | None = None,
         runtime_resource: str | None = None,
-        verification: FunctionalVerification | None = None,
+        endpoint: str | None = None,
         repository: str | None = None,
         identity: str | None = None,
     ) -> ConsumerService:
@@ -723,7 +966,7 @@ class InventoryService:
             runtime_connection_id=runtime_connection_id,
             telemetry_connection_ids=telemetry_connection_ids,
             runtime_resource=runtime_resource,
-            verification=verification,
+            endpoint=endpoint,
             repository=repository,
             identity=identity,
         )
@@ -759,6 +1002,9 @@ class InventoryService:
     ) -> tuple[ManagedCredential, ControlVersion]:
         current = await self.get_credential(organisation_id, credential_id)
         _editable(current, expected_revision, "credential")
+        validate_exposure_sources(
+            _active(await self._repository.connections(organisation_id)), preferences
+        )
         previous = await self.get_controls(organisation_id, credential_id, current.control_version)
         definition = compile_update(previous.definition, preferences)
         controls = ControlVersion(
@@ -1038,6 +1284,43 @@ def _resource_covered(resource: str, boundaries: tuple[str, ...]) -> bool:
         resource == boundary or resource.startswith(boundary.rstrip("/") + "/")
         for boundary in boundaries
     )
+
+
+def _runtime_binding_matches(
+    resource: RuntimeResourceMetadata,
+    secret_resource: str,
+    secret_reference: str,
+    variable_name: str,
+    container_name: str | None,
+) -> bool:
+    version = secret_reference.rpartition("/versions/")[2]
+    project = (
+        resource.reference.split("/", 2)[1] if resource.reference.startswith("projects/") else ""
+    )
+    matches = tuple(
+        binding
+        for binding in resource.secret_bindings
+        if binding.name == variable_name
+        and binding.container == container_name
+        and binding.version == version
+        and (
+            binding.secret == secret_resource
+            or (bool(project) and f"projects/{project}/secrets/{binding.secret}" == secret_resource)
+        )
+    )
+    return len(matches) == 1
+
+
+def _runtime_region(resource: str) -> str:
+    parts = resource.split("/")
+    if (
+        len(parts) != 6
+        or parts[0] != "projects"
+        or parts[2] != "locations"
+        or parts[4] != "services"
+    ):
+        raise ResourceConflictError("runtime service resource is invalid")
+    return parts[3]
 
 
 def _domain_covered(domain: str, boundaries: tuple[str, ...]) -> bool:

@@ -7,6 +7,9 @@ class AuthenticatedIdentity:
     subject: str
     issuer: str
     email: str | None = None
+    email_verified: bool = False
+    display_name: str | None = None
+    connected_via: str = "Identity provider"
 
     @property
     def actor_id(self) -> str:

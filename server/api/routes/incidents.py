@@ -38,6 +38,11 @@ class RotationRequest(Contract):
     received_at: AwareDatetime
 
 
+class DismissRequest(Contract):
+    expected_revision: int = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=1024)
+
+
 class RotationResponse(Contract):
     incident: Incident
     run: RotationRun
@@ -135,3 +140,22 @@ async def rotate(
     )
     response.status_code = status.HTTP_201_CREATED if applied else status.HTTP_200_OK
     return RotationResponse(incident=incident, run=run, applied=applied)
+
+
+@router.post("/{incident_id}/dismiss", response_model=Incident)
+async def dismiss(
+    organisation_id: Identifier,
+    incident_id: Identifier,
+    body: DismissRequest,
+    identity: Identity,
+    request: Request,
+) -> Incident:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.INCIDENT_WRITE)
+    return await required(api.incidents, "incidents").dismiss(
+        organisation_id,
+        incident_id,
+        body.expected_revision,
+        body.reason,
+        identity.actor_id,
+    )

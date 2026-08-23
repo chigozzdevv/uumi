@@ -226,7 +226,6 @@ class Inventory:
                 runtime_secret_name="MAILER_API_KEY",
                 secret_reference="projects/project-one/secrets/mailer/versions/7",
                 current_generation_id="generation_one",
-                verification_id="verification_one",
             ),
         )
 

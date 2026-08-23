@@ -7,6 +7,7 @@ from contracts import (
     Confidence,
     ConsumerBinding,
     ConsumerService,
+    ControlVersion,
     CorrelationCandidate,
     CreateRunCommand,
     Incident,
@@ -61,6 +62,15 @@ class IncidentRepository(Protocol):
         updated_at: datetime,
     ) -> tuple[Incident, ...]: ...
 
+    async def dismiss(
+        self,
+        organisation_id: str,
+        incident_id: str,
+        expected_revision: int,
+        reason: str,
+        updated_at: datetime,
+    ) -> Incident: ...
+
 
 class IncidentInventory(Protocol):
     async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]: ...
@@ -68,6 +78,10 @@ class IncidentInventory(Protocol):
     async def services(self, organisation_id: str) -> tuple[ConsumerService, ...]: ...
 
     async def bindings(self, organisation_id: str) -> tuple[ConsumerBinding, ...]: ...
+
+    async def get_control_version(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion: ...
 
 
 class IncidentWorkflow(Protocol):
@@ -114,6 +128,7 @@ class IncidentService:
             organisation_id=event.organisation_id,
             event_id=event.id,
             source=event.source,
+            kind=event.kind,
             source_event_id=event.source_event_id,
             severity=event.severity,
             confidence=event.confidence,
@@ -218,6 +233,8 @@ class IncidentService:
             raise ResourceConflictError(
                 f"incident expected revision {expected_revision}, found {incident.revision}"
             )
+        if incident.status not in {IncidentStatus.CORRELATING, IncidentStatus.ACTION}:
+            raise ResourceConflictError("incident cannot be confirmed in its current state")
         if credential_id not in {item.credential_id for item in incident.candidates}:
             raise ResourceConflictError("credential is not a correlated incident candidate")
         candidates = tuple(
@@ -279,7 +296,8 @@ class IncidentService:
                 control_version=control_version,
                 run_id=run_id,
                 trigger=Trigger(
-                    source="incident",
+                    source=incident.source,
+                    kind=incident.kind,
                     event_id=incident.event_id,
                     actor_id=actor_id,
                     reason=reason,
@@ -320,6 +338,47 @@ class IncidentService:
             raise ValueError("run-linked incidents only advance to contained or resolved")
         return await self._repository.advance_run(organisation_id, run_id, status, self._clock())
 
+    async def dismiss(
+        self,
+        organisation_id: str,
+        incident_id: str,
+        expected_revision: int,
+        reason: str,
+        actor_id: str,
+    ) -> Incident:
+        incident = await self._repository.get(organisation_id, incident_id)
+        if incident.revision != expected_revision:
+            raise ResourceConflictError(
+                f"incident expected revision {expected_revision}, found {incident.revision}"
+            )
+        if incident.status is IncidentStatus.DISMISSED:
+            return incident
+        if incident.status not in {
+            IncidentStatus.NEW,
+            IncidentStatus.CORRELATING,
+            IncidentStatus.ACTION,
+        }:
+            raise ResourceConflictError("incident cannot be dismissed after rotation starts")
+        dismissed = await self._repository.dismiss(
+            organisation_id,
+            incident_id,
+            expected_revision,
+            reason,
+            self._clock(),
+        )
+        if self._audit is not None:
+            await self._audit.append(
+                _audit_id(dismissed.id, str(dismissed.revision)),
+                dismissed.organisation_id,
+                "incident.dismissed",
+                actor_id,
+                f"incidents/{dismissed.id}",
+                {"reason": reason, "revision": dismissed.revision},
+                run_id=dismissed.run_id,
+                occurred_at=dismissed.updated_at,
+            )
+        return dismissed
+
     async def _candidates(self, event: IngestionEvent) -> tuple[CorrelationCandidate, ...]:
         if self._inventory is None:
             return ()
@@ -334,6 +393,18 @@ class IncidentService:
             score = 0
             exact = False
             reason_values: list[str] = []
+            if event.resource.connection_id is not None and event.resource.repository is not None:
+                controls = await self._inventory.get_control_version(
+                    event.organisation_id, credential.id, credential.control_version
+                )
+                if any(
+                    source.connection_id == event.resource.connection_id
+                    and source.resource == event.resource.repository
+                    for source in controls.definition.exposure_sources
+                ):
+                    score += 200
+                    exact = True
+                    reason_values.append("configured exposure source matches exactly")
             if event.resource.credential_id == credential.id:
                 score += 200
                 exact = True

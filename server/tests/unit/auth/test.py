@@ -48,6 +48,9 @@ async def test_viewer_can_read_but_cannot_mutate() -> None:
 
     await access.require(IDENTITY, "org_one", Permission.RUN_READ)
     await access.require(IDENTITY, "org_one", Permission.AGENT_READ)
+    permissions = await access.permissions(IDENTITY, "org_one")
+    assert Permission.RUN_READ in permissions
+    assert Permission.NOTIFICATION_WRITE not in permissions
 
     with pytest.raises(AuthorizationError, match=r"run\.write"):
         await access.require(IDENTITY, "org_one", Permission.RUN_WRITE)
@@ -103,12 +106,18 @@ GCIP_CLAIMS = {
     "iss": "https://securetoken.google.com/firekey-project",
     "sub": "gcip-user-one",
     "email": "chigozie@acme.example",
+    "email_verified": True,
+    "name": "Chigozie Okafor",
+    "firebase": {"sign_in_provider": "google.com"},
 }
 
 GCIP_IDENTITY = AuthenticatedIdentity(
     subject="gcip-user-one",
     issuer="https://securetoken.google.com/firekey-project",
     email="chigozie@acme.example",
+    email_verified=True,
+    display_name="Chigozie Okafor",
+    connected_via="Google",
 )
 
 

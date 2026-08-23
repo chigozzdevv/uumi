@@ -344,6 +344,7 @@ class FirestoreInventoryRepository:
         bindings: tuple[ConsumerBinding, ...],
         controls: ControlVersion,
         probes: tuple[ProbeVersion, ...],
+        service_setup: tuple[Application, Environment, ConsumerService] | None = None,
     ) -> ManagedCredential:
         credential_ref = self._client.document(
             FirestorePaths.credential(credential.organisation_id, credential.id)
@@ -384,6 +385,27 @@ class FirestoreInventoryRepository:
                 credential.organisation_id, credential.secret_store_connection_id
             )
         )
+        setup_application_ref = (
+            self._client.document(
+                FirestorePaths.application(service_setup[0].organisation_id, service_setup[0].id)
+            )
+            if service_setup is not None
+            else None
+        )
+        setup_environment_ref = (
+            self._client.document(
+                FirestorePaths.environment(service_setup[1].organisation_id, service_setup[1].id)
+            )
+            if service_setup is not None
+            else None
+        )
+        setup_service_ref = (
+            self._client.document(
+                FirestorePaths.service(service_setup[2].organisation_id, service_setup[2].id)
+            )
+            if service_setup is not None
+            else None
+        )
 
         @async_transactional
         async def apply(transaction: AsyncTransaction) -> ManagedCredential:
@@ -404,24 +426,55 @@ class FirestoreInventoryRepository:
             runtime_snapshots = [
                 await reference.get(transaction=transaction) for reference in runtime_refs
             ]
+            setup_application_snapshot = (
+                await setup_application_ref.get(transaction=transaction)
+                if setup_application_ref is not None
+                else None
+            )
+            setup_environment_snapshot = (
+                await setup_environment_ref.get(transaction=transaction)
+                if setup_environment_ref is not None
+                else None
+            )
+            setup_service_snapshot = (
+                await setup_service_ref.get(transaction=transaction)
+                if setup_service_ref is not None
+                else None
+            )
             if credential_snapshot.exists or generation_snapshot.exists or controls_snapshot.exists:
                 raise ResourceConflictError(f"credential {credential.id} is already imported")
             if any(snapshot.exists for snapshot in probe_snapshots):
                 raise ResourceConflictError("one or more control probe versions already exist")
             if any(snapshot.exists for snapshot in binding_snapshots):
                 raise ResourceConflictError("one or more credential bindings already exist")
+            if any(
+                snapshot is not None and snapshot.exists
+                for snapshot in (
+                    setup_application_snapshot,
+                    setup_environment_snapshot,
+                    setup_service_snapshot,
+                )
+            ):
+                raise ResourceConflictError("runtime service inventory already exists")
+            setup_service = service_setup[2] if service_setup is not None else None
             if (
                 not connection_snapshot.exists
                 or not secret_connection_snapshot.exists
-                or any(not snapshot.exists for snapshot in service_snapshots)
+                or any(
+                    not snapshot.exists
+                    and (setup_service is None or binding.service_id != setup_service.id)
+                    for binding, snapshot in zip(bindings, service_snapshots, strict=True)
+                )
                 or any(not snapshot.exists for snapshot in runtime_snapshots)
             ):
                 raise ResourceNotFoundError("credential connection or consumer service is missing")
             management = Connection.model_validate(_snapshot_data(connection_snapshot))
             secret_store = Connection.model_validate(_snapshot_data(secret_connection_snapshot))
             services = tuple(
-                ConsumerService.model_validate(_snapshot_data(snapshot))
-                for snapshot in service_snapshots
+                setup_service
+                if setup_service is not None and binding.service_id == setup_service.id
+                else ConsumerService.model_validate(_snapshot_data(snapshot))
+                for binding, snapshot in zip(bindings, service_snapshots, strict=True)
             )
             runtimes = tuple(
                 Connection.model_validate(_snapshot_data(snapshot))
@@ -479,6 +532,17 @@ class FirestoreInventoryRepository:
                 binding.service_id for binding in bindings
             }:
                 raise ResourceConflictError("credential consumers changed during import")
+            if service_setup is not None:
+                application, environment, new_service = service_setup
+                if (
+                    application.organisation_id != credential.organisation_id
+                    or environment.organisation_id != credential.organisation_id
+                    or new_service.organisation_id != credential.organisation_id
+                    or environment.application_id != application.id
+                    or new_service.application_id != application.id
+                    or new_service.environment_id != environment.id
+                ):
+                    raise ResourceConflictError("runtime service inventory is inconsistent")
             for binding, service, runtime in zip(bindings, services, runtimes, strict=True):
                 if (
                     binding.organisation_id != credential.organisation_id
@@ -496,6 +560,14 @@ class FirestoreInventoryRepository:
                     or runtime.status is not ConnectionStatus.READY
                 ):
                     raise ResourceConflictError("credential consumer binding changed during import")
+            if service_setup is not None:
+                application, environment, new_service = service_setup
+                assert setup_application_ref is not None
+                assert setup_environment_ref is not None
+                assert setup_service_ref is not None
+                transaction.create(setup_application_ref, encode(application))
+                transaction.create(setup_environment_ref, encode(environment))
+                transaction.create(setup_service_ref, encode(new_service))
             transaction.create(credential_ref, encode(credential))
             transaction.create(generation_ref, encode(generation))
             transaction.create(controls_ref, encode(controls))

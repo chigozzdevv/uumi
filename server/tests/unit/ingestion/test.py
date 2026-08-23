@@ -13,6 +13,7 @@ from contracts import (
     ConsumerBinding,
     ConsumerService,
     ControlDefinition,
+    ControlPreferences,
     ControlVersion,
     Incident,
     IncidentStatus,
@@ -22,6 +23,7 @@ from contracts import (
     SourceResource,
 )
 from core.incident import IncidentService
+from core.inventory.controls import _trigger_events
 from core.workflow import RunWorkflow
 from fastapi import FastAPI
 from ingestion.app import _pubsub, _verify_hmac, github
@@ -49,6 +51,18 @@ def test_schedule_occurrence_is_stable_across_retries() -> None:
     assert first.id == retry.id
     assert first.source_event_id == f"schedule_one:{NOW.isoformat()}"
     assert first.resource.credential_id == "credential_one"
+
+
+def test_expiry_controls_include_explicit_due_schedules() -> None:
+    events = _trigger_events(
+        ControlPreferences(
+            automatic_triggers=frozenset({"expiry"}),
+            rotate_before_expiry_seconds=604800,
+            maximum_observation_seconds=1800,
+        )
+    )
+
+    assert events == frozenset({"credential-expiring", "credential-rotation-due"})
 
 
 def test_secret_manager_uses_authenticated_pubsub_attributes() -> None:
@@ -214,6 +228,31 @@ async def test_automatic_controls_start_exactly_correlated_run() -> None:
 
 
 @pytest.mark.anyio
+async def test_due_schedule_starts_rotation_under_expiry_controls() -> None:
+    credential = _credential()
+    inventory = Inventory(credential)
+    incidents = Incidents()
+    workflow = RunWorkflow(MemoryRunRepository(), clock=lambda: NOW)
+    service = IncidentService(incidents, lambda: NOW, inventory, workflow)
+    controls = _controls(frozenset({"credential-rotation-due"}))
+    automation = IncidentAutomation(service, inventory, Controls(controls))
+    event = ScheduleSource().normalise(
+        "org_one",
+        "schedule_one",
+        {"credential_id": credential.id, "due_at": NOW.isoformat()},
+        NOW,
+    )
+
+    incident, applied = await automation.ingest(event)
+
+    assert applied
+    assert incident.status is IncidentStatus.ROTATING
+    run = await workflow.get("org_one", incident.run_id or "")
+    assert run.trigger.source == "schedule"
+    assert run.trigger.reason == "The configured rotation time was reached."
+
+
+@pytest.mark.anyio
 async def test_high_confidence_single_candidate_requires_explicit_controls_threshold() -> None:
     credential = _credential().model_copy(update={"provider_id": None})
     inventory = Inventory(credential, repository="example/mailer")
@@ -319,6 +358,26 @@ class Incidents:
     ) -> tuple[Incident, ...]:
         return ()
 
+    async def dismiss(
+        self,
+        organisation_id: str,
+        incident_id: str,
+        expected_revision: int,
+        reason: str,
+        updated_at: datetime,
+    ) -> Incident:
+        current = self.values[incident_id]
+        changed = current.model_copy(
+            update={
+                "status": IncidentStatus.DISMISSED,
+                "dismissal_reason": reason,
+                "updated_at": updated_at,
+                "revision": current.revision + 1,
+            }
+        )
+        self.values[incident_id] = changed
+        return changed
+
 
 class Inventory:
     def __init__(self, credential: ManagedCredential, repository: str | None = None) -> None:
@@ -362,9 +421,16 @@ class Inventory:
                 runtime_secret_name="MAILER_API_KEY",
                 secret_reference="projects/project-one/secrets/mailer/versions/1",
                 current_generation_id="generation_one",
-                verification_id="verification_one",
             ),
         )
+
+    async def get_control_version(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion:
+        controls = _controls()
+        assert credential_id == controls.credential_id
+        assert version_id == controls.id
+        return controls
 
 
 class Controls:
@@ -397,14 +463,21 @@ def _credential() -> ManagedCredential:
     )
 
 
-def _controls() -> ControlVersion:
+def _controls(
+    automatic_triggers: frozenset[str] = frozenset({"credential-exposure-detected"}),
+) -> ControlVersion:
     definition = ControlDefinition(
         required_checks=REQUIRED_CHECKS,
         allowed_tools=frozenset({"verification.run"}),
         allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
         maximum_observation_seconds=1800,
-        automatic_triggers=frozenset({"credential-exposure-detected"}),
-        emergency_triggers=frozenset({"credential-exposure-detected"}),
+        require_revoke_approval=True,
+        automatic_triggers=automatic_triggers,
+        emergency_triggers=(
+            frozenset({"credential-exposure-detected"})
+            if "credential-exposure-detected" in automatic_triggers
+            else frozenset()
+        ),
         minimum_automatic_confidence=Confidence.HIGH,
     )
     return ControlVersion(

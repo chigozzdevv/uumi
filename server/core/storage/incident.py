@@ -159,6 +159,36 @@ class FirestoreIncidentRepository:
             )
         return tuple(incidents)
 
+    async def dismiss(
+        self,
+        organisation_id: str,
+        incident_id: str,
+        expected_revision: int,
+        reason: str,
+        updated_at: datetime,
+    ) -> Incident:
+        current = await self.get(organisation_id, incident_id)
+        if current.status is IncidentStatus.DISMISSED:
+            return current
+        if current.status not in {
+            IncidentStatus.NEW,
+            IncidentStatus.CORRELATING,
+            IncidentStatus.ACTION,
+        }:
+            raise ResourceConflictError(
+                f"incident {incident_id} cannot be dismissed from {current.status.value}"
+            )
+        return await self._update(
+            organisation_id,
+            incident_id,
+            expected_revision,
+            {
+                "status": IncidentStatus.DISMISSED,
+                "dismissal_reason": reason,
+                "updated_at": updated_at,
+            },
+        )
+
     async def _update(
         self,
         organisation_id: str,

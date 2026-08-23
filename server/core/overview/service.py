@@ -1,4 +1,6 @@
 import asyncio
+from collections.abc import Callable
+from datetime import datetime
 from typing import Protocol
 
 from contracts import (
@@ -48,7 +50,10 @@ class OverviewIncidents(Protocol):
 
 class OverviewApprovals(Protocol):
     async def count_approvals(
-        self, organisation_id: str, decisions: frozenset[ApprovalDecision]
+        self,
+        organisation_id: str,
+        decisions: frozenset[ApprovalDecision],
+        active_at: datetime | None = None,
     ) -> int: ...
 
 
@@ -59,11 +64,13 @@ class OverviewService:
         runs: OverviewRuns,
         incidents: OverviewIncidents,
         approvals: OverviewApprovals,
+        clock: Callable[[], datetime],
     ) -> None:
         self._credentials = credentials
         self._runs = runs
         self._incidents = incidents
         self._approvals = approvals
+        self._clock = clock
 
     async def summary(self, organisation_id: str) -> OverviewSummary:
         (
@@ -77,7 +84,11 @@ class OverviewService:
             self._runs.count_runs(organisation_id, _ACTIVE_RUNS),
             self._runs.count_runs(organisation_id, _FAILED_RUNS),
             self._incidents.count_incidents(organisation_id, _OPEN_INCIDENTS),
-            self._approvals.count_approvals(organisation_id, _PENDING_APPROVALS),
+            self._approvals.count_approvals(
+                organisation_id,
+                _PENDING_APPROVALS,
+                self._clock(),
+            ),
         )
         return OverviewSummary(
             credentials=credentials,

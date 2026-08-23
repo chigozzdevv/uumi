@@ -3,6 +3,7 @@ from typing import Annotated
 from contracts import (
     Approval,
     ApprovalDecision,
+    ApprovalEvidenceSnapshot,
     Contract,
     Identifier,
     ProtectedAction,
@@ -102,6 +103,20 @@ async def decide(
         body.decision,
         identity.actor_id,
     )
+
+
+@router.get("/{approval_id}/evidence", response_model=ApprovalEvidenceSnapshot)
+async def evidence(
+    organisation_id: Identifier,
+    approval_id: Identifier,
+    identity: Identity,
+    request: Request,
+) -> ApprovalEvidenceSnapshot:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.APPROVAL_READ)
+    if api.history is None:
+        raise ResourceConflictError("approval evidence is unavailable")
+    return await api.history.approval_evidence(organisation_id, approval_id)
 
 
 @router.post("/{approval_id}/consume", response_model=Approval)

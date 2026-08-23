@@ -1,8 +1,11 @@
+import hashlib
 from uuid import uuid4
 
 from browser.setup import BrowserSetupApi
 from contracts import (
     Application,
+    ApprovalDecision,
+    CancelRunCommand,
     Connection,
     ConsumerBinding,
     ConsumerService,
@@ -11,10 +14,12 @@ from contracts import (
     ControlVersion,
     CredentialGeneration,
     Environment,
-    FunctionalVerification,
     Identifier,
+    IncidentStatus,
     ManagedCredential,
     ProviderCredentialMetadata,
+    RunStatus,
+    RuntimeConsumerSetup,
     RuntimeResourceMetadata,
     SecretResourceMetadata,
     SecretVersionMetadata,
@@ -32,11 +37,26 @@ router = APIRouter(
     tags=["inventory"],
 )
 
+_ACTIVE_RUN_STATUSES = frozenset(
+    {
+        RunStatus.PENDING,
+        RunStatus.RUNNING,
+        RunStatus.PAUSED,
+        RunStatus.RECOVERING,
+        RunStatus.CLEANUP,
+    }
+)
+_OPEN_INCIDENT_STATUSES = frozenset(
+    status
+    for status in IncidentStatus
+    if status not in {IncidentStatus.RESOLVED, IncidentStatus.DISMISSED}
+)
+
 
 class ImportCredentialRequest(Contract):
     credential: ManagedCredential
     generation: CredentialGeneration
-    bindings: tuple[ConsumerBinding, ...]
+    consumer: RuntimeConsumerSetup
     controls: ControlPreferences
 
 
@@ -52,19 +72,29 @@ class InventoryGraph(Contract):
 
 
 class ApplicationSetupRequest(Contract):
+    application_id: Identifier
+    environment_id: Identifier
+    service_id: Identifier
+    runtime_connection_id: Identifier
+    runtime_resource: str = Field(min_length=1, max_length=512)
+    environment_name: str | None = Field(default=None, min_length=1, max_length=160)
+
+
+class ApplicationSetupResponse(Contract):
     application: Application
     environment: Environment
     service: ConsumerService
 
 
-class ApplicationSetupResponse(ApplicationSetupRequest):
-    pass
+class ServiceSetupRequest(Contract):
+    id: Identifier
+    application_id: Identifier
+    environment_id: Identifier
+    runtime_connection_id: Identifier
+    runtime_resource: str = Field(min_length=1, max_length=512)
 
 
 class BeginSetupRequest(Contract):
-    secret_container: str = Field(
-        pattern=r"^projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+$", max_length=1024
-    )
     extra_domains: tuple[str, ...] = Field(default=(), max_length=20)
 
 
@@ -133,7 +163,7 @@ class ServiceUpdateRequest(RevisionRequest):
     runtime_connection_id: Identifier | None = None
     telemetry_connection_ids: tuple[Identifier, ...] | None = None
     runtime_resource: str | None = Field(default=None, min_length=1, max_length=512)
-    verification: FunctionalVerification | None = None
+    endpoint: str | None = Field(default=None, max_length=2048)
     repository: str | None = Field(default=None, min_length=1, max_length=256)
     identity: str | None = Field(default=None, min_length=1, max_length=512)
 
@@ -199,11 +229,17 @@ async def add_application_setup(
 ) -> ApplicationSetupResponse:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
-    for value in (body.application, body.environment, body.service):
-        _organisation(value.organisation_id, organisation_id)
     application, environment, service = await required(
         api.inventory, "inventory"
-    ).add_application_setup(body.application, body.environment, body.service)
+    ).add_discovered_application_setup(
+        organisation_id,
+        body.application_id,
+        body.environment_id,
+        body.service_id,
+        body.runtime_connection_id,
+        body.runtime_resource,
+        body.environment_name,
+    )
     return ApplicationSetupResponse(
         application=application,
         environment=environment,
@@ -227,14 +263,20 @@ async def add_environment(
 @router.post("/services", response_model=ConsumerService, status_code=status.HTTP_201_CREATED)
 async def add_service(
     organisation_id: Identifier,
-    body: ConsumerService,
+    body: ServiceSetupRequest,
     identity: Identity,
     request: Request,
 ) -> ConsumerService:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
-    _organisation(body.organisation_id, organisation_id)
-    return await required(api.inventory, "inventory").add_service(body)
+    return await required(api.inventory, "inventory").add_discovered_service(
+        organisation_id,
+        body.id,
+        body.application_id,
+        body.environment_id,
+        body.runtime_connection_id,
+        body.runtime_resource,
+    )
 
 
 @router.post("/credentials", response_model=ManagedCredential)
@@ -249,10 +291,12 @@ async def import_credential(
     await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
     _organisation(body.credential.organisation_id, organisation_id)
     _organisation(body.generation.organisation_id, organisation_id)
-    for binding in body.bindings:
-        _organisation(binding.organisation_id, organisation_id)
-    result = await required(api.inventory, "inventory").import_credential(
-        body.credential, body.generation, body.bindings, body.controls, identity.actor_id
+    result = await required(api.inventory, "inventory").import_discovered_credential(
+        body.credential,
+        body.generation,
+        body.consumer,
+        body.controls,
+        identity.actor_id,
     )
     response.status_code = status.HTTP_201_CREATED
     return result
@@ -621,7 +665,7 @@ async def update_service(
         runtime_connection_id=body.runtime_connection_id,
         telemetry_connection_ids=body.telemetry_connection_ids,
         runtime_resource=body.runtime_resource,
-        verification=body.verification,
+        endpoint=body.endpoint,
         repository=body.repository,
         identity=body.identity,
     )
@@ -761,8 +805,65 @@ async def archive_credential(
 ) -> ManagedCredential:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
-    changed = await required(api.inventory, "inventory").archive_credential(
-        organisation_id, credential_id, body.expected_revision, body.cascade
+    inventory = required(api.inventory, "inventory")
+    credential = await inventory.get_credential(organisation_id, credential_id)
+    if credential.revision != body.expected_revision:
+        raise ResourceConflictError(
+            f"credential expected revision {body.expected_revision}, found {credential.revision}"
+        )
+    if not body.cascade:
+        changed = await inventory.archive_credential(
+            organisation_id, credential_id, body.expected_revision, False
+        )
+        await _audit_change(
+            api,
+            organisation_id,
+            identity.actor_id,
+            "credential.archived",
+            credential_id,
+            changed.revision,
+        )
+        return changed
+    all_runs = await api.workflow.list_runs(organisation_id, None, 500)
+    related_runs = tuple(run for run in all_runs if run.credential_id == credential_id)
+    active_runs = tuple(run for run in related_runs if run.status in _ACTIVE_RUN_STATUSES)
+    for run in active_runs:
+        await api.workflow.cancel(
+            CancelRunCommand(
+                id=_delete_command_id(credential_id, run.id),
+                organisation_id=organisation_id,
+                run_id=run.id,
+                actor_id=identity.actor_id,
+                expected_revision=run.revision,
+            )
+        )
+    related_run_ids = {run.id for run in related_runs}
+    pending_approvals = await required(api.approvals, "approvals").list_approvals(
+        organisation_id, frozenset({ApprovalDecision.PENDING}), 500
+    )
+    for approval in pending_approvals:
+        if approval.run_id in related_run_ids:
+            await required(api.approvals, "approvals").decide(
+                organisation_id,
+                approval.id,
+                approval.revision,
+                ApprovalDecision.CANCELLED,
+                identity.actor_id,
+            )
+    open_incidents = await required(api.incidents, "incidents").list_incidents(
+        organisation_id, _OPEN_INCIDENT_STATUSES, 500
+    )
+    for incident in open_incidents:
+        if incident.credential_id == credential_id:
+            await required(api.incidents, "incidents").dismiss(
+                organisation_id,
+                incident.id,
+                incident.revision,
+                "Credential removed from FireKey.",
+                identity.actor_id,
+            )
+    changed = await inventory.archive_credential(
+        organisation_id, credential_id, body.expected_revision, True
     )
     await _audit_change(
         api,
@@ -773,6 +874,11 @@ async def archive_credential(
         changed.revision,
     )
     return changed
+
+
+def _delete_command_id(credential_id: str, run_id: str) -> str:
+    value = hashlib.sha256(f"{credential_id}\0{run_id}\0delete".encode()).hexdigest()
+    return f"cmd_{value[:40]}"
 
 
 @router.get("/graph", response_model=InventoryGraph)
@@ -811,7 +917,6 @@ async def begin_setup(
     session, token = await setup.begin(
         organisation_id,
         connection_id,
-        body.secret_container,
         identity.subject,
         body.extra_domains,
     )

@@ -14,7 +14,6 @@ from contracts import (
     ControlVersion,
     CredentialGeneration,
     Environment,
-    FunctionalVerification,
     GenerationState,
     ManagedCredential,
     PageCheckpoint,
@@ -26,6 +25,7 @@ from contracts import (
     PlaybookVersion,
     ProbeKind,
     ProbeVersion,
+    RuntimeConsumerSetup,
     SecureField,
     Selector,
     SelectorKind,
@@ -69,12 +69,33 @@ class ImportVerifier:
         return self.identity
 
 
+class ImportRuntimeMetadata:
+    async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+        return (
+            {
+                "reference": "projects/project-one/locations/us-east1/services/service-one",
+                "display_name": "service-one",
+                "secret_bindings": (
+                    {
+                        "name": "PROVIDER_KEY",
+                        "secret": "key",
+                        "version": "1",
+                        "container": None,
+                    },
+                ),
+            },
+        )
+
+
 class Catalog:
     def __init__(self) -> None:
         self.version: PlaybookVersion | None = None
         self.playbook: Playbook | None = None
         self.credential_values: tuple[ManagedCredential, ...] = ()
         self.binding_values: tuple[ConsumerBinding, ...] = ()
+        self.imported_controls: ControlVersion | None = None
+        self.imported_probes: tuple[ProbeVersion, ...] = ()
+        self.imported_service_setup: tuple[Application, Environment, ConsumerService] | None = None
         self.archived_resources: tuple[
             Connection | Application | Environment | ConsumerService | ManagedCredential, ...
         ] = ()
@@ -293,11 +314,7 @@ class Catalog:
             runtime_connection_id="runtime_one",
             runtime_resource="projects/project-one/locations/us-east1/services/service-one",
             display_name="Service one",
-            verification=FunctionalVerification(
-                kind=ProbeKind.HTTP,
-                target="https://service.example/verify",
-                required_fields={"success": True},
-            ),
+            endpoint="https://service.example",
             identity="service-one@example.iam.gserviceaccount.com",
             created_at=NOW,
             updated_at=NOW,
@@ -321,7 +338,11 @@ class Catalog:
         bindings: tuple[ConsumerBinding, ...],
         controls: ControlVersion,
         probes: tuple[ProbeVersion, ...],
+        service_setup: tuple[Application, Environment, ConsumerService] | None = None,
     ) -> ManagedCredential:
+        self.imported_controls = controls
+        self.imported_probes = probes
+        self.imported_service_setup = service_setup
         return credential
 
     async def replace_controls(
@@ -462,11 +483,12 @@ async def test_inventory_rejects_missing_consumer_binding() -> None:
 
 
 @pytest.mark.anyio
-async def test_inventory_compiles_functional_probe_and_recovery_from_service_choices() -> None:
+async def test_inventory_compiles_connector_probes_and_recovery_from_service_choices() -> None:
     repository = Catalog()
     service = InventoryService(
         repository,
         clock=lambda: NOW,
+        runtime_metadata=ImportRuntimeMetadata(),
         provider_metadata=ImportMetadata(),
         credential_verifier=ImportVerifier(),
     )
@@ -509,7 +531,6 @@ async def test_inventory_compiles_functional_probe_and_recovery_from_service_cho
         runtime_secret_name="PROVIDER_KEY",
         secret_reference=credential.secret_reference,
         current_generation_id=generation.id,
-        verification_id="probe_functional_one",
     )
 
     imported = await service.import_credential(
@@ -525,6 +546,136 @@ async def test_inventory_compiles_functional_probe_and_recovery_from_service_cho
     )
 
     assert imported == credential
+    assert repository.imported_controls is not None
+    assert repository.imported_controls.definition.require_revoke_approval is False
+    assert repository.imported_controls.definition.protected_tools == frozenset()
+    assert (
+        "approvers-known"
+        not in repository.imported_controls.definition.required_checks[Stage.PREFLIGHT]
+    )
+    assert repository.imported_controls.definition.required_checks[Stage.APPROVAL] == frozenset(
+        {"approval-not-required", "evidence-current"}
+    )
+    assert repository.imported_controls.definition.require_generation_telemetry is False
+    assert (
+        "telemetry-healthy"
+        not in repository.imported_controls.definition.required_checks[Stage.VERIFY]
+    )
+    verify_kinds = {
+        probe.definition.kind
+        for probe in repository.imported_probes
+        if probe.id in repository.imported_controls.definition.probe_versions[Stage.VERIFY]
+    }
+    assert verify_kinds == {
+        ProbeKind.PROVIDER,
+        ProbeKind.CREDENTIAL,
+        ProbeKind.SECRET,
+        ProbeKind.RUNTIME,
+    }
+
+
+@pytest.mark.anyio
+async def test_inventory_imports_new_runtime_service_with_credential() -> None:
+    class RuntimeMetadata:
+        async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+            return (
+                {
+                    "reference": "projects/project-one/locations/us-east1/services/service-two",
+                    "display_name": "service-two",
+                    "endpoint": "https://service-two.example.run.app",
+                    "identity": "service-two@example.iam.gserviceaccount.com",
+                    "region": "us-east1",
+                    "environment_name": "Production",
+                    "production": True,
+                    "secret_bindings": (
+                        {
+                            "name": "PROVIDER_KEY",
+                            "secret": "key",
+                            "version": "1",
+                            "container": None,
+                        },
+                    ),
+                },
+            )
+
+    repository = Catalog()
+    repository.connection_values["runtime_one"] = repository.connection_values[
+        "runtime_one"
+    ].model_copy(update={"capabilities": frozenset({"runtime.listServices"})})
+    service = InventoryService(
+        repository,
+        clock=lambda: NOW,
+        runtime_metadata=RuntimeMetadata(),
+        provider_metadata=ImportMetadata(),
+        credential_verifier=ImportVerifier(),
+    )
+    credential = ManagedCredential(
+        id="credential_two",
+        organisation_id="org_one",
+        connection_id="provider_one",
+        secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
+        secret_reference="projects/project-one/secrets/key/versions/1",
+        provider="provider",
+        kind="api-key",
+        display_name="Production key",
+        provider_id="provider_key_one",
+        scopes=frozenset({"messages.write"}),
+        consumer_ids=("service_two",),
+        active_generation_id="generation_two",
+        control_version="control_two",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    generation = CredentialGeneration(
+        id="generation_two",
+        organisation_id="org_one",
+        credential_id=credential.id,
+        provider_id="provider_key_one",
+        state=GenerationState.ACTIVE,
+        attempt_id="attempt_two",
+        secret_reference=credential.secret_reference,
+        created_at=NOW,
+    )
+
+    consumer = RuntimeConsumerSetup(
+        application_id="application_two",
+        environment_id="environment_two",
+        service_id="service_two",
+        binding_id="binding_two",
+        runtime_connection_id="runtime_one",
+        runtime_resource="projects/project-one/locations/us-east1/services/service-two",
+        runtime_secret_name="PROVIDER_KEY",
+    )
+    preferences = ControlPreferences(
+        automatic_triggers=frozenset({"expiry"}),
+        rotate_before_expiry_seconds=604800,
+        maximum_observation_seconds=1800,
+    )
+
+    with pytest.raises(ResourceConflictError, match="does not use the selected secret version"):
+        await service.import_discovered_credential(
+            credential,
+            generation,
+            consumer.model_copy(update={"runtime_secret_name": "UNRELATED_KEY"}),
+            preferences,
+            "actor_one",
+        )
+
+    imported = await service.import_discovered_credential(
+        credential,
+        generation,
+        consumer,
+        preferences,
+        "actor_one",
+    )
+
+    assert imported == credential
+    assert repository.imported_service_setup is not None
+    application, environment, imported_service = repository.imported_service_setup
+    assert application.display_name == "service-two"
+    assert environment.display_name == "Production"
+    assert imported_service.runtime_resource.endswith("/services/service-two")
 
 
 @pytest.mark.anyio
@@ -533,6 +684,7 @@ async def test_inventory_rejects_a_secret_for_another_provider_credential() -> N
     service = InventoryService(
         repository,
         clock=lambda: NOW,
+        runtime_metadata=ImportRuntimeMetadata(),
         provider_metadata=ImportMetadata(),
         credential_verifier=ImportVerifier("another_provider_key"),
     )
@@ -576,10 +728,9 @@ async def test_inventory_rejects_a_secret_for_another_provider_credential() -> N
         runtime_secret_name="PROVIDER_KEY",
         secret_reference=credential.secret_reference,
         current_generation_id=generation.id,
-        verification_id="probe_functional_one",
     )
 
-    with pytest.raises(ResourceConflictError, match="does not match"):
+    with pytest.raises(ResourceConflictError, match="not managed"):
         await service.import_credential(
             credential,
             generation,
@@ -623,7 +774,6 @@ async def test_confirmed_service_archive_includes_bound_credential_and_binding()
         runtime_secret_name="PROVIDER_KEY",
         secret_reference=credential.secret_reference,
         current_generation_id="generation_one",
-        verification_id="probe_functional_one",
     )
     repository.credential_values = (credential,)
     repository.binding_values = (binding,)
@@ -765,6 +915,77 @@ async def test_application_setup_validates_relationships_before_atomic_write() -
 
 
 @pytest.mark.anyio
+async def test_application_setup_derives_runtime_service_metadata() -> None:
+    class RuntimeMetadata:
+        async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+            return (
+                {
+                    "reference": "projects/project-one/locations/us-east1/services/service-two",
+                    "display_name": "service-two",
+                    "endpoint": "https://service-two.example.run.app",
+                    "identity": "service-two@example.iam.gserviceaccount.com",
+                    "region": "us-east1",
+                    "environment_name": None,
+                    "production": None,
+                },
+            )
+
+    repository = Catalog()
+    repository.connection_values["runtime_one"] = repository.connection_values[
+        "runtime_one"
+    ].model_copy(update={"capabilities": frozenset({"runtime.listServices"})})
+    inventory = InventoryService(repository, clock=lambda: NOW, runtime_metadata=RuntimeMetadata())
+
+    application, environment, service = await inventory.add_discovered_application_setup(
+        "org_one",
+        "application_two",
+        "environment_two",
+        "service_two",
+        "runtime_one",
+        "projects/project-one/locations/us-east1/services/service-two",
+        "Production",
+    )
+
+    assert application.display_name == "service-two"
+    assert environment.region == "us-east1"
+    assert environment.production is True
+    assert service.display_name == "service-two"
+    assert service.endpoint == "https://service-two.example.run.app"
+
+
+@pytest.mark.anyio
+async def test_service_setup_derives_runtime_metadata() -> None:
+    class RuntimeMetadata:
+        async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+            return (
+                {
+                    "reference": "projects/project-one/locations/us-east1/services/service-two",
+                    "display_name": "service-two",
+                    "endpoint": "https://service-two.example.run.app",
+                    "identity": "service-two@example.iam.gserviceaccount.com",
+                },
+            )
+
+    repository = Catalog()
+    repository.connection_values["runtime_one"] = repository.connection_values[
+        "runtime_one"
+    ].model_copy(update={"capabilities": frozenset({"runtime.listServices"})})
+    inventory = InventoryService(repository, clock=lambda: NOW, runtime_metadata=RuntimeMetadata())
+
+    service = await inventory.add_discovered_service(
+        "org_one",
+        "service_two",
+        "application_one",
+        "environment_one",
+        "runtime_one",
+        "projects/project-one/locations/us-east1/services/service-two",
+    )
+
+    assert service.display_name == "service-two"
+    assert service.identity == "service-two@example.iam.gserviceaccount.com"
+
+
+@pytest.mark.anyio
 async def test_browser_connection_requires_domains_and_capability() -> None:
     service = InventoryService(Catalog())
     browser = _browser_connection().model_copy(update={"allowed_resources": ("invalid",)})
@@ -807,6 +1028,72 @@ async def test_provider_connection_is_ready_only_after_live_metadata_validation(
     assert created.status is ConnectionStatus.READY
     assert created.authenticated_at == NOW
     assert created.last_validated_at == NOW
+
+
+@pytest.mark.anyio
+async def test_google_connections_are_ready_only_after_read_only_discovery() -> None:
+    class RuntimeMetadata:
+        async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+            assert connection.platform == "cloud-run"
+            return ()
+
+    class SecretMetadata:
+        async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+            assert connection.platform == "google-secret-manager"
+            return ()
+
+        async def versions_for(
+            self, connection: Connection, secret: str
+        ) -> tuple[dict[str, object], ...]:
+            return ()
+
+    repository = Catalog()
+    runtime = _api_connection("runtime_new", ConnectionRole.RUNTIME).model_copy(
+        update={
+            "status": ConnectionStatus.SETUP_REQUIRED,
+            "authenticated_at": None,
+            "last_validated_at": None,
+        }
+    )
+    secret_store = _api_connection("secret_new", ConnectionRole.SECRET_STORE).model_copy(
+        update={
+            "status": ConnectionStatus.SETUP_REQUIRED,
+            "authenticated_at": None,
+            "last_validated_at": None,
+        }
+    )
+    service = InventoryService(
+        repository,
+        clock=lambda: NOW,
+        runtime_metadata=RuntimeMetadata(),
+        secret_metadata=SecretMetadata(),
+    )
+
+    created_runtime = await service.add_connection(runtime)
+    created_secret_store = await service.add_connection(secret_store)
+
+    assert created_runtime.status is ConnectionStatus.READY
+    assert created_runtime.authenticated_at == NOW
+    assert created_runtime.last_validated_at == NOW
+    assert created_secret_store.status is ConnectionStatus.READY
+    assert created_secret_store.authenticated_at == NOW
+    assert created_secret_store.last_validated_at == NOW
+
+
+@pytest.mark.anyio
+async def test_google_connections_fail_closed_when_discovery_is_unavailable() -> None:
+    runtime = _api_connection("runtime_new", ConnectionRole.RUNTIME).model_copy(
+        update={"status": ConnectionStatus.SETUP_REQUIRED}
+    )
+    secret_store = _api_connection("secret_new", ConnectionRole.SECRET_STORE).model_copy(
+        update={"status": ConnectionStatus.SETUP_REQUIRED}
+    )
+    service = InventoryService(Catalog())
+
+    with pytest.raises(ResourceConflictError, match="runtime connection validation"):
+        await service.add_connection(runtime)
+    with pytest.raises(ResourceConflictError, match="secret-store connection validation"):
+        await service.add_connection(secret_store)
 
 
 def test_audit_hash_binds_sequence_and_previous_event() -> None:
@@ -910,7 +1197,12 @@ def _api_connection(identifier: str, role: ConnectionRole) -> Connection:
             if role is ConnectionRole.PROVIDER
             else "workload-identity://service"
         ),
-        capabilities=frozenset({f"{role.value}.operate"}),
+        capabilities=frozenset(
+            {
+                f"{role.value}.operate",
+                *({"runtime.listServices"} if role is ConnectionRole.RUNTIME else set()),
+            }
+        ),
         allowed_resources=allowed,
         http=make_http_provider_api() if role is ConnectionRole.PROVIDER else None,
         status=ConnectionStatus.READY,
@@ -935,8 +1227,8 @@ def _draft() -> PlaybookDraft:
                 effect=PlaybookEffect.CREATE_CREDENTIAL,
                 tool="browser.secure-capture",
                 operation="capture",
-                objective="Create and capture the replacement credential",
-                selectors=(selector,),
+                objective="Submit the credential creation form",
+                selectors=(Selector(kind=SelectorKind.TEST_ID, value="create-credential"),),
                 checkpoint=checkpoint,
                 secure_field=SecureField(
                     name="api_key",
@@ -949,7 +1241,7 @@ def _draft() -> PlaybookDraft:
                 id="revoke_key",
                 stage=Stage.REVOKE,
                 effect=PlaybookEffect.REVOKE_CREDENTIAL,
-                tool="browser.click",
+                tool="browser.revokeCredential",
                 operation="revoke",
                 objective="Revoke the prior credential",
                 selectors=(selector,),

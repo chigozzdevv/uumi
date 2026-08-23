@@ -5,17 +5,22 @@ from contracts import (
     Confidence,
     ConsumerBinding,
     ConsumerService,
+    ControlDefinition,
+    ControlVersion,
     CorrelationCandidate,
+    ExposureSource,
     Incident,
     IncidentStatus,
     IngestionEvent,
     ManagedCredential,
+    RecoveryMode,
     Severity,
     SourceResource,
 )
 from core.errors import ResourceConflictError
 from core.incident import IncidentService
 from core.workflow import RunWorkflow
+from policy import REQUIRED_CHECKS, digest
 from testkit import MemoryRunRepository
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -112,10 +117,35 @@ class Incidents:
             values.append(changed)
         return tuple(values)
 
+    async def dismiss(
+        self,
+        organisation_id: str,
+        incident_id: str,
+        expected_revision: int,
+        reason: str,
+        updated_at: datetime,
+    ) -> Incident:
+        current = self.values[incident_id]
+        changed = current.model_copy(
+            update={
+                "status": IncidentStatus.DISMISSED,
+                "dismissal_reason": reason,
+                "updated_at": updated_at,
+                "revision": current.revision + 1,
+            }
+        )
+        self.values[incident_id] = changed
+        return changed
+
 
 class Inventory:
-    def __init__(self, credentials: tuple[ManagedCredential, ...]) -> None:
+    def __init__(
+        self,
+        credentials: tuple[ManagedCredential, ...],
+        exposure_sources: dict[str, tuple[ExposureSource, ...]] | None = None,
+    ) -> None:
         self._credentials = credentials
+        self._exposure_sources = exposure_sources or {}
 
     async def credentials(self, organisation_id: str) -> tuple[ManagedCredential, ...]:
         return self._credentials
@@ -125,6 +155,28 @@ class Inventory:
 
     async def bindings(self, organisation_id: str) -> tuple[ConsumerBinding, ...]:
         return tuple(_binding(item.id) for item in self._credentials)
+
+    async def get_control_version(
+        self, organisation_id: str, credential_id: str, version_id: str
+    ) -> ControlVersion:
+        definition = ControlDefinition(
+            required_checks=REQUIRED_CHECKS,
+            allowed_tools=frozenset({"verification.run"}),
+            allowed_recovery_modes=frozenset({RecoveryMode.ROLLBACK}),
+            maximum_observation_seconds=1800,
+            require_revoke_approval=True,
+            exposure_sources=self._exposure_sources.get(credential_id, ()),
+        )
+        return ControlVersion(
+            id=version_id,
+            organisation_id=organisation_id,
+            credential_id=credential_id,
+            number=1,
+            definition=definition,
+            digest=digest(definition),
+            created_by="actor_one",
+            created_at=NOW,
+        )
 
 
 @pytest.fixture
@@ -164,7 +216,7 @@ async def test_exact_provider_identity_correlates_and_starts_rotation() -> None:
     assert created
     assert linked.status is IncidentStatus.ROTATING
     assert linked.run_id == run.id
-    assert run.trigger.source == "incident"
+    assert run.trigger.source == "github-secret-scanning"
     assert run.credential_id == "credential_one"
 
     contained = await service.advance_run("org_one", run.id, IncidentStatus.CONTAINED)
@@ -199,6 +251,65 @@ async def test_ambiguous_repository_match_requires_explicit_confirmation() -> No
     assert confirmed.status is IncidentStatus.ACTION
     assert confirmed.credential_id == "credential_two"
     assert sum(item.confidence is Confidence.VERIFIED for item in confirmed.candidates) == 1
+
+
+@pytest.mark.anyio
+async def test_incident_cannot_be_dismissed_after_rotation_starts() -> None:
+    repository = Incidents()
+    workflow = RunWorkflow(MemoryRunRepository(), clock=lambda: NOW)
+    service = IncidentService(
+        repository,
+        lambda: NOW,
+        Inventory((_credential("credential_one", "provider-key-one"),)),
+        workflow,
+    )
+    incident, _ = await service.ingest("incident_one", _event("provider-key-one"))
+    linked, _, _ = await service.start_rotation(
+        "org_one",
+        incident.id,
+        "command_one",
+        "operator_one",
+        "policy_one",
+        "credential exposed",
+        "critical",
+        NOW,
+    )
+
+    with pytest.raises(ResourceConflictError, match="after rotation starts"):
+        await service.dismiss(
+            "org_one", linked.id, linked.revision, "False positive", "operator_one"
+        )
+
+
+@pytest.mark.anyio
+async def test_configured_exposure_source_correlates_one_credential() -> None:
+    repository = Incidents()
+    source = ExposureSource(connection_id="connection_github", resource="example/mailer")
+    service = IncidentService(
+        repository,
+        lambda: NOW,
+        Inventory(
+            (
+                _credential("credential_one", "provider-key-one"),
+                _credential("credential_two", "provider-key-two"),
+            ),
+            {"credential_one": (source,)},
+        ),
+    )
+    event = _event(None).model_copy(
+        update={
+            "resource": SourceResource(
+                connection_id="connection_github",
+                repository="example/mailer",
+            )
+        }
+    )
+
+    incident, _ = await service.ingest("incident_one", event)
+
+    assert incident.status is IncidentStatus.ACTION
+    assert incident.credential_id == "credential_one"
+    assert incident.candidates[0].confidence is Confidence.VERIFIED
 
 
 @pytest.mark.anyio
@@ -275,7 +386,6 @@ def _binding(credential_id: str) -> ConsumerBinding:
         runtime_secret_name="MAILER_API_KEY",
         secret_reference="projects/project-one/secrets/mailer/versions/1",
         current_generation_id="generation_one",
-        verification_id="verification_one",
     )
 
 
