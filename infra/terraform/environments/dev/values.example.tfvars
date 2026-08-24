@@ -20,7 +20,6 @@ gateway_image                      = null
 notification_image                 = null
 auditlog_image                     = null
 notification_app_url               = null
-# Immutable Secret Manager version containing FireKey's Resend API key.
 notification_email_secret_version  = null
 notification_email_sender          = null
 github_app_slug                    = null
