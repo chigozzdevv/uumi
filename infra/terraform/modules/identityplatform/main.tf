@@ -3,7 +3,7 @@ resource "google_identity_platform_config" "default" {
 
   sign_in {
     email {
-      enabled           = true
+      enabled           = false
       password_required = true
     }
   }
