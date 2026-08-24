@@ -48,13 +48,14 @@ class GitHubOnboardingConnector:
     async def _exchange(self, code: str, verifier: str) -> SecretValue:
         client_secret = await self._secrets.access(self._client_secret_reference)
         try:
+            secret = client_secret.bytes().decode().strip()
             try:
                 response = await self._client.post(
                     "https://github.com/login/oauth/access_token",
                     headers={"Accept": "application/json"},
                     data={
                         "client_id": self._client_id,
-                        "client_secret": client_secret.bytes().decode(),
+                        "client_secret": secret,
                         "code": code,
                         "redirect_uri": self._redirect_uri,
                         "code_verifier": verifier,
@@ -73,7 +74,17 @@ class GitHubOnboardingConnector:
         value = response.json()
         token = value.get("access_token") if isinstance(value, dict) else None
         if not isinstance(token, str) or not token:
-            raise ConnectorAuthenticationError("GitHub OAuth returned no user access token")
+            reason = value.get("error") if isinstance(value, dict) else None
+            messages = {
+                "bad_verification_code": "GitHub authorization expired or was already used",
+                "incorrect_client_credentials": "GitHub OAuth client credentials were rejected",
+                "redirect_uri_mismatch": (
+                    "GitHub OAuth callback URL does not match the app configuration"
+                ),
+            }
+            raise ConnectorAuthenticationError(
+                messages.get(reason, "GitHub OAuth returned no user access token")
+            )
         return SecretValue(token.encode())
 
     async def _installation(self, token: SecretValue, installation_id: int) -> dict[str, Any]:

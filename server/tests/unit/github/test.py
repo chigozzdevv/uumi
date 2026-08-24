@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
+from connectors.base.errors import ConnectorAuthenticationError
 from connectors.github import GitHubOnboardingConnector, GitHubWebhook
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
@@ -134,7 +135,7 @@ async def test_connector_uses_user_access_to_verify_installation_without_persist
     def google_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"payload": {"data": base64.b64encode(b"oauth-client-secret").decode()}},
+            json={"payload": {"data": base64.b64encode(b"oauth-client-secret\n").decode()}},
         )
 
     google = GoogleRestClient(
@@ -157,6 +158,39 @@ async def test_connector_uses_user_access_to_verify_installation_without_persist
     assert repositories[0]["secret_scanning"] == "enabled"
     assert "temporary-user-token" not in encoded
     assert "oauth-client-secret" in oauth_bodies[0]
+    assert "%0A" not in oauth_bodies[0]
+    await github.aclose()
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_connector_surfaces_safe_github_oauth_errors() -> None:
+    def github_handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "github.com"
+        return httpx.Response(200, json={"error": "incorrect_client_credentials"})
+
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"oauth-client-secret").decode()}},
+        )
+
+    google = GoogleRestClient(
+        credentials=Credentials(token="google-token"),  # type: ignore[no-untyped-call]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
+    )
+    github = httpx.AsyncClient(transport=httpx.MockTransport(github_handler))
+    connector = GitHubOnboardingConnector(
+        "client-one",
+        "projects/project-one/secrets/github-oauth/versions/1",
+        "https://app.uumi.example/github/callback",
+        SecretManagerConnector(google),
+        github,
+    )
+
+    with pytest.raises(ConnectorAuthenticationError, match="client credentials were rejected"):
+        await connector.verify("code-one", "verifier-one", 123)
+
     await github.aclose()
     await google.close()
 

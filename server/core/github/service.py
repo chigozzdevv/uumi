@@ -7,6 +7,7 @@ from secrets import token_urlsafe
 from typing import Protocol
 from urllib.parse import urlencode
 
+from connectors.base.errors import ConnectorAuthenticationError
 from connectors.github import GitHubOnboardingConnector
 from contracts import (
     GitHubInstallation,
@@ -140,9 +141,12 @@ class GitHubOnboardingService:
         if session.status is GitHubOnboardingStatus.DISCOVERED:
             assert session.installation is not None
             return session, session.installation, session.repositories
-        metadata, repository_metadata = await self._connector.verify(
-            code, verifier, installation_id
-        )
+        try:
+            metadata, repository_metadata = await self._connector.verify(
+                code, verifier, installation_id
+            )
+        except ConnectorAuthenticationError as error:
+            raise ResourceConflictError(str(error)) from None
         permissions = metadata["permissions"]
         events = metadata["events"]
         if permissions.get("secret_scanning_alerts") not in {"read", "write"}:
