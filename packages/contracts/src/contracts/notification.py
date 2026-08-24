@@ -19,6 +19,7 @@ class NotificationKind(StrEnum):
     REVOCATION_SUCCEEDED = "revocation-succeeded"
     ROTATION_COMPLETED = "rotation-completed"
     CLEANUP_REQUIRED = "cleanup-required"
+    TEAM_INVITATION = "team-invitation"
 
 
 class NotificationChannel(StrEnum):

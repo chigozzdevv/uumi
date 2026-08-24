@@ -1,4 +1,12 @@
-from contracts import AccountProfile, Contract, Identifier, MemberRole, TeamMember
+from contracts import (
+    AccountProfile,
+    Contract,
+    Identifier,
+    MemberRole,
+    NotificationKind,
+    Severity,
+    TeamMember,
+)
 from core.auth import Permission
 from core.ids import new_id
 from fastapi import APIRouter, Request, status
@@ -94,11 +102,37 @@ async def invite(
 ) -> TeamMember:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.TEAM_WRITE)
-    member = await required(api.accounts, "accounts").invite(
+    accounts = required(api.accounts, "accounts")
+    notifications = required(api.notifications, "notifications")
+    notifications.ensure_email_delivery()
+    session = await accounts.session(identity)
+    membership = next(
+        (item for item in session.organisations if item.organisation.id == organisation_id),
+        None,
+    )
+    if membership is None:
+        raise RuntimeError("authorised organisation membership is missing")
+    await notifications.register_invitation_endpoint(organisation_id, body.email)
+    member = await accounts.invite(
         organisation_id,
         identity,
         body.email,
         body.role,
+    )
+    inviter = identity.display_name or identity.email or "A Uumi administrator"
+    role = body.role.value.replace("-", " ").title()
+    await notifications.emit(
+        f"team-invited-{member.id}-{member.revision}",
+        organisation_id,
+        NotificationKind.TEAM_INVITATION,
+        Severity.LOW,
+        f"Join {membership.organisation.name} on Uumi",
+        (
+            f"{inviter} invited you to join {membership.organisation.name} "
+            f"as {role}. The invitation expires in 7 days."
+        ),
+        "/auth",
+        member.id,
     )
     if api.audit is not None:
         await api.audit.append(

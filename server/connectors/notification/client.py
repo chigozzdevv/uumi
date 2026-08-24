@@ -6,6 +6,7 @@ import httpx
 from contracts import (
     Notification,
     NotificationEndpoint,
+    NotificationKind,
     NotificationProvider,
     Severity,
 )
@@ -166,6 +167,8 @@ class NotificationConnector:
         return response
 
     def _text(self, notification: Notification) -> str:
+        if notification.kind is NotificationKind.TEAM_INVITATION:
+            return f"{notification.body}\n\nOpen Uumi: {self._link(notification)}"
         return (
             f"{notification.title}\n\n{notification.body}\n\n"
             f"Resource: {notification.resource_id}\nOpen Uumi: {self._link(notification)}"

@@ -166,6 +166,32 @@ async def test_email_endpoint_requires_platform_delivery_configuration() -> None
         )
 
 
+async def test_invitation_endpoint_is_deterministic_and_system_owned() -> None:
+    repository = Notifications()
+    service = NotificationService(
+        repository,
+        lambda: NOW,
+        EmailDeliveryConfiguration(
+            "projects/uumi-project/secrets/email-delivery/versions/2",
+            "invite@uumi.example",
+        ),
+    )
+
+    first = await service.register_invitation_endpoint(
+        "org_one",
+        "NEW.MEMBER@ACME.EXAMPLE ",
+    )
+    second = await service.register_invitation_endpoint(
+        "org_one",
+        "new.member@acme.example",
+    )
+
+    assert first.id == second.id
+    assert first.principal_id is None
+    assert first.recipients == ("new.member@acme.example",)
+    assert first.event_kinds == frozenset({NotificationKind.TEAM_INVITATION})
+
+
 async def test_api_email_delivery_configuration_is_complete_and_immutable() -> None:
     base = {
         "project_id": "uumi-project",

@@ -143,6 +143,59 @@ async def test_resend_delivery_is_idempotent_and_hides_the_api_key() -> None:
     await connector.close()
 
 
+async def test_invitation_email_contains_only_invite_copy_and_auth_link() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request.read()
+        requests.append(request)
+        return httpx.Response(200, json={"id": "email_invite"})
+
+    class ResendSecrets:
+        async def access(self, version: str) -> SecretValue:
+            return SecretValue(b"re_provider_auth")
+
+    connector = NotificationConnector(
+        ResendSecrets(),
+        "https://uumi.web.app",
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    notification = Notification(
+        id="notification_invite",
+        organisation_id="org_one",
+        kind=NotificationKind.TEAM_INVITATION,
+        severity=Severity.LOW,
+        title="Join Acme on Uumi",
+        body="Chigozie invited you to join Acme as Viewer. The invitation expires in 7 days.",
+        link_path="/auth",
+        resource_id="member_one",
+        created_at=NOW,
+    )
+    endpoint = NotificationEndpoint(
+        id="endpoint_invite",
+        organisation_id="org_one",
+        display_name="new.member@acme.example",
+        channel=NotificationChannel.EMAIL,
+        provider=NotificationProvider.RESEND,
+        auth_reference="projects/project-one/secrets/notification/versions/1",
+        event_kinds=frozenset({NotificationKind.TEAM_INVITATION}),
+        recipients=("new.member@acme.example",),
+        sender="invite@uumi.example",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    receipt = await connector.send(notification, endpoint, "delivery_invite")
+
+    assert receipt == "email_invite"
+    payload = requests[0].content.decode()
+    assert "https://uumi.web.app/auth" in payload
+    assert "member_one" not in payload
+    assert "Resource:" not in payload
+    assert "re_provider_auth" not in payload
+    await connector.close()
+
+
 async def test_dispatcher_retries_only_retryable_failures() -> None:
     claim = _claim()
     repository = Deliveries([claim])

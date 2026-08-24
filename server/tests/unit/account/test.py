@@ -8,6 +8,9 @@ from api.deps import ApiServices
 from contracts import (
     MemberRole,
     MemberStatus,
+    Notification,
+    NotificationEndpoint,
+    NotificationKind,
     Organisation,
     OrganisationMembership,
     TeamInvitation,
@@ -15,6 +18,7 @@ from contracts import (
 from core.account import AccountService
 from core.auth import AccessControl, AuthenticatedIdentity, PrincipalGrant, Role
 from core.errors import ResourceConflictError, ResourceNotFoundError
+from core.notification import EmailDeliveryConfiguration, NotificationService
 from core.workflow import RunWorkflow
 from testkit import MemoryRunRepository
 
@@ -220,6 +224,55 @@ class Accounts:
         return changed
 
 
+class Notifications:
+    def __init__(self) -> None:
+        self.values: dict[str, Notification] = {}
+        self.endpoints: dict[str, NotificationEndpoint] = {}
+
+    async def emit(self, notification: Notification) -> tuple[Notification, bool]:
+        self.values[notification.id] = notification
+        return notification, True
+
+    async def list_notifications(
+        self,
+        organisation_id: str,
+        limit: int,
+    ) -> tuple[Notification, ...]:
+        return tuple(self.values.values())[:limit]
+
+    async def mark_read(
+        self,
+        organisation_id: str,
+        notification_id: str,
+        expected_revision: int,
+        read_at: datetime,
+    ) -> Notification:
+        raise AssertionError("not used")
+
+    async def register_endpoint(
+        self,
+        endpoint: NotificationEndpoint,
+    ) -> NotificationEndpoint:
+        self.endpoints[endpoint.id] = endpoint
+        return endpoint
+
+    async def list_endpoints(
+        self,
+        organisation_id: str,
+    ) -> tuple[NotificationEndpoint, ...]:
+        return tuple(self.endpoints.values())
+
+    async def set_endpoint_enabled(
+        self,
+        organisation_id: str,
+        endpoint_id: str,
+        expected_revision: int,
+        enabled: bool,
+        updated_at: datetime,
+    ) -> NotificationEndpoint:
+        raise AssertionError("not used")
+
+
 async def test_profile_uses_identity_metadata_and_updates_only_the_name() -> None:
     service = AccountService(Accounts(), lambda: NOW)
 
@@ -323,6 +376,15 @@ async def test_member_cannot_change_own_access() -> None:
 async def test_settings_api_exposes_profile_and_team_mutations() -> None:
     repository = Accounts()
     service = AccountService(repository, lambda: NOW)
+    notification_repository = Notifications()
+    notifications = NotificationService(
+        notification_repository,
+        lambda: NOW,
+        EmailDeliveryConfiguration(
+            "projects/uumi-project/secrets/email-delivery/versions/2",
+            "invite@uumi.example",
+        ),
+    )
 
     class Tokens:
         async def verify(self, token: str) -> AuthenticatedIdentity:
@@ -335,6 +397,7 @@ async def test_settings_api_exposes_profile_and_team_mutations() -> None:
             access=AccessControl(repository),
             tokens=Tokens(),
             accounts=service,
+            notifications=notifications,
         )
     )
     transport = httpx.ASGITransport(app=application)
@@ -359,6 +422,11 @@ async def test_settings_api_exposes_profile_and_team_mutations() -> None:
     assert profile.json()["connected_via"] == "Google"
     assert invited.status_code == 201
     assert invited.json()["status"] == "pending"
+    assert len(notification_repository.endpoints) == 1
+    invitation = next(iter(notification_repository.values.values()))
+    assert invitation.kind is NotificationKind.TEAM_INVITATION
+    assert invitation.title == "Join Acme on Uumi"
+    assert invitation.link_path == "/auth"
     assert any(member["email"] == "new.member@acme.example" for member in team.json())
     assert session.status_code == 200
     assert session.json()["organisations"][0]["organisation"]["name"] == "Acme"

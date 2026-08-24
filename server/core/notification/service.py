@@ -95,6 +95,10 @@ class NotificationService:
         )
         return await self._repository.emit(notification)
 
+    def ensure_email_delivery(self) -> None:
+        if self._email_delivery is None:
+            raise ResourceConflictError("email delivery is not configured")
+
     async def list_notifications(
         self, organisation_id: str, limit: int = 100
     ) -> tuple[Notification, ...]:
@@ -162,6 +166,29 @@ class NotificationService:
             (email,),
             self._email_delivery.sender,
             principal_id,
+        )
+
+    async def register_invitation_endpoint(
+        self,
+        organisation_id: str,
+        email_address: str,
+    ) -> NotificationEndpoint:
+        self.ensure_email_delivery()
+        assert self._email_delivery is not None
+        email = email_address.strip().lower()
+        identity = hashlib.sha256(
+            f"{organisation_id}\0{email}\0team-invitation".encode()
+        ).hexdigest()
+        return await self.register_endpoint(
+            f"endpoint_{identity[:40]}",
+            organisation_id,
+            email,
+            NotificationChannel.EMAIL,
+            NotificationProvider.RESEND,
+            self._email_delivery.auth_reference,
+            frozenset({NotificationKind.TEAM_INVITATION}),
+            (email,),
+            self._email_delivery.sender,
         )
 
     async def list_endpoints(self, organisation_id: str) -> tuple[NotificationEndpoint, ...]:
