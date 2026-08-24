@@ -23,6 +23,10 @@ module "identity" {
       display_name = "Uumi API"
       description  = "Runs the private Uumi control-plane API."
     }
+    "uumi-web" = {
+      display_name = "Uumi Web Gateway"
+      description  = "Authenticates browser requests before invoking the private API."
+    }
     "uumi-events" = {
       display_name = "Uumi Event Delivery"
       description  = "Invokes the outbox publisher from Eventarc and Cloud Scheduler."
@@ -73,19 +77,19 @@ module "identity" {
 }
 
 resource "google_service_account_iam_member" "event_workflow" {
-  service_account_id = module.identity.emails["uumi-workflow"]
+  service_account_id = module.identity.names["uumi-workflow"]
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = module.identity.members["uumi-events"]
 }
 
 resource "google_service_account_iam_member" "workflow_token" {
-  service_account_id = module.identity.emails["uumi-workflow"]
+  service_account_id = module.identity.names["uumi-workflow"]
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = module.identity.members["uumi-workflow"]
 }
 
 resource "google_service_account_iam_member" "coordinator_token" {
-  service_account_id = module.identity.emails["uumi-coordinator"]
+  service_account_id = module.identity.names["uumi-coordinator"]
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = module.identity.members["uumi-coordinator"]
 }
@@ -152,6 +156,7 @@ module "browser" {
   source = "../../modules/browser"
 
   project_id             = var.project_id
+  project_number         = data.google_project.current.number
   region                 = var.region
   zone                   = var.zone
   worker_service_account = module.identity.emails["uumi-browser"]
@@ -167,8 +172,11 @@ locals {
     var.capability_secret_version,
     "${module.storage.capability_secret}/versions/1"
   )
-  runtime_images = compact([
+  control_plane_images = compact([
     var.api_image,
+    var.web_image,
+  ])
+  automation_images = compact([
     var.publisher_image,
     var.ingestion_image,
     var.broker_image,
@@ -180,11 +188,21 @@ locals {
   ])
 }
 
+check "complete_control_plane" {
+  assert {
+    condition = length(local.control_plane_images) == 0 || (
+      length(local.control_plane_images) == 2 &&
+      var.capability_secret_version != null
+    )
+    error_message = "Deploy the API and authenticated web gateway together with an immutable capability secret version."
+  }
+}
+
 check "complete_runtime" {
   assert {
-    condition = length(local.runtime_images) == 0 || (
-      length(local.runtime_images) == 9 &&
-      var.capability_secret_version != null &&
+    condition = length(local.automation_images) == 0 || (
+      length(local.automation_images) == 8 &&
+      length(local.control_plane_images) == 2 &&
       var.notification_app_url != null &&
       var.notification_email_secret_version != null &&
       var.notification_email_sender != null &&
@@ -200,7 +218,7 @@ check "complete_runtime" {
       length(var.workflow_organisations) > 0 &&
       length(var.gateway_users) > 0
     )
-    error_message = "Deploy all nine runtime images together with explicit capability, GitHub App, email delivery, callback, perimeter, browser egress, organisation grant, and IAP gateway configuration."
+    error_message = "Deploy all eight automation images together with the control plane, GitHub App, email delivery, perimeter, browser egress, organisation grant, and IAP gateway configuration."
   }
 }
 
@@ -254,7 +272,7 @@ check "perimeter_access_policy" {
 
 check "scc_tenants" {
   assert {
-    condition     = setsubtract(toset(keys(var.scc_sources)), var.workflow_organisations) == toset([])
+    condition     = length(setsubtract(toset(keys(var.scc_sources)), var.workflow_organisations)) == 0
     error_message = "Every SCC source must map to an authorised Uumi organisation."
   }
 }
@@ -262,15 +280,15 @@ check "scc_tenants" {
 check "ingestion_tenants" {
   assert {
     condition = (
-      setsubtract(var.secret_sources, var.workflow_organisations) == toset([]) &&
-      setsubtract(
+      length(setsubtract(var.secret_sources, var.workflow_organisations)) == 0 &&
+      length(setsubtract(
         toset([for source in values(var.provider_sources) : source.organisation_id]),
         var.workflow_organisations,
-      ) == toset([]) &&
-      setsubtract(
+      )) == 0 &&
+      length(setsubtract(
         toset([for schedule in values(var.rotation_schedules) : schedule.organisation_id]),
         var.workflow_organisations,
-      ) == toset([])
+      )) == 0
     )
     error_message = "Every ingestion source must map to an authorised Uumi organisation."
   }
@@ -282,6 +300,7 @@ module "runtime" {
   project_id                   = var.project_id
   region                       = var.region
   api_service_account          = module.identity.emails["uumi-api"]
+  web_service_account          = module.identity.emails["uumi-web"]
   ingestion_service_account    = module.identity.emails["uumi-ingestion"]
   publisher_service_account    = module.identity.emails["uumi-publisher"]
   broker_service_account       = module.identity.emails["uumi-broker"]
@@ -289,26 +308,26 @@ module "runtime" {
   notification_service_account = module.identity.emails["uumi-notification"]
   auditlog_service_account     = module.identity.emails["uumi-auditlog"]
   api_member                   = module.identity.members["uumi-api"]
+  web_member                   = module.identity.members["uumi-web"]
   coordinator_member           = module.identity.members["uumi-coordinator"]
   workflow_member              = module.identity.members["uumi-workflow"]
   event_member                 = module.identity.members["uumi-events"]
   scc_push_service_account     = module.identity.emails["uumi-events"]
   oidc_audience                = var.oidc_audience
-  github_app_slug              = coalesce(var.github_app_slug, "")
-  github_client_id             = coalesce(var.github_client_id, "")
-  github_client_secret_version = coalesce(var.github_client_secret_version, "")
-  github_callback_url          = coalesce(var.github_callback_url, "")
-  google_cloud_client_id       = coalesce(var.google_cloud_client_id, "")
-  google_cloud_client_secret_version = coalesce(
-    var.google_cloud_client_secret_version,
-    "",
+  github_app_slug              = var.github_app_slug == null ? "" : var.github_app_slug
+  github_client_id             = var.github_client_id == null ? "" : var.github_client_id
+  github_client_secret_version = var.github_client_secret_version == null ? "" : var.github_client_secret_version
+  github_callback_url          = var.github_callback_url == null ? "" : var.github_callback_url
+  google_cloud_client_id       = var.google_cloud_client_id == null ? "" : var.google_cloud_client_id
+  google_cloud_client_secret_version = (
+    var.google_cloud_client_secret_version == null ? "" : var.google_cloud_client_secret_version
   )
-  google_cloud_callback_url = coalesce(var.google_cloud_callback_url, "")
-  github_webhook_secret_version = coalesce(
-    var.github_webhook_secret_version,
-    "",
+  google_cloud_callback_url = var.google_cloud_callback_url == null ? "" : var.google_cloud_callback_url
+  github_webhook_secret_version = (
+    var.github_webhook_secret_version == null ? "" : var.github_webhook_secret_version
   )
   api_image            = var.api_image
+  web_image            = var.web_image
   ingestion_image      = var.ingestion_image
   publisher_image      = var.publisher_image
   broker_image         = var.broker_image
@@ -316,11 +335,10 @@ module "runtime" {
   notification_image   = var.notification_image
   auditlog_image       = var.auditlog_image
   notification_app_url = var.notification_app_url
-  notification_email_secret_version = coalesce(
-    var.notification_email_secret_version,
-    "",
+  notification_email_secret_version = (
+    var.notification_email_secret_version == null ? "" : var.notification_email_secret_version
   )
-  notification_email_sender = coalesce(var.notification_email_sender, "")
+  notification_email_sender = (var.notification_email_sender == null ? "" : var.notification_email_sender)
   browser_image             = var.browser_image
   browser_gateway_url       = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
   evidence_bucket           = module.storage.evidence_bucket
@@ -354,7 +372,7 @@ module "perimeter" {
 }
 
 locals {
-  agent_trust_domain = coalesce(data.google_project.current.org_id, "") != "" ? (
+  agent_trust_domain = data.google_project.current.org_id != null && data.google_project.current.org_id != "" ? (
     "agents.global.org-${data.google_project.current.org_id}.system.id.goog"
     ) : (
     "agents.global.project-${data.google_project.current.number}.system.id.goog"
@@ -531,6 +549,7 @@ locals {
     gateway      = module.identity.members["uumi-gateway"]
     notification = module.identity.members["uumi-notification"]
     publisher    = module.identity.members["uumi-publisher"]
+    web          = module.identity.members["uumi-web"]
   }
   telemetry_runtime_grants = merge([
     for account, member in local.telemetry_runtime_roles : {

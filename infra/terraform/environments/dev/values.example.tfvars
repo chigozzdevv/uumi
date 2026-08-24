@@ -11,6 +11,7 @@ identity_platform_domains = ["uumi.web.app", "useuumi.firebaseapp.com"]
 
 workflow_organisations             = ["org_replace"]
 api_image                          = null
+web_image                          = null
 publisher_image                    = null
 ingestion_image                    = null
 broker_image                       = null

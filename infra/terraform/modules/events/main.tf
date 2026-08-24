@@ -9,11 +9,12 @@ locals {
   secrets   = var.ingestion_uri == null ? toset([]) : var.secret_sources
   schedules = var.ingestion_uri == null ? {} : var.rotation_schedules
   detection = var.ingestion_uri == null ? toset([]) : var.detection_organisations
-  reapers = (
-    var.api_uri == null || var.reaper_service_account == null
-    ? toset([])
-    : var.reaper_organisations
-  )
+  reapers = {
+    for organisation_id in var.reaper_organisations : organisation_id => {
+      api_uri         = var.api_uri
+      service_account = var.reaper_service_account
+    }
+  }
   notification = (
     var.notification_name == null || var.notification_uri == null
     ? {}
@@ -569,7 +570,7 @@ resource "google_cloud_scheduler_job" "run_reaper" {
 
   project          = var.project_id
   region           = var.region
-  name             = "uumi-run-reaper-${replace(each.value, "_", "-")}"
+  name             = "uumi-run-reaper-${replace(each.key, "_", "-")}"
   description      = "Recovers expired run leases and interrupted cleanup transitions."
   schedule         = "* * * * *"
   time_zone        = "Etc/UTC"
@@ -585,15 +586,25 @@ resource "google_cloud_scheduler_job" "run_reaper" {
 
   http_target {
     http_method = "POST"
-    uri         = "${var.api_uri}/v1/organisations/${each.value}/runs/reap"
+    uri         = "${each.value.api_uri}/v1/organisations/${each.key}/runs/reap"
     body        = base64encode("{}")
     headers = {
       "Content-Type" = "application/json"
     }
 
     oidc_token {
-      service_account_email = var.reaper_service_account
+      service_account_email = each.value.service_account
       audience              = var.oidc_audience
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition = (
+        each.value.api_uri != null &&
+        each.value.service_account != null
+      )
+      error_message = "Run reapers require an API URI and service account."
     }
   }
 }

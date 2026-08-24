@@ -13,6 +13,11 @@ variable "api_service_account" {
   type        = string
 }
 
+variable "web_service_account" {
+  description = "Service account email assigned to the authenticated web gateway."
+  type        = string
+}
+
 variable "publisher_service_account" {
   description = "Service account email assigned to the publisher revision."
   type        = string
@@ -52,6 +57,16 @@ variable "scc_push_service_account" {
 variable "coordinator_member" {
   description = "Coordinator IAM member allowed to invoke the MCP broker."
   type        = string
+}
+
+variable "web_member" {
+  description = "Web gateway IAM member allowed to invoke the private API."
+  type        = string
+
+  validation {
+    condition     = startswith(var.web_member, "serviceAccount:")
+    error_message = "web_member must be a service account IAM member."
+  }
 }
 
 variable "api_member" {
@@ -205,6 +220,21 @@ variable "api_image" {
       can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.api_image))
     )
     error_message = "api_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "web_image" {
+  description = "Immutable authenticated web gateway image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.web_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.web_image))
+    )
+    error_message = "web_image must be null or an immutable sha256 image reference."
   }
 }
 

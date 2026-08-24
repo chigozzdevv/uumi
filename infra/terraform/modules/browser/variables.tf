@@ -3,6 +3,16 @@ variable "project_id" {
   type        = string
 }
 
+variable "project_number" {
+  description = "Numeric Google Cloud project identifier used for service-agent IAM members."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.project_number))
+    error_message = "project_number must contain only digits."
+  }
+}
+
 variable "region" {
   description = "Region for the browser VPC."
   type        = string
@@ -28,11 +38,11 @@ variable "allowed_domains" {
   type        = set(string)
 
   validation {
-    condition = length(var.allowed_domains) > 0 && alltrue([
+    condition = alltrue([
       for domain in var.allowed_domains :
       can(regex("^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", domain))
     ])
-    error_message = "allowed_domains must contain at least one lowercase DNS hostname without wildcards or paths."
+    error_message = "allowed_domains must contain only lowercase DNS hostnames without wildcards or paths."
   }
 }
 

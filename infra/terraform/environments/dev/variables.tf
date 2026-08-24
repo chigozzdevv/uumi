@@ -112,6 +112,21 @@ variable "api_image" {
   }
 }
 
+variable "web_image" {
+  description = "Immutable authenticated web gateway image reference; null leaves the web boundary disabled."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.web_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.web_image))
+    )
+    error_message = "web_image must be null or an immutable sha256 image reference."
+  }
+}
+
 variable "publisher_image" {
   description = "Immutable Uumi publisher image reference; null leaves delivery disabled."
   type        = string

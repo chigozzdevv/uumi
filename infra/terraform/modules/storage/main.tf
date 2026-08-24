@@ -1,3 +1,7 @@
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 resource "google_firestore_database" "primary" {
   project                           = var.project_id
   name                              = "(default)"
@@ -134,6 +138,8 @@ resource "google_logging_project_bucket_config" "audit" {
     kms_key_name = google_kms_crypto_key.evidence.id
   }
 
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["logging"]]
+
   lifecycle {
     prevent_destroy = true
   }
@@ -145,12 +151,6 @@ resource "google_logging_project_sink" "audit" {
   destination            = "logging.googleapis.com/${google_logging_project_bucket_config.audit.id}"
   filter                 = "logName=\"projects/${var.project_id}/logs/uumi-audit\""
   unique_writer_identity = true
-}
-
-resource "google_project_iam_member" "audit_sink" {
-  project = var.project_id
-  role    = "roles/logging.bucketWriter"
-  member  = google_logging_project_sink.audit.writer_identity
 }
 
 resource "google_kms_key_ring" "uumi" {
@@ -188,12 +188,6 @@ resource "google_project_service_identity" "aiplatform" {
   service  = "aiplatform.googleapis.com"
 }
 
-resource "google_project_service_identity" "video" {
-  provider = google-beta
-  project  = var.project_id
-  service  = "videointelligence.googleapis.com"
-}
-
 resource "google_project_service_identity" "logging" {
   provider = google-beta
   project  = var.project_id
@@ -202,11 +196,10 @@ resource "google_project_service_identity" "logging" {
 
 resource "google_kms_crypto_key_iam_member" "service_crypto" {
   for_each = {
-    storage       = google_project_service_identity.storage.member
-    secretmanager = google_project_service_identity.secretmanager.member
-    aiplatform    = google_project_service_identity.aiplatform.member
-    video         = google_project_service_identity.video.member
-    logging       = google_project_service_identity.logging.member
+    storage       = "serviceAccount:service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
+    secretmanager = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-secretmanager.iam.gserviceaccount.com"
+    aiplatform    = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+    logging       = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-logging.iam.gserviceaccount.com"
   }
 
   crypto_key_id = google_kms_crypto_key.evidence.id
@@ -235,6 +228,8 @@ resource "google_storage_bucket" "evidence" {
   encryption {
     default_kms_key_name = google_kms_crypto_key.evidence.id
   }
+
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["storage"]]
 
   lifecycle_rule {
     condition {
@@ -266,6 +261,8 @@ resource "google_storage_bucket" "agents" {
   encryption {
     default_kms_key_name = google_kms_crypto_key.evidence.id
   }
+
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["storage"]]
 
   lifecycle {
     prevent_destroy = true
@@ -303,6 +300,8 @@ resource "google_storage_bucket" "walkthroughs" {
     default_kms_key_name = google_kms_crypto_key.evidence.id
   }
 
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["storage"]]
+
   lifecycle_rule {
     condition {
       age = 30
@@ -326,10 +325,7 @@ resource "google_storage_bucket_iam_member" "walkthrough_create" {
 }
 
 resource "google_storage_bucket_iam_member" "walkthrough_view" {
-  for_each = merge(
-    var.walkthrough_user == null ? {} : { api = var.walkthrough_user },
-    { video = google_project_service_identity.video.member },
-  )
+  for_each = var.walkthrough_user == null ? {} : { api = var.walkthrough_user }
 
   bucket = google_storage_bucket.walkthroughs.name
   role   = "roles/storage.objectViewer"
@@ -391,6 +387,8 @@ resource "google_secret_manager_secret" "capability" {
     }
   }
 
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["secretmanager"]]
+
   deletion_protection = true
 }
 
@@ -419,6 +417,8 @@ resource "google_secret_manager_secret" "browser_session" {
       }
     }
   }
+
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["secretmanager"]]
 
   deletion_protection = true
 }
@@ -465,6 +465,8 @@ resource "google_secret_manager_secret" "github_webhook" {
     }
   }
 
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["secretmanager"]]
+
   deletion_protection = true
 }
 
@@ -491,6 +493,8 @@ resource "google_secret_manager_secret" "github_oauth" {
       }
     }
   }
+
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["secretmanager"]]
 
   deletion_protection = true
 }
@@ -520,6 +524,8 @@ resource "google_secret_manager_secret" "provider" {
       }
     }
   }
+
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["secretmanager"]]
 
   deletion_protection = true
 }

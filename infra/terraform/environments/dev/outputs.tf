@@ -23,6 +23,11 @@ output "api_uri" {
   value       = module.runtime.api_uri
 }
 
+output "web_uri" {
+  description = "Authenticated Uumi web gateway URI, or null before deployment."
+  value       = module.runtime.web_uri
+}
+
 output "identity_platform_issuer" {
   description = "Issuer of Identity Platform identity tokens for this project."
   value       = module.identityplatform.issuer

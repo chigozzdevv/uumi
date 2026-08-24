@@ -1,5 +1,6 @@
 locals {
   api       = var.api_image == null ? {} : { api = var.api_image }
+  web       = var.web_image == null || var.api_image == null ? {} : { web = var.web_image }
   publisher = var.publisher_image == null ? {} : { publisher = var.publisher_image }
   broker    = var.broker_image == null ? {} : { broker = var.broker_image }
   ingestion = var.ingestion_image == null ? {} : { ingestion = var.ingestion_image }
@@ -365,6 +366,117 @@ resource "google_artifact_registry_repository" "runtime" {
   }
 }
 
+resource "google_cloud_run_v2_service" "web" {
+  for_each = local.web
+
+  project             = var.project_id
+  location            = var.region
+  name                = "uumi-web"
+  description         = "Public transport boundary for authenticated Uumi API requests."
+  deletion_protection = true
+  ingress             = "INGRESS_TRAFFIC_ALL"
+
+  template {
+    service_account                  = var.web_service_account
+    timeout                          = "55s"
+    max_instance_request_concurrency = 80
+    execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 20
+    }
+
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+      network_interfaces {
+        network    = var.network
+        subnetwork = var.subnetwork
+        tags       = ["uumi-runtime"]
+      }
+    }
+
+    containers {
+      name  = "web"
+      image = each.value
+
+      ports {
+        name           = "http1"
+        container_port = 8080
+      }
+
+      env {
+        name  = "UUMI_PROJECT_ID"
+        value = var.project_id
+      }
+
+      env {
+        name  = "UUMI_REGION"
+        value = var.region
+      }
+
+      env {
+        name  = "UUMI_API_URL"
+        value = google_cloud_run_v2_service.api["api"].uri
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+        cpu_idle          = true
+        startup_cpu_boost = true
+      }
+
+      startup_probe {
+        timeout_seconds   = 2
+        period_seconds    = 2
+        failure_threshold = 15
+
+        http_get {
+          path = "/health/live"
+          port = 8080
+        }
+      }
+
+      liveness_probe {
+        initial_delay_seconds = 10
+        timeout_seconds       = 2
+        period_seconds        = 10
+        failure_threshold     = 3
+
+        http_get {
+          path = "/health/live"
+          port = 8080
+        }
+      }
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_service.api]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "web_public" {
+  for_each = google_cloud_run_v2_service.web
+
+  project  = each.value.project
+  location = each.value.location
+  name     = each.value.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "web_api" {
+  for_each = google_cloud_run_v2_service.api
+
+  project  = each.value.project
+  location = each.value.location
+  name     = each.value.name
+  role     = "roles/run.invoker"
+  member   = var.web_member
+}
+
 resource "google_cloud_run_v2_service" "api" {
   for_each = local.api
 
@@ -457,7 +569,7 @@ resource "google_cloud_run_v2_service" "api" {
 
       env {
         name  = "UUMI_BROWSER_WORKER_IMAGE"
-        value = coalesce(var.browser_image, "")
+        value = var.browser_image == null ? "" : var.browser_image
       }
 
       env {
