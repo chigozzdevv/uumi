@@ -127,6 +127,66 @@ resource "google_firestore_index" "active_approvals" {
   }
 }
 
+resource "google_firestore_field" "team_invitation_email" {
+  project         = var.project_id
+  database        = google_firestore_database.primary.name
+  collection      = "team-invitations"
+  field           = "email"
+  deletion_policy = "PREVENT"
+
+  index_config {
+    indexes {
+      order       = "ASCENDING"
+      query_scope = "COLLECTION"
+    }
+
+    indexes {
+      order       = "DESCENDING"
+      query_scope = "COLLECTION"
+    }
+
+    indexes {
+      order       = "ASCENDING"
+      query_scope = "COLLECTION_GROUP"
+    }
+
+    indexes {
+      order       = "DESCENDING"
+      query_scope = "COLLECTION_GROUP"
+    }
+  }
+}
+
+resource "google_firestore_field" "principal_subject" {
+  project         = var.project_id
+  database        = google_firestore_database.primary.name
+  collection      = "principals"
+  field           = "subject"
+  deletion_policy = "PREVENT"
+
+  index_config {
+    indexes {
+      order       = "ASCENDING"
+      query_scope = "COLLECTION"
+    }
+
+    indexes {
+      order       = "DESCENDING"
+      query_scope = "COLLECTION"
+    }
+
+    indexes {
+      order       = "ASCENDING"
+      query_scope = "COLLECTION_GROUP"
+    }
+
+    indexes {
+      order       = "DESCENDING"
+      query_scope = "COLLECTION_GROUP"
+    }
+  }
+}
+
 resource "google_logging_project_bucket_config" "audit" {
   project        = var.project_id
   location       = var.location
