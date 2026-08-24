@@ -19,52 +19,52 @@ module "identity" {
 
   project_id = var.project_id
   accounts = {
-    "firekey-api" = {
-      display_name = "FireKey API"
-      description  = "Runs the private FireKey control-plane API."
+    "uumi-api" = {
+      display_name = "Uumi API"
+      description  = "Runs the private Uumi control-plane API."
     }
-    "firekey-events" = {
-      display_name = "FireKey Event Delivery"
+    "uumi-events" = {
+      display_name = "Uumi Event Delivery"
       description  = "Invokes the outbox publisher from Eventarc and Cloud Scheduler."
     }
-    "firekey-ingestion" = {
-      display_name = "FireKey Incident Ingestion"
+    "uumi-ingestion" = {
+      display_name = "Uumi Incident Ingestion"
       description  = "Authenticates and correlates GitHub and SCC exposure events."
     }
-    "firekey-publisher" = {
-      display_name = "FireKey Publisher"
+    "uumi-publisher" = {
+      display_name = "Uumi Publisher"
       description  = "Claims and publishes durable run events."
     }
-    "firekey-workflow" = {
-      display_name = "FireKey Workflow"
-      description  = "Invokes authorised FireKey workflow transitions."
+    "uumi-workflow" = {
+      display_name = "Uumi Workflow"
+      description  = "Invokes authorised Uumi workflow transitions."
     }
-    "firekey-broker" = {
-      display_name = "FireKey MCP Broker"
+    "uumi-broker" = {
+      display_name = "Uumi MCP Broker"
       description  = "Executes capability-scoped provider and runtime tools."
     }
-    "firekey-coordinator" = {
-      display_name = "FireKey Stage Coordinator"
+    "uumi-coordinator" = {
+      display_name = "Uumi Stage Coordinator"
       description  = "Executes and proves each deterministic rotation stage."
     }
-    "firekey-browser" = {
-      display_name = "FireKey Browser Worker"
+    "uumi-browser" = {
+      display_name = "Uumi Browser Worker"
       description  = "Runs isolated one-run Computer Use browser sessions."
     }
-    "firekey-gateway" = {
-      display_name = "FireKey Browser Gateway"
+    "uumi-gateway" = {
+      display_name = "Uumi Browser Gateway"
       description  = "Provides authorised live view and human takeover."
     }
-    "firekey-agents" = {
-      display_name = "FireKey Agent Runtime"
+    "uumi-agents" = {
+      display_name = "Uumi Agent Runtime"
       description  = "Runs the registered ADK reasoning fleet."
     }
-    "firekey-notification" = {
-      display_name = "FireKey Notification Worker"
+    "uumi-notification" = {
+      display_name = "Uumi Notification Worker"
       description  = "Delivers durable safe notifications through configured channels."
     }
-    "firekey-auditlog" = {
-      display_name = "FireKey Audit Log Publisher"
+    "uumi-auditlog" = {
+      display_name = "Uumi Audit Log Publisher"
       description  = "Delivers canonical hash-chained audit events to locked Cloud Logging."
     }
   }
@@ -73,21 +73,21 @@ module "identity" {
 }
 
 resource "google_service_account_iam_member" "event_workflow" {
-  service_account_id = module.identity.emails["firekey-workflow"]
+  service_account_id = module.identity.emails["uumi-workflow"]
   role               = "roles/iam.serviceAccountTokenCreator"
-  member             = module.identity.members["firekey-events"]
+  member             = module.identity.members["uumi-events"]
 }
 
 resource "google_service_account_iam_member" "workflow_token" {
-  service_account_id = module.identity.emails["firekey-workflow"]
+  service_account_id = module.identity.emails["uumi-workflow"]
   role               = "roles/iam.serviceAccountTokenCreator"
-  member             = module.identity.members["firekey-workflow"]
+  member             = module.identity.members["uumi-workflow"]
 }
 
 resource "google_service_account_iam_member" "coordinator_token" {
-  service_account_id = module.identity.emails["firekey-coordinator"]
+  service_account_id = module.identity.emails["uumi-coordinator"]
   role               = "roles/iam.serviceAccountTokenCreator"
-  member             = module.identity.members["firekey-coordinator"]
+  member             = module.identity.members["uumi-coordinator"]
 }
 
 module "storage" {
@@ -96,42 +96,42 @@ module "storage" {
   project_id = var.project_id
   location   = var.region
   users = {
-    api          = module.identity.members["firekey-api"]
-    ingestion    = module.identity.members["firekey-ingestion"]
-    publisher    = module.identity.members["firekey-publisher"]
-    broker       = module.identity.members["firekey-broker"]
-    coordinator  = module.identity.members["firekey-coordinator"]
-    browser      = module.identity.members["firekey-browser"]
-    gateway      = module.identity.members["firekey-gateway"]
-    notification = module.identity.members["firekey-notification"]
-    auditlog     = module.identity.members["firekey-auditlog"]
+    api          = module.identity.members["uumi-api"]
+    ingestion    = module.identity.members["uumi-ingestion"]
+    publisher    = module.identity.members["uumi-publisher"]
+    broker       = module.identity.members["uumi-broker"]
+    coordinator  = module.identity.members["uumi-coordinator"]
+    browser      = module.identity.members["uumi-browser"]
+    gateway      = module.identity.members["uumi-gateway"]
+    notification = module.identity.members["uumi-notification"]
+    auditlog     = module.identity.members["uumi-auditlog"]
   }
   evidence_users = {
-    broker      = module.identity.members["firekey-broker"]
-    coordinator = module.identity.members["firekey-coordinator"]
-    browser     = module.identity.members["firekey-browser"]
+    broker      = module.identity.members["uumi-broker"]
+    coordinator = module.identity.members["uumi-coordinator"]
+    browser     = module.identity.members["uumi-browser"]
   }
-  walkthrough_user = module.identity.members["firekey-api"]
+  walkthrough_user = module.identity.members["uumi-api"]
   walkthrough_cors_origins = toset([
     for domain in var.identity_platform_domains : "https://${domain}"
   ])
-  agent_staging_user = module.identity.members["firekey-agents"]
+  agent_staging_user = module.identity.members["uumi-agents"]
   secret_accessors = {
-    api         = module.identity.members["firekey-api"]
-    coordinator = module.identity.members["firekey-coordinator"]
+    api         = module.identity.members["uumi-api"]
+    coordinator = module.identity.members["uumi-coordinator"]
   }
   browser_session_organisations = var.workflow_organisations
-  browser_session_user          = module.identity.members["firekey-browser"]
-  browser_session_manager       = module.identity.members["firekey-api"]
-  github_webhook_accessor       = module.identity.members["firekey-ingestion"]
-  github_oauth_accessor         = module.identity.members["firekey-api"]
+  browser_session_user          = module.identity.members["uumi-browser"]
+  browser_session_manager       = module.identity.members["uumi-api"]
+  github_webhook_accessor       = module.identity.members["uumi-ingestion"]
+  github_oauth_accessor         = module.identity.members["uumi-api"]
   provider_sources              = var.provider_sources
-  provider_secret_accessor      = module.identity.members["firekey-ingestion"]
+  provider_secret_accessor      = module.identity.members["uumi-ingestion"]
   principals = {
     for organisation_id in var.workflow_organisations :
     "workflow-${organisation_id}" => {
       organisation_id = organisation_id
-      subject         = module.identity.subjects["firekey-workflow"]
+      subject         = module.identity.subjects["uumi-workflow"]
       roles           = ["automation"]
     }
   }
@@ -145,7 +145,7 @@ resource "google_secret_manager_secret_iam_member" "notification" {
   project   = each.value.project_id
   secret_id = each.value.secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = module.identity.members["firekey-notification"]
+  member    = module.identity.members["uumi-notification"]
 }
 
 module "browser" {
@@ -154,8 +154,8 @@ module "browser" {
   project_id             = var.project_id
   region                 = var.region
   zone                   = var.zone
-  worker_service_account = module.identity.emails["firekey-browser"]
-  coordinator_member     = module.identity.members["firekey-coordinator"]
+  worker_service_account = module.identity.emails["uumi-browser"]
+  coordinator_member     = module.identity.members["uumi-coordinator"]
   allowed_domains        = var.browser_allowed_domains
   connector_domains      = var.runtime_connector_domains
 
@@ -255,7 +255,7 @@ check "perimeter_access_policy" {
 check "scc_tenants" {
   assert {
     condition     = setsubtract(toset(keys(var.scc_sources)), var.workflow_organisations) == toset([])
-    error_message = "Every SCC source must map to an authorised FireKey organisation."
+    error_message = "Every SCC source must map to an authorised Uumi organisation."
   }
 }
 
@@ -272,7 +272,7 @@ check "ingestion_tenants" {
         var.workflow_organisations,
       ) == toset([])
     )
-    error_message = "Every ingestion source must map to an authorised FireKey organisation."
+    error_message = "Every ingestion source must map to an authorised Uumi organisation."
   }
 }
 
@@ -281,18 +281,18 @@ module "runtime" {
 
   project_id                   = var.project_id
   region                       = var.region
-  api_service_account          = module.identity.emails["firekey-api"]
-  ingestion_service_account    = module.identity.emails["firekey-ingestion"]
-  publisher_service_account    = module.identity.emails["firekey-publisher"]
-  broker_service_account       = module.identity.emails["firekey-broker"]
-  coordinator_service_account  = module.identity.emails["firekey-coordinator"]
-  notification_service_account = module.identity.emails["firekey-notification"]
-  auditlog_service_account     = module.identity.emails["firekey-auditlog"]
-  api_member                   = module.identity.members["firekey-api"]
-  coordinator_member           = module.identity.members["firekey-coordinator"]
-  workflow_member              = module.identity.members["firekey-workflow"]
-  event_member                 = module.identity.members["firekey-events"]
-  scc_push_service_account     = module.identity.emails["firekey-events"]
+  api_service_account          = module.identity.emails["uumi-api"]
+  ingestion_service_account    = module.identity.emails["uumi-ingestion"]
+  publisher_service_account    = module.identity.emails["uumi-publisher"]
+  broker_service_account       = module.identity.emails["uumi-broker"]
+  coordinator_service_account  = module.identity.emails["uumi-coordinator"]
+  notification_service_account = module.identity.emails["uumi-notification"]
+  auditlog_service_account     = module.identity.emails["uumi-auditlog"]
+  api_member                   = module.identity.members["uumi-api"]
+  coordinator_member           = module.identity.members["uumi-coordinator"]
+  workflow_member              = module.identity.members["uumi-workflow"]
+  event_member                 = module.identity.members["uumi-events"]
+  scc_push_service_account     = module.identity.emails["uumi-events"]
   oidc_audience                = var.oidc_audience
   github_app_slug              = coalesce(var.github_app_slug, "")
   github_client_id             = coalesce(var.github_client_id, "")
@@ -329,7 +329,7 @@ module "runtime" {
   capability_public_key     = var.capability_public_key
   browser_template          = module.browser.template
   browser_zone              = var.zone
-  model_armor_template      = "projects/${var.project_id}/locations/${var.region}/templates/firekey-agent-guardrails"
+  model_armor_template      = "projects/${var.project_id}/locations/${var.region}/templates/uumi-agent-guardrails"
   network                   = module.browser.network
   subnetwork                = module.browser.runtime_subnetwork
 
@@ -369,7 +369,7 @@ module "governance" {
   project_id          = var.project_id
   region              = var.region
   agent_principal_set = local.agent_principal_set
-  deployment_member   = module.identity.members["firekey-agents"]
+  deployment_member   = module.identity.members["uumi-agents"]
   broker_uri          = module.runtime.broker_uri
 
   depends_on = [module.project, module.runtime]
@@ -381,7 +381,7 @@ module "gateway" {
   project_id            = var.project_id
   region                = var.region
   image                 = var.gateway_image
-  service_account       = module.identity.emails["firekey-gateway"]
+  service_account       = module.identity.emails["uumi-gateway"]
   capability_public_key = var.capability_public_key
   network               = module.browser.network
   subnetwork            = module.browser.runtime_subnetwork
@@ -395,14 +395,14 @@ module "events" {
 
   project_id              = var.project_id
   region                  = var.region
-  publisher_member        = module.identity.members["firekey-publisher"]
-  event_member            = module.identity.members["firekey-events"]
-  event_service_account   = module.identity.emails["firekey-events"]
+  publisher_member        = module.identity.members["uumi-publisher"]
+  event_member            = module.identity.members["uumi-events"]
+  event_service_account   = module.identity.emails["uumi-events"]
   secretmanager_member    = module.storage.secretmanager_member
   publisher_name          = module.runtime.publisher_name
   publisher_uri           = module.runtime.publisher_uri
   api_uri                 = module.runtime.api_uri
-  reaper_service_account  = module.identity.emails["firekey-workflow"]
+  reaper_service_account  = module.identity.emails["uumi-workflow"]
   reaper_organisations    = var.workflow_organisations
   ingestion_uri           = module.runtime.ingestion_uri
   notification_name       = module.runtime.notification_name
@@ -423,8 +423,8 @@ module "workflow" {
 
   project_id            = var.project_id
   region                = var.region
-  service_account       = module.identity.emails["firekey-workflow"]
-  event_service_account = module.identity.emails["firekey-events"]
+  service_account       = module.identity.emails["uumi-workflow"]
+  event_service_account = module.identity.emails["uumi-events"]
   event_topic           = module.events.topic
   api_url               = module.runtime.api_uri
   coordinator_url       = module.runtime.coordinator_uri
@@ -444,7 +444,7 @@ resource "google_project_iam_member" "browser_runtime" {
 
   project = var.project_id
   role    = each.value
-  member  = module.identity.members["firekey-browser"]
+  member  = module.identity.members["uumi-browser"]
 }
 
 resource "google_project_iam_member" "api_runtime" {
@@ -456,7 +456,7 @@ resource "google_project_iam_member" "api_runtime" {
 
   project = var.project_id
   role    = each.value
-  member  = module.identity.members["firekey-api"]
+  member  = module.identity.members["uumi-api"]
 }
 
 resource "google_project_iam_member" "coordinator_runtime" {
@@ -470,7 +470,7 @@ resource "google_project_iam_member" "coordinator_runtime" {
 
   project = var.project_id
   role    = each.value
-  member  = module.identity.members["firekey-coordinator"]
+  member  = module.identity.members["uumi-coordinator"]
 }
 
 resource "google_project_iam_member" "agent_deployer" {
@@ -481,15 +481,15 @@ resource "google_project_iam_member" "agent_deployer" {
 
   project = var.project_id
   role    = each.value
-  member  = module.identity.members["firekey-agents"]
+  member  = module.identity.members["uumi-agents"]
 }
 
 locals {
   agent_context_grants = {
-    api_memory          = [module.identity.members["firekey-api"], "roles/aiplatform.memoryUser"]
-    api_session         = [module.identity.members["firekey-api"], "roles/aiplatform.sessionUser"]
-    coordinator_memory  = [module.identity.members["firekey-coordinator"], "roles/aiplatform.memoryViewer"]
-    coordinator_session = [module.identity.members["firekey-coordinator"], "roles/aiplatform.sessionUser"]
+    api_memory          = [module.identity.members["uumi-api"], "roles/aiplatform.memoryUser"]
+    api_session         = [module.identity.members["uumi-api"], "roles/aiplatform.sessionUser"]
+    coordinator_memory  = [module.identity.members["uumi-coordinator"], "roles/aiplatform.memoryViewer"]
+    coordinator_session = [module.identity.members["uumi-coordinator"], "roles/aiplatform.sessionUser"]
   }
 }
 
@@ -510,7 +510,7 @@ resource "google_project_iam_member" "ingestion_runtime" {
 
   project = var.project_id
   role    = each.value
-  member  = module.identity.members["firekey-ingestion"]
+  member  = module.identity.members["uumi-ingestion"]
 }
 
 resource "google_project_iam_member" "auditlog_runtime" {
@@ -522,15 +522,15 @@ resource "google_project_iam_member" "auditlog_runtime" {
 
   project = var.project_id
   role    = each.value
-  member  = module.identity.members["firekey-auditlog"]
+  member  = module.identity.members["uumi-auditlog"]
 }
 
 locals {
   telemetry_runtime_roles = {
-    broker       = module.identity.members["firekey-broker"]
-    gateway      = module.identity.members["firekey-gateway"]
-    notification = module.identity.members["firekey-notification"]
-    publisher    = module.identity.members["firekey-publisher"]
+    broker       = module.identity.members["uumi-broker"]
+    gateway      = module.identity.members["uumi-gateway"]
+    notification = module.identity.members["uumi-notification"]
+    publisher    = module.identity.members["uumi-publisher"]
   }
   telemetry_runtime_grants = merge([
     for account, member in local.telemetry_runtime_roles : {

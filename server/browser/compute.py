@@ -51,19 +51,19 @@ class BrowserVmManager:
             f"https://compute.googleapis.com/compute/v1/projects/{self._project}/zones/{self._zone}"
         )
         metadata = [
-            {"key": "firekey-organisation", "value": organisation_id},
-            {"key": "firekey-session", "value": session_id},
-            {"key": "firekey-expires", "value": expires_at.isoformat()},
-            {"key": "firekey-project", "value": self._project},
+            {"key": "uumi-organisation", "value": organisation_id},
+            {"key": "uumi-session", "value": session_id},
+            {"key": "uumi-expires", "value": expires_at.isoformat()},
+            {"key": "uumi-project", "value": self._project},
             {
-                "key": "firekey-capability-public",
+                "key": "uumi-capability-public",
                 "value": self._capability_public,
             },
-            {"key": "firekey-evidence", "value": self._evidence},
-            {"key": "firekey-region", "value": self._region},
-            {"key": "firekey-worker-image", "value": self._image},
+            {"key": "uumi-evidence", "value": self._evidence},
+            {"key": "uumi-region", "value": self._region},
+            {"key": "uumi-worker-image", "value": self._image},
             {
-                "key": "firekey-model-armor-template",
+                "key": "uumi-model-armor-template",
                 "value": self._model_armor_template,
             },
         ]
@@ -74,14 +74,14 @@ class BrowserVmManager:
                 raise ConnectorError("invalid-setup-secret", "setup secret container is required")
             metadata.extend(
                 [
-                    {"key": "firekey-setup", "value": "true"},
-                    {"key": "firekey-setup-token-hash", "value": setup_token_hash},
-                    {"key": "firekey-setup-domains", "value": ",".join(allowed_domains)},
+                    {"key": "uumi-setup", "value": "true"},
+                    {"key": "uumi-setup-token-hash", "value": setup_token_hash},
+                    {"key": "uumi-setup-domains", "value": ",".join(allowed_domains)},
                     {
-                        "key": "firekey-setup-storage-domains",
+                        "key": "uumi-setup-storage-domains",
                         "value": ",".join(storage_domains),
                     },
-                    {"key": "firekey-setup-secret", "value": secret_container},
+                    {"key": "uumi-setup-secret", "value": secret_container},
                 ]
             )
         operation = await self._client.request(
@@ -91,8 +91,8 @@ class BrowserVmManager:
             json={
                 "name": name,
                 "labels": {
-                    "firekey-browser": "true",
-                    "firekey-session": _label(session_id),
+                    "uumi-browser": "true",
+                    "uumi-session": _label(session_id),
                 },
                 "metadata": {"items": metadata},
             },

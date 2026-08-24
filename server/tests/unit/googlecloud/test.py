@@ -36,11 +36,11 @@ async def test_onboarding_discovers_google_resources_without_persisting_token() 
         repository,
         Connector(),  # type: ignore[arg-type]
         "google-client",
-        "https://app.firekey.example/google-cloud/callback",
+        "https://app.uumi.example/google-cloud/callback",
         lambda: NOW,
         inventory,
         validator,
-        "firekey-broker@firekey-host.iam.gserviceaccount.com",
+        "uumi-broker@uumi-host.iam.gserviceaccount.com",
     )
     session, state, verifier, authorization_url = await service.begin("org_one", "user-one")
 
@@ -61,22 +61,22 @@ async def test_onboarding_discovers_google_resources_without_persisting_token() 
     assert completed.status is GoogleCloudOnboardingStatus.COMPLETE
     assert projects[0].project_id == "project-one"
     assert projects[0].services[0].region == "us-central1"
-    assert projects[0].service_accounts[0].email.startswith("firekey-automation@")
+    assert projects[0].service_accounts[0].email.startswith("uumi-automation@")
 
     connection, command = await service.prepare_connection(
         "org_one",
         session.id,
         "user-one",
         "project-one",
-        "firekey-automation@project-one.iam.gserviceaccount.com",
+        "uumi-automation@project-one.iam.gserviceaccount.com",
     )
 
     assert connection.platform == "google-cloud"
     assert connection.roles == frozenset({ConnectionRole.RUNTIME, ConnectionRole.SECRET_STORE})
     assert connection.status is ConnectionStatus.SETUP_REQUIRED
-    assert "firekey-broker@firekey-host.iam.gserviceaccount.com" in command
-    assert "firekey-api" not in command
-    assert "firekey-coordinator" not in command
+    assert "uumi-broker@uumi-host.iam.gserviceaccount.com" in command
+    assert "uumi-api" not in command
+    assert "uumi-coordinator" not in command
 
     ready = await service.verify_connection("org_one", session.id, "user-one", connection.revision)
 
@@ -137,8 +137,8 @@ async def test_connector_uses_short_lived_oauth_access_only_for_discovery() -> N
                 json={
                     "accounts": [
                         {
-                            "email": "firekey-automation@project-one.iam.gserviceaccount.com",
-                            "displayName": "FireKey automation",
+                            "email": "uumi-automation@project-one.iam.gserviceaccount.com",
+                            "displayName": "Uumi automation",
                         }
                     ]
                 },
@@ -159,7 +159,7 @@ async def test_connector_uses_short_lived_oauth_access_only_for_discovery() -> N
     connector = GoogleCloudOnboardingConnector(
         "google-client",
         "projects/project-one/secrets/google-oauth/versions/1",
-        "https://app.firekey.example/google-cloud/callback",
+        "https://app.uumi.example/google-cloud/callback",
         SecretManagerConnector(google),
         client,
     )
@@ -268,8 +268,8 @@ class Connector:
                 ),
                 "service_accounts": (
                     {
-                        "email": "firekey-automation@project-one.iam.gserviceaccount.com",
-                        "display_name": "FireKey automation",
+                        "email": "uumi-automation@project-one.iam.gserviceaccount.com",
+                        "display_name": "Uumi automation",
                     },
                 ),
             },

@@ -186,11 +186,11 @@ class CloudRunConnector:
             secret_env,
             {"secretKeyRef": {"secret": secret_name, "version": secret_version}},
         )
-        _set_env(env, "FIREKEY_GENERATION_ID", generation_id)
+        _set_env(env, "UUMI_GENERATION_ID", generation_id)
         labels = template.setdefault("labels", {})
         if not isinstance(labels, dict):
             raise ConnectorError("runtime-invalid", "Cloud Run revision labels are invalid")
-        labels["firekey-generation"] = generation_id
+        labels["uumi-generation"] = generation_id
         body = {
             "name": service_name,
             "template": template,
@@ -314,7 +314,7 @@ def _inspect(service: dict[str, Any]) -> dict[str, Any]:
                 continue
             if "valueSource" in item:
                 bindings.append({"name": item.get("name"), "valueSource": item["valueSource"]})
-            if item.get("name") == "FIREKEY_GENERATION_ID" and isinstance(item.get("value"), str):
+            if item.get("name") == "UUMI_GENERATION_ID" and isinstance(item.get("value"), str):
                 generation_id = item["value"]
     return {
         "name": service.get("name"),

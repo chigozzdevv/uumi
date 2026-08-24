@@ -25,16 +25,16 @@ from telemetry.redact import REDACTED, redact
 
 _ALLOWED_ATTRIBUTES = frozenset({"agent", "channel", "provider", "skill", "stage", "tool"})
 _configured = False
-_meter = metrics.get_meter("firekey.operations")
+_meter = metrics.get_meter("uumi.operations")
 _operations = _meter.create_counter(
-    "firekey.operations",
+    "uumi.operations",
     unit="{operation}",
-    description="Completed FireKey operations by bounded outcome.",
+    description="Completed Uumi operations by bounded outcome.",
 )
 _duration = _meter.create_histogram(
-    "firekey.operation.duration",
+    "uumi.operation.duration",
     unit="s",
-    description="FireKey operation duration.",
+    description="Uumi operation duration.",
 )
 
 
@@ -49,20 +49,20 @@ class TelemetryConfig:
 
     @classmethod
     def from_environment(cls, service: str) -> "TelemetryConfig":
-        explicit = os.getenv("FIREKEY_TELEMETRY_ENABLED")
+        explicit = os.getenv("UUMI_TELEMETRY_ENABLED")
         enabled = _boolean(explicit) if explicit is not None else bool(os.getenv("K_SERVICE"))
-        ratio = float(os.getenv("FIREKEY_TRACE_SAMPLE_RATIO", "1"))
+        ratio = float(os.getenv("UUMI_TRACE_SAMPLE_RATIO", "1"))
         if not 0 < ratio <= 1:
-            raise ValueError("FIREKEY_TRACE_SAMPLE_RATIO must be greater than zero and at most one")
-        project_id = os.getenv("FIREKEY_PROJECT_ID", "")
-        region = os.getenv("FIREKEY_REGION", "")
+            raise ValueError("UUMI_TRACE_SAMPLE_RATIO must be greater than zero and at most one")
+        project_id = os.getenv("UUMI_PROJECT_ID", "")
+        region = os.getenv("UUMI_REGION", "")
         if enabled and (not project_id or not region):
-            raise ValueError("telemetry requires FIREKEY_PROJECT_ID and FIREKEY_REGION")
+            raise ValueError("telemetry requires UUMI_PROJECT_ID and UUMI_REGION")
         return cls(
             service=service,
             project_id=project_id,
             region=region,
-            environment=os.getenv("FIREKEY_ENVIRONMENT", "production"),
+            environment=os.getenv("UUMI_ENVIRONMENT", "production"),
             enabled=enabled,
             sample_ratio=ratio,
         )
@@ -131,7 +131,7 @@ def instrument(app: Starlette, service: str) -> TelemetryConfig:
 def operation(name: str, attributes: Mapping[str, str] | None = None) -> Iterator[None]:
     safe = _attributes(attributes or {})
     started = monotonic()
-    tracer = trace.get_tracer("firekey.operations")
+    tracer = trace.get_tracer("uumi.operations")
     with tracer.start_as_current_span(name, attributes=safe) as span:
         try:
             yield
@@ -181,4 +181,4 @@ def _boolean(value: str) -> bool:
         return True
     if normalised in {"0", "false", "no"}:
         return False
-    raise ValueError("FIREKEY_TELEMETRY_ENABLED must be a boolean")
+    raise ValueError("UUMI_TELEMETRY_ENABLED must be a boolean")

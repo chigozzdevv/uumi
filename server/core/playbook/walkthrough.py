@@ -112,7 +112,7 @@ class WalkthroughService:
                 source_id=source_id,
                 transcript=(TimedText(start_seconds=0, end_seconds=0, text=sanitised),),
                 redaction_count=redactions,
-                processor="firekey-source-sanitizer",
+                processor="uumi-source-sanitizer",
                 created_at=now,
             ),
             created_by=actor_id,

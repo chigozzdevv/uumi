@@ -21,5 +21,5 @@ Never receive, read, repeat, or store credential values.""",
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,
 )
-app = App(name="firekey_operator", root_agent=root_agent)
+app = App(name="uumi_operator", root_agent=root_agent)
 agent_app = managed_app(app, {"execute_console_playbook", "detect_interface_drift"})

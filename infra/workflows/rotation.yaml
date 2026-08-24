@@ -4,9 +4,9 @@ main:
     - decode_event:
         assign:
           - event: ${json.decode(base64.decode(cloud_event.data.message.data))}
-          - api_url: ${sys.get_env("FIREKEY_API_URL")}
-          - coordinator_url: ${sys.get_env("FIREKEY_COORDINATOR_URL")}
-          - audience: ${sys.get_env("FIREKEY_OIDC_AUDIENCE")}
+          - api_url: ${sys.get_env("UUMI_API_URL")}
+          - coordinator_url: ${sys.get_env("UUMI_COORDINATOR_URL")}
+          - audience: ${sys.get_env("UUMI_OIDC_AUDIENCE")}
     - accept_event:
         switch:
           - condition: ${event.kind in ["run.created", "run.resumed", "run.recovery-started"]}

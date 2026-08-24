@@ -197,7 +197,7 @@ class Inventory:
                     interface=ConnectionInterface.API,
                     authorization=ConnectionAuthorization.WORKLOAD_IDENTITY,
                     authorization_reference=(
-                        "workload-identity://firekey@project-one.iam.gserviceaccount.com"
+                        "workload-identity://uumi-broker@project-one.iam.gserviceaccount.com"
                     ),
                     capabilities=frozenset({"runtime.inspectSecretBindings"}),
                     allowed_resources=(

@@ -2,12 +2,12 @@ project_id                = "replace-with-project-id"
 region                    = "us-east1"
 enable_gateway            = true
 access_policy_id          = "123456789012"
-operator_access_level     = "accessPolicies/123456789012/accessLevels/firekeyOperators"
+operator_access_level     = "accessPolicies/123456789012/accessLevels/uumiOperators"
 browser_allowed_domains   = ["console.vendor.example"]
 runtime_connector_domains = ["api.vendor.example"]
-gateway_users             = ["group:firekey-operators@example.com"]
+gateway_users             = ["group:uumi-operators@example.com"]
 
-identity_platform_domains = ["usefirekey.web.app", "usefirekey.firebaseapp.com"]
+identity_platform_domains = ["uumi.web.app", "useuumi.firebaseapp.com"]
 
 workflow_organisations             = ["org_replace"]
 api_image                          = null
@@ -36,7 +36,7 @@ capability_public_key              = "replace-with-ed25519-public-key-base64url-
 notification_secrets = {
   email = {
     project_id = "replace-with-project-id"
-    secret_id  = "firekey-notification-resend"
+    secret_id  = "uumi-notification-resend"
   }
 }
 

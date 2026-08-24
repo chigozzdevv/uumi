@@ -4,12 +4,12 @@ requires-python = "==3.12.*"
 
 [manifest]
 members = [
-    "firekey",
-    "firekey-contracts",
-    "firekey-policy",
-    "firekey-server",
-    "firekey-telemetry",
-    "firekey-testkit",
+    "uumi",
+    "uumi-contracts",
+    "uumi-policy",
+    "uumi-server",
+    "uumi-telemetry",
+    "uumi-testkit",
 ]
 
 [[package]]
@@ -401,7 +401,7 @@ wheels = [
 ]
 
 [[package]]
-name = "firekey"
+name = "uumi"
 version = "0.1.0"
 source = { virtual = "." }
 
@@ -426,7 +426,7 @@ dev = [
 ]
 
 [[package]]
-name = "firekey-contracts"
+name = "uumi-contracts"
 version = "0.1.0"
 source = { editable = "packages/contracts" }
 dependencies = [
@@ -437,27 +437,27 @@ dependencies = [
 requires-dist = [{ name = "pydantic", specifier = ">=2.11,<3" }]
 
 [[package]]
-name = "firekey-policy"
+name = "uumi-policy"
 version = "0.1.0"
 source = { editable = "packages/policy" }
 dependencies = [
-    { name = "firekey-contracts" },
+    { name = "uumi-contracts" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "firekey-contracts", editable = "packages/contracts" }]
+requires-dist = [{ name = "uumi-contracts", editable = "packages/contracts" }]
 
 [[package]]
-name = "firekey-server"
+name = "uumi-server"
 version = "0.1.0"
 source = { editable = "server" }
 dependencies = [
     { name = "cachecontrol" },
     { name = "cryptography" },
     { name = "fastapi" },
-    { name = "firekey-contracts" },
-    { name = "firekey-policy" },
-    { name = "firekey-telemetry" },
+    { name = "uumi-contracts" },
+    { name = "uumi-policy" },
+    { name = "uumi-telemetry" },
     { name = "google-cloud-firestore" },
     { name = "google-cloud-pubsub" },
     { name = "httpx" },
@@ -484,9 +484,9 @@ requires-dist = [
     { name = "cachecontrol", specifier = ">=0.14,<1" },
     { name = "cryptography", specifier = ">=46,<48" },
     { name = "fastapi", specifier = ">=0.116,<1" },
-    { name = "firekey-contracts", editable = "packages/contracts" },
-    { name = "firekey-policy", editable = "packages/policy" },
-    { name = "firekey-telemetry", editable = "packages/telemetry" },
+    { name = "uumi-contracts", editable = "packages/contracts" },
+    { name = "uumi-policy", editable = "packages/policy" },
+    { name = "uumi-telemetry", editable = "packages/telemetry" },
     { name = "google-adk", extras = ["a2a", "gcp"], marker = "extra == 'agents'", specifier = ">=2,<3" },
     { name = "google-cloud-aiplatform", extras = ["agent-engines", "adk"], marker = "extra == 'agents'", specifier = ">=1.144,<2" },
     { name = "google-cloud-firestore", specifier = ">=2.28,<3" },
@@ -500,7 +500,7 @@ requires-dist = [
 provides-extras = ["agents", "browser", "mcp"]
 
 [[package]]
-name = "firekey-telemetry"
+name = "uumi-telemetry"
 version = "0.1.0"
 source = { editable = "packages/telemetry" }
 dependencies = [
@@ -525,20 +525,20 @@ requires-dist = [
 ]
 
 [[package]]
-name = "firekey-testkit"
+name = "uumi-testkit"
 version = "0.1.0"
 source = { editable = "packages/testkit" }
 dependencies = [
-    { name = "firekey-contracts" },
-    { name = "firekey-policy" },
-    { name = "firekey-server" },
+    { name = "uumi-contracts" },
+    { name = "uumi-policy" },
+    { name = "uumi-server" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "firekey-contracts", editable = "packages/contracts" },
-    { name = "firekey-policy", editable = "packages/policy" },
-    { name = "firekey-server", editable = "server" },
+    { name = "uumi-contracts", editable = "packages/contracts" },
+    { name = "uumi-policy", editable = "packages/policy" },
+    { name = "uumi-server", editable = "server" },
 ]
 
 [[package]]

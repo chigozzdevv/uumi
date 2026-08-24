@@ -35,7 +35,7 @@ jobs:
       - name: Start Firestore emulator
         run: |
           docker run --detach \
-            --name firekey-firestore \
+            --name uumi-firestore \
             --publish 8787:8787 \
             gcr.io/google.com/cloudsdktool/google-cloud-cli:528.0.0-emulators \
             gcloud emulators firestore start --host-port=0.0.0.0:8787
@@ -45,22 +45,22 @@ jobs:
             fi
             sleep 1
           done
-          docker logs firekey-firestore
+          docker logs uumi-firestore
           exit 1
       - name: Start Pub/Sub emulator
         run: |
           docker run --detach \
-            --name firekey-pubsub \
+            --name uumi-pubsub \
             --publish 8788:8788 \
             gcr.io/google.com/cloudsdktool/google-cloud-cli:528.0.0-emulators \
-            gcloud beta emulators pubsub start --host-port=0.0.0.0:8788 --project=firekey-test
+            gcloud beta emulators pubsub start --host-port=0.0.0.0:8788 --project=uumi-test
           for attempt in {1..30}; do
             if nc -z 127.0.0.1 8788; then
               exit 0
             fi
             sleep 1
           done
-          docker logs firekey-pubsub
+          docker logs uumi-pubsub
           exit 1
       - name: Verify durable event delivery
         env:

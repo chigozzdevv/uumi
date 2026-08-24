@@ -223,14 +223,14 @@ async def test_sendgrid_creation_returns_one_time_secret_for_direct_transfer() -
     )
     response = await connector.execute(
         "provider.createCredential",
-        {"name": "firekey-run-one", "scopes": ["mail.send"]},
+        {"name": "uumi-run-one", "scopes": ["mail.send"]},
         _context(),
     )
 
     assert calls == 2
     assert response.result == {
         "provider_id": "provider-key-one",
-        "name": "firekey-run-one",
+        "name": "uumi-run-one",
         "scopes": ["mail.send"],
     }
     assert response.secret is not None

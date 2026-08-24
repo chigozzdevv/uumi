@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class CoordinatorSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="FIREKEY_", case_sensitive=False, extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="UUMI_", case_sensitive=False, extra="ignore")
 
     project_id: str = Field(default="", min_length=4)
     firestore_database: str = "(default)"

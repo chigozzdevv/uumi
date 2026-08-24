@@ -22,11 +22,11 @@ locals {
   ])
 }
 
-resource "google_access_context_manager_service_perimeter" "firekey" {
+resource "google_access_context_manager_service_perimeter" "uumi" {
   parent         = "accessPolicies/${var.access_policy_id}"
-  name           = "accessPolicies/${var.access_policy_id}/servicePerimeters/firekey"
-  title          = "FireKey"
-  description    = "Enforced data-exfiltration boundary for FireKey managed services."
+  name           = "accessPolicies/${var.access_policy_id}/servicePerimeters/uumi"
+  title          = "Uumi"
+  description    = "Enforced data-exfiltration boundary for Uumi managed services."
   perimeter_type = "PERIMETER_TYPE_REGULAR"
 
   status {

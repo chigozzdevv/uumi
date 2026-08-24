@@ -1,5 +1,5 @@
 output "topic" {
-  description = "Ordered FireKey run event topic ID."
+  description = "Ordered Uumi run event topic ID."
   value       = google_pubsub_topic.events.id
 }
 
@@ -9,12 +9,12 @@ output "topic_id" {
 }
 
 output "scc_topics" {
-  description = "SCC finding topics keyed by FireKey organisation."
+  description = "SCC finding topics keyed by Uumi organisation."
   value       = { for organisation, topic in google_pubsub_topic.scc : organisation => topic.id }
 }
 
 output "secret_topics" {
-  description = "Secret Manager notification topics keyed by FireKey organisation."
+  description = "Secret Manager notification topics keyed by Uumi organisation."
   value       = { for organisation, topic in google_pubsub_topic.secrets : organisation => topic.id }
 }
 

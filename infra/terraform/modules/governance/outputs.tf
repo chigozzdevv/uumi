@@ -10,7 +10,7 @@ output "egress_gateway" {
 
 output "model_armor_template" {
   description = "Fail-closed Model Armor template bound to both gateways."
-  value       = google_model_armor_template.firekey.name
+  value       = google_model_armor_template.uumi.name
 }
 
 output "registered_endpoints" {
@@ -19,7 +19,7 @@ output "registered_endpoints" {
 }
 
 output "registered_broker" {
-  description = "FireKey MCP server registered for governed agent egress."
+  description = "Uumi MCP server registered for governed agent egress."
   value       = try(google_agent_registry_service.broker[0].registry_resource, null)
 }
 

@@ -673,7 +673,7 @@ def app(
 
 class BrowserSetup:
     def __init__(self) -> None:
-        self.gateway_url = "https://gateway.firekey.example"
+        self.gateway_url = "https://gateway.uumi.example"
         self.session: SetupSession | None = None
         self.token = "t" * 43
 
@@ -685,7 +685,7 @@ class BrowserSetup:
         extra_domains: tuple[str, ...] = (),
     ) -> tuple[SetupSession, str]:
         del extra_domains
-        secret_container = f"projects/project-one/secrets/firekey-browser-session-{organisation_id}"
+        secret_container = f"projects/project-one/secrets/uumi-browser-session-{organisation_id}"
         self.session = SetupSession(
             id="setup_browser",
             organisation_id=organisation_id,
@@ -1327,7 +1327,7 @@ async def test_credential_archive_dismisses_open_incident() -> None:
 
     assert archived.status_code == 200
     assert incident.json()["status"] == "dismissed"
-    assert incident.json()["dismissal_reason"] == "Credential removed from FireKey."
+    assert incident.json()["dismissal_reason"] == "Credential removed from Uumi."
 
 
 @pytest.mark.anyio
@@ -1526,7 +1526,7 @@ async def test_administrator_can_run_browser_connection_setup() -> None:
         )
 
     assert begun.status_code == 201
-    assert begun.json()["gateway_url"] == "https://gateway.firekey.example"
+    assert begun.json()["gateway_url"] == "https://gateway.uumi.example"
     assert fetched.status_code == 200
     assert completed.status_code == 200
     assert completed.json()["connection"]["status"] == "ready"

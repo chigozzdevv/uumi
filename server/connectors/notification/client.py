@@ -81,7 +81,7 @@ class NotificationConnector:
                 "to": list(endpoint.recipients),
                 "subject": notification.title,
                 "text": self._text(notification),
-                "tags": [{"name": "firekey_delivery_id", "value": delivery_id}],
+                "tags": [{"name": "uumi_delivery_id", "value": delivery_id}],
             },
             expected=frozenset({200}),
         )
@@ -126,14 +126,14 @@ class NotificationConnector:
                 "payload": {
                     "summary": notification.title,
                     "severity": _pagerduty_severity(notification.severity),
-                    "source": "firekey",
+                    "source": "uumi",
                     "custom_details": {
                         "message": notification.body,
                         "resource_id": notification.resource_id,
                         "link": self._link(notification),
                     },
                 },
-                "links": [{"href": self._link(notification), "text": "Open FireKey"}],
+                "links": [{"href": self._link(notification), "text": "Open Uumi"}],
             },
             expected=frozenset({202}),
         )
@@ -168,7 +168,7 @@ class NotificationConnector:
     def _text(self, notification: Notification) -> str:
         return (
             f"{notification.title}\n\n{notification.body}\n\n"
-            f"Resource: {notification.resource_id}\nOpen FireKey: {self._link(notification)}"
+            f"Resource: {notification.resource_id}\nOpen Uumi: {self._link(notification)}"
         )
 
     def _link(self, notification: Notification) -> str:

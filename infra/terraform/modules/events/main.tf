@@ -35,7 +35,7 @@ resource "google_project_service_identity" "pubsub" {
 
 resource "google_pubsub_topic" "events" {
   project                    = var.project_id
-  name                       = "firekey-events"
+  name                       = "uumi-events"
   message_retention_duration = "604800s"
   deletion_policy            = "PREVENT"
 
@@ -56,7 +56,7 @@ resource "google_pubsub_topic" "notification_deadletter" {
   for_each = local.notification
 
   project                    = var.project_id
-  name                       = "firekey-notification-deadletter"
+  name                       = "uumi-notification-deadletter"
   message_retention_duration = "2678400s"
   deletion_policy            = "PREVENT"
 
@@ -70,7 +70,7 @@ resource "google_pubsub_topic" "audit_deadletter" {
   for_each = local.auditlog
 
   project                    = var.project_id
-  name                       = "firekey-audit-deadletter"
+  name                       = "uumi-audit-deadletter"
   message_retention_duration = "2678400s"
   deletion_policy            = "PREVENT"
 
@@ -84,7 +84,7 @@ resource "google_pubsub_subscription" "audit" {
   for_each = local.auditlog
 
   project                      = var.project_id
-  name                         = "firekey-audit-events"
+  name                         = "uumi-audit-events"
   topic                        = google_pubsub_topic.events.id
   ack_deadline_seconds         = 60
   message_retention_duration   = "604800s"
@@ -138,7 +138,7 @@ resource "google_pubsub_subscription" "audit_deadletter" {
   for_each = google_pubsub_topic.audit_deadletter
 
   project                    = var.project_id
-  name                       = "firekey-audit-deadletter-review"
+  name                       = "uumi-audit-deadletter-review"
   topic                      = each.value.id
   ack_deadline_seconds       = 60
   message_retention_duration = "2678400s"
@@ -154,7 +154,7 @@ resource "google_monitoring_alert_policy" "audit_deadletter" {
   for_each = google_pubsub_subscription.audit_deadletter
 
   project      = var.project_id
-  display_name = "FireKey canonical audit dead letter"
+  display_name = "Uumi canonical audit dead letter"
   combiner     = "OR"
 
   conditions {
@@ -180,7 +180,7 @@ resource "google_pubsub_subscription" "notification" {
   for_each = local.notification
 
   project                      = var.project_id
-  name                         = "firekey-notification-events"
+  name                         = "uumi-notification-events"
   topic                        = google_pubsub_topic.events.id
   ack_deadline_seconds         = 60
   message_retention_duration   = "604800s"
@@ -239,7 +239,7 @@ resource "google_pubsub_subscription" "notification_deadletter" {
   for_each = google_pubsub_topic.notification_deadletter
 
   project                    = var.project_id
-  name                       = "firekey-notification-deadletter-review"
+  name                       = "uumi-notification-deadletter-review"
   topic                      = each.value.id
   ack_deadline_seconds       = 60
   message_retention_duration = "2678400s"
@@ -255,7 +255,7 @@ resource "google_monitoring_alert_policy" "notification_deadletter" {
   for_each = google_pubsub_subscription.notification_deadletter
 
   project      = var.project_id
-  display_name = "FireKey notification delivery dead letter"
+  display_name = "Uumi notification delivery dead letter"
   combiner     = "OR"
 
   conditions {
@@ -281,7 +281,7 @@ resource "google_pubsub_topic" "scc" {
   for_each = local.scc
 
   project                    = var.project_id
-  name                       = "firekey-scc-${replace(each.key, "_", "-")}"
+  name                       = "uumi-scc-${replace(each.key, "_", "-")}"
   message_retention_duration = "604800s"
   deletion_policy            = "PREVENT"
 
@@ -295,7 +295,7 @@ resource "google_pubsub_topic" "secrets" {
   for_each = local.secrets
 
   project                    = var.project_id
-  name                       = "firekey-secrets-${replace(each.value, "_", "-")}"
+  name                       = "uumi-secrets-${replace(each.value, "_", "-")}"
   message_retention_duration = "604800s"
   deletion_policy            = "PREVENT"
 }
@@ -309,13 +309,13 @@ resource "google_pubsub_topic_iam_member" "secrets" {
   member  = var.secretmanager_member
 }
 
-resource "google_scc_v2_organization_notification_config" "firekey" {
+resource "google_scc_v2_organization_notification_config" "uumi" {
   for_each = local.scc
 
-  config_id    = "firekey-${replace(each.key, "_", "-")}"
+  config_id    = "uumi-${replace(each.key, "_", "-")}"
   organization = each.value.cloud_organisation_id
   location     = each.value.location
-  description  = "FireKey credential exposure findings for ${each.key}."
+  description  = "Uumi credential exposure findings for ${each.key}."
   pubsub_topic = google_pubsub_topic.scc[each.key].id
 
   streaming_config {
@@ -327,7 +327,7 @@ resource "google_pubsub_topic" "deadletter" {
   count = length(local.push)
 
   project                    = var.project_id
-  name                       = "firekey-ingestion-deadletter"
+  name                       = "uumi-ingestion-deadletter"
   message_retention_duration = "2678400s"
   deletion_policy            = "PREVENT"
 
@@ -341,7 +341,7 @@ resource "google_pubsub_subscription" "scc" {
   for_each = local.scc
 
   project                      = var.project_id
-  name                         = "firekey-scc-${replace(each.key, "_", "-")}-push"
+  name                         = "uumi-scc-${replace(each.key, "_", "-")}-push"
   topic                        = google_pubsub_topic.scc[each.key].id
   ack_deadline_seconds         = 60
   message_retention_duration   = "604800s"
@@ -376,14 +376,14 @@ resource "google_pubsub_subscription" "scc" {
     }
   }
 
-  depends_on = [google_scc_v2_organization_notification_config.firekey]
+  depends_on = [google_scc_v2_organization_notification_config.uumi]
 }
 
 resource "google_pubsub_subscription" "secrets" {
   for_each = local.secrets
 
   project                      = var.project_id
-  name                         = "firekey-secrets-${replace(each.value, "_", "-")}-push"
+  name                         = "uumi-secrets-${replace(each.value, "_", "-")}-push"
   topic                        = google_pubsub_topic.secrets[each.value].id
   ack_deadline_seconds         = 60
   message_retention_duration   = "604800s"
@@ -423,7 +423,7 @@ resource "google_pubsub_subscription" "deadletter" {
   count = length(local.push)
 
   project                    = var.project_id
-  name                       = "firekey-ingestion-deadletter-review"
+  name                       = "uumi-ingestion-deadletter-review"
   topic                      = google_pubsub_topic.deadletter[0].id
   ack_deadline_seconds       = 60
   message_retention_duration = "2678400s"
@@ -439,7 +439,7 @@ resource "google_monitoring_alert_policy" "ingestion_deadletter" {
   count = length(local.push)
 
   project      = var.project_id
-  display_name = "FireKey incident ingestion dead letter"
+  display_name = "Uumi incident ingestion dead letter"
   combiner     = "OR"
 
   conditions {
@@ -501,7 +501,7 @@ resource "google_cloud_scheduler_job" "rotation" {
 
   project          = var.project_id
   region           = var.region
-  name             = "firekey-rotation-${replace(each.key, "_", "-")}"
+  name             = "uumi-rotation-${replace(each.key, "_", "-")}"
   description      = "Starts policy-controlled rotation for ${each.value.credential_id}."
   schedule         = each.value.schedule
   time_zone        = each.value.time_zone
@@ -535,7 +535,7 @@ resource "google_cloud_scheduler_job" "detection" {
 
   project          = var.project_id
   region           = var.region
-  name             = "firekey-detect-${replace(each.value, "_", "-")}"
+  name             = "uumi-detect-${replace(each.value, "_", "-")}"
   description      = "Detects credential expiry, provider drift, and runtime misalignment."
   schedule         = "*/15 * * * *"
   time_zone        = "Etc/UTC"
@@ -569,7 +569,7 @@ resource "google_cloud_scheduler_job" "run_reaper" {
 
   project          = var.project_id
   region           = var.region
-  name             = "firekey-run-reaper-${replace(each.value, "_", "-")}"
+  name             = "uumi-run-reaper-${replace(each.value, "_", "-")}"
   description      = "Recovers expired run leases and interrupted cleanup transitions."
   schedule         = "* * * * *"
   time_zone        = "Etc/UTC"
@@ -609,7 +609,7 @@ resource "google_eventarc_trigger" "outbox" {
 
   project                 = var.project_id
   location                = var.region
-  name                    = "firekey-outbox-created"
+  name                    = "uumi-outbox-created"
   service_account         = var.event_service_account
   deletion_policy         = "PREVENT"
   event_data_content_type = "application/json"
@@ -651,7 +651,7 @@ resource "google_eventarc_trigger" "notification" {
 
   project                 = var.project_id
   location                = var.region
-  name                    = "firekey-notification-created"
+  name                    = "uumi-notification-created"
   service_account         = var.event_service_account
   deletion_policy         = "PREVENT"
   event_data_content_type = "application/json"
@@ -690,7 +690,7 @@ resource "google_eventarc_trigger" "audit" {
 
   project                 = var.project_id
   location                = var.region
-  name                    = "firekey-audit-created"
+  name                    = "uumi-audit-created"
   service_account         = var.event_service_account
   deletion_policy         = "PREVENT"
   event_data_content_type = "application/json"
@@ -729,7 +729,7 @@ resource "google_cloud_scheduler_job" "audit" {
 
   project          = var.project_id
   region           = var.region
-  name             = "firekey-audit-sweep"
+  name             = "uumi-audit-sweep"
   description      = "Recovers pending canonical audit writes and expired delivery leases."
   schedule         = "* * * * *"
   time_zone        = "Etc/UTC"
@@ -759,7 +759,7 @@ resource "google_cloud_scheduler_job" "notification" {
 
   project          = var.project_id
   region           = var.region
-  name             = "firekey-notification-sweep"
+  name             = "uumi-notification-sweep"
   description      = "Recovers pending notification deliveries and expired worker leases."
   schedule         = "* * * * *"
   time_zone        = "Etc/UTC"
@@ -789,8 +789,8 @@ resource "google_cloud_scheduler_job" "outbox" {
 
   project          = var.project_id
   region           = var.region
-  name             = "firekey-outbox-sweep"
-  description      = "Recovers unpublished FireKey events and expired delivery leases."
+  name             = "uumi-outbox-sweep"
+  description      = "Recovers unpublished Uumi events and expired delivery leases."
   schedule         = "* * * * *"
   time_zone        = "Etc/UTC"
   attempt_deadline = "300s"

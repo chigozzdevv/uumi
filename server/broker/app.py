@@ -16,4 +16,4 @@ app = server.streamable_http_app(
     max_request_body_size=1_048_576,
     host="0.0.0.0",
 )
-instrument(app, "firekey-broker")
+instrument(app, "uumi-broker")

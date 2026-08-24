@@ -176,7 +176,7 @@ class BrowserSetupService:
                 "attach a published playbook before opening the secure browser"
             )
         secret_container = (
-            f"projects/{self._session_project}/secrets/firekey-browser-session-{organisation_id}"
+            f"projects/{self._session_project}/secrets/uumi-browser-session-{organisation_id}"
         )
         await self._require_secret(secret_container)
         domains = connection.allowed_resources
@@ -456,7 +456,7 @@ class BrowserSetupService:
         try:
             response = await self._http.post(
                 f"http://{session.internal_address}:8080/v1/setup/store",
-                headers={"X-FireKey-Setup": token},
+                headers={"X-Uumi-Setup": token},
                 json={},
             )
         except (httpx.TimeoutException, httpx.NetworkError):

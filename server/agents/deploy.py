@@ -129,10 +129,10 @@ async def _deploy_fleet(
             id=registration_id,
             organisation_id=organisation_id,
             kind=kind,
-            display_name=f"FireKey {kind.value.title()} Agent",
+            display_name=f"Uumi {kind.value.title()} Agent",
             version=version,
             skills=_SKILLS[kind],
-            owner="FireKey Platform",
+            owner="Uumi Platform",
             identity=identity,
             endpoint=f"https://{region}-aiplatform.googleapis.com",
             deployment=resource.name,
@@ -159,8 +159,8 @@ def _deployment_config(
     egress_gateway: str,
 ) -> dict[str, Any]:
     return {
-        "display_name": f"FireKey {kind.value.title()} Agent {version}",
-        "description": f"FireKey managed {kind.value} agent",
+        "display_name": f"Uumi {kind.value.title()} Agent {version}",
+        "description": f"Uumi managed {kind.value} agent",
         "staging_bucket": staging_bucket,
         "requirements": str(_ROOT / "server" / "agents" / "requirements.txt"),
         "extra_packages": [
@@ -181,8 +181,8 @@ def _deployment_config(
         "container_concurrency": 5,
         "encryption_spec": {"kms_key_name": kms_key},
         "labels": {
-            "firekey-agent": kind.value,
-            "firekey-version": version.replace(".", "-"),
+            "uumi-agent": kind.value,
+            "uumi-version": version.replace(".", "-"),
         },
         "context_spec": {
             "memory_bank_config": {
@@ -209,8 +209,8 @@ async def _grant_callers(
     callers: frozenset[str],
 ) -> None:
     project = deployment.split("/", 2)[1] if deployment.startswith("projects/") else ""
-    if role != f"projects/{project}/roles/firekeyAgentCaller":
-        raise ValueError("caller role must be the FireKey least-privilege project role")
+    if role != f"projects/{project}/roles/uumiAgentCaller":
+        raise ValueError("caller role must be the Uumi least-privilege project role")
     if not callers or any(not _iam_member(value) for value in callers):
         raise ValueError("approved callers must be explicit IAM service-account or group members")
     endpoint = f"https://{region}-aiplatform.googleapis.com/v1beta1/{deployment}"
@@ -230,7 +230,7 @@ async def _grant_callers(
         if not isinstance(members, list):
             raise RuntimeError("Agent Runtime returned an invalid IAM member list")
         if found:
-            raise RuntimeError("Agent Runtime returned duplicate FireKey caller bindings")
+            raise RuntimeError("Agent Runtime returned duplicate Uumi caller bindings")
         changed.append({**binding, "members": sorted(callers)})
         found = True
     if not found:

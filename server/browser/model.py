@@ -179,7 +179,7 @@ def _proposal(content: dict[str, Any]) -> ComputerProposal | None:
         return None
     if len(calls) != 1:
         raise ConnectorError(
-            "computer-use-parallel-action", "FireKey executes one browser proposal at a time"
+            "computer-use-parallel-action", "Uumi executes one browser proposal at a time"
         )
     call = calls[0]
     name = call.get("name")
@@ -214,7 +214,7 @@ def _image(value: bytes) -> dict[str, Any]:
 _ALLOWED = frozenset({"click", "press_key", "scroll", "type", "wait"})
 _SYSTEM_INSTRUCTION = (
     "Navigate only toward the stated objective. Never authenticate, handle secrets, choose "
-    "scopes, solve CAPTCHA or MFA, or execute irreversible controls. FireKey validates every "
+    "scopes, solve CAPTCHA or MFA, or execute irreversible controls. Uumi validates every "
     "proposal."
 )
 _EXCLUDED = frozenset(

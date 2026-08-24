@@ -313,7 +313,7 @@ async def test_broker_stores_one_time_secret_and_deduplicates_provider_call() ->
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
         client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
     )
-    google._connection_credentials["firekey@project-one.iam.gserviceaccount.com"] = Credentials(
+    google._connection_credentials["uumi-broker@project-one.iam.gserviceaccount.com"] = Credentials(
         token="token"
     )  # type: ignore[no-untyped-call]
     provider = Provider()
@@ -344,7 +344,7 @@ async def test_broker_stores_one_time_secret_and_deduplicates_provider_call() ->
         tool="provider.createCredential",
         connection_id="provider_one",
         payload={
-            "name": "firekey-run-one",
+            "name": "uumi-run-one",
             "sink_connection_id": "sink_one",
             "secret_resource": "projects/project-one/secrets/credential",
         },
@@ -400,7 +400,7 @@ async def test_broker_recovers_expired_create_before_retrying() -> None:
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
         client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
     )
-    google._connection_credentials["firekey@project-one.iam.gserviceaccount.com"] = Credentials(
+    google._connection_credentials["uumi-broker@project-one.iam.gserviceaccount.com"] = Credentials(
         token="token"
     )  # type: ignore[no-untyped-call]
     provider = Provider()
@@ -422,7 +422,7 @@ async def test_broker_recovers_expired_create_before_retrying() -> None:
         tool="provider.createCredential",
         connection_id="provider_one",
         payload={
-            "name": "firekey-run-one",
+            "name": "uumi-run-one",
             "sink_connection_id": "sink_one",
             "secret_resource": "projects/project-one/secrets/credential",
         },
@@ -518,7 +518,7 @@ async def test_broker_leaves_ambiguous_secret_write_reconcilable() -> None:
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
         client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
     )
-    google._connection_credentials["firekey@project-one.iam.gserviceaccount.com"] = Credentials(
+    google._connection_credentials["uumi-broker@project-one.iam.gserviceaccount.com"] = Credentials(
         token="token"
     )  # type: ignore[no-untyped-call]
     provider = Provider()
@@ -540,7 +540,7 @@ async def test_broker_leaves_ambiguous_secret_write_reconcilable() -> None:
         tool="provider.createCredential",
         connection_id="provider_one",
         payload={
-            "name": "firekey-run-one",
+            "name": "uumi-run-one",
             "sink_connection_id": "sink_one",
             "secret_resource": "projects/project-one/secrets/credential",
         },
@@ -626,7 +626,7 @@ def _connection(
             else ConnectionAuthorization.API_KEY
         ),
         authorization_reference=(
-            "workload-identity://firekey@project-one.iam.gserviceaccount.com"
+            "workload-identity://uumi-broker@project-one.iam.gserviceaccount.com"
             if role is ConnectionRole.SECRET_STORE
             else "projects/project-one/secrets/auth/versions/1"
         ),

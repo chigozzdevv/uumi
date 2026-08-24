@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "Google Cloud project hosting FireKey agent governance."
+  description = "Google Cloud project hosting Uumi agent governance."
   type        = string
 }
 
@@ -29,7 +29,7 @@ variable "deployment_member" {
 }
 
 variable "broker_uri" {
-  description = "Private FireKey MCP broker URI, or null before runtime deployment."
+  description = "Private Uumi MCP broker URI, or null before runtime deployment."
   type        = string
   default     = null
   nullable    = true

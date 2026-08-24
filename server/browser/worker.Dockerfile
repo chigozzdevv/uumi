@@ -18,9 +18,9 @@ COPY pyproject.toml uv.lock ./
 COPY packages ./packages
 COPY server ./server
 
-RUN uv sync --frozen --no-dev --no-editable --package firekey-server --extra browser \
-    && groupadd --gid 10001 firekey \
-    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin firekey \
+RUN uv sync --frozen --no-dev --no-editable --package uumi-server --extra browser \
+    && groupadd --gid 10001 uumi \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin uumi \
     && find /app -type d -name __pycache__ -prune -exec rm -rf {} +
 
 USER 10001:10001

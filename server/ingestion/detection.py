@@ -421,7 +421,7 @@ def _event(
             provider=credential.provider,
             provider_id=credential.provider_id,
         ),
-        source_reference=f"firekey://credentials/{credential.id}/observations/{source_event_id}",
+        source_reference=f"uumi://credentials/{credential.id}/observations/{source_event_id}",
         received_at=observed_at,
     )
 

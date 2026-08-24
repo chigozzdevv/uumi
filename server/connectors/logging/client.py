@@ -10,7 +10,7 @@ class CloudLoggingConnector:
         self,
         client: GoogleRestClient,
         project_id: str,
-        log_id: str = "firekey-audit",
+        log_id: str = "uumi-audit",
     ) -> None:
         self._client = client
         self._project = project_id
@@ -28,13 +28,13 @@ class CloudLoggingConnector:
                         "project_id": self._project,
                         "location": event.region,
                         "namespace": event.organisation_id,
-                        "job": "firekey-audit",
+                        "job": "uumi-audit",
                         "task_id": event.id,
                     },
                 },
                 "labels": {
-                    "firekey_organisation_id": event.organisation_id,
-                    "firekey_kind": event.kind,
+                    "uumi_organisation_id": event.organisation_id,
+                    "uumi_kind": event.kind,
                 },
                 "entries": [
                     {

@@ -48,7 +48,7 @@ class AgentRuntimeService:
                         "contextId": session.remote_session.rsplit("/", 1)[-1],
                         "role": "ROLE_USER",
                         "parts": [{"text": _prompt(task, memories)}],
-                        "metadata": {"firekey_organisation_id": task.organisation_id},
+                        "metadata": {"uumi_organisation_id": task.organisation_id},
                     },
                     "tenant": task.organisation_id,
                 },

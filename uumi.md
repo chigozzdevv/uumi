@@ -1,4 +1,4 @@
-# FireKey
+# Uumi
 
 > Agentic credential rotation and incident response without avoidable downtime.
 
@@ -6,9 +6,9 @@
 
 ## Overview
 
-FireKey is a hosted platform that safely rotates API keys and other application credentials across credential providers, secret stores, applications, and runtime environments.
+Uumi is a hosted platform that safely rotates API keys and other application credentials across credential providers, secret stores, applications, and runtime environments.
 
-An organisation connects the systems it already uses. FireKey maintains a metadata-only inventory of the credentials selected for management, understands which services consume each credential, applies each credential's controls, and coordinates the complete change:
+An organisation connects the systems it already uses. Uumi maintains a metadata-only inventory of the credentials selected for management, understands which services consume each credential, applies each credential's controls, and coordinates the complete change:
 
 1. Receive a scheduled, manual, expiry, or security-incident trigger.
 2. Identify the affected credential and every service that uses it.
@@ -22,11 +22,11 @@ An organisation connects the systems it already uses. FireKey maintains a metada
 10. Revoke the old credential and independently prove that it no longer works.
 11. Preserve a complete audit record.
 
-FireKey is not a password vault, a general SIEM, or a generic chatbot. Its job is to turn a rotation requirement or credential incident into a controlled, observable, recoverable, and verified operational change.
+Uumi is not a password vault, a general SIEM, or a generic chatbot. Its job is to turn a rotation requirement or credential incident into a controlled, observable, recoverable, and verified operational change.
 
 ## Product promise
 
-FireKey answers five operational questions:
+Uumi answers five operational questions:
 
 1. **What credentials are we responsible for?**
 2. **Which applications and services use each credential?**
@@ -34,7 +34,7 @@ FireKey answers five operational questions:
 4. **Can it be replaced without breaking production?**
 5. **Can we prove that the new credential works and the old credential is dead?**
 
-The successful outcome of a FireKey run is not merely “a new key was created.” The successful outcome is:
+The successful outcome of a Uumi run is not merely “a new key was created.” The successful outcome is:
 
 > Every intended consumer is operating with the replacement credential, the real business workflow has been verified, rollback was available throughout the change, the old credential has been revoked under its controls, and the result is recorded in Audit.
 
@@ -42,19 +42,19 @@ The successful outcome of a FireKey run is not merely “a new key was created.�
 
 | Concept | Meaning | Example |
 | --- | --- | --- |
-| Organisation | The customer account using FireKey | Acme Corporation |
+| Organisation | The customer account using Uumi | Acme Corporation |
 | Application | A stable workload identity derived from a discovered runtime service | `notification-worker` |
 | Environment | A deployment boundary such as Development, Staging, or Production | Production |
 | Consumer service | The software component that actually uses a credential | `notification-worker` |
 | Runtime | The technology running that consumer | Google Cloud Run |
 | Credential provider | The system that issues and revokes the credential | SendGrid |
-| Managed credential | FireKey's stable logical record across rotations | `production-password-emailer` |
+| Managed credential | Uumi's stable logical record across rotations | `production-password-emailer` |
 | Credential generation | One concrete provider-side key or token in that record's lineage | `gen_7`, SendGrid key ID `SG.old…` |
 | Secret store | Where the credential value is stored for the consumer | Google Secret Manager |
 | Secret reference | A generation's pointer to the stored value, not the plaintext value | `sendgrid-api-key`, version 7 |
-| Connection | FireKey's authorised integration with an external system | Acme's Google Cloud connection |
+| Connection | Uumi's authorised integration with an external system | Acme's Google Cloud connection |
 | Controls | The credential-specific rules controlling triggers, observation, approvals, and recovery | Rotate before expiry and on verified exposure |
-| Controls version | FireKey's immutable record of one saved credential controls configuration | `control_version_7` |
+| Controls version | Uumi's immutable record of one saved credential controls configuration | `control_version_7` |
 | Playbook | A versioned browser procedure attached to a browser provider connection | Internal Vendor Key Rotation v1 |
 | Incident | A signal that a credential may be leaked, abused, expired, or otherwise unsafe | GitHub secret-scanning alert |
 | Rotation run | One stateful execution of the rotation lifecycle | `ROT-2026-0812-0042` |
@@ -94,11 +94,11 @@ Only runtime services explicitly bound to a credential are consumers of that cre
 
 ## Dashboard and navigation
 
-FireKey uses a compact operational navigation model:
+Uumi uses a compact operational navigation model:
 
 ```text
 ┌─────────────────────────────┐
-│ FireKey                     │
+│ Uumi                     │
 │ Acme Corporation        ▼   │
 ├─────────────────────────────┤
 │ Overview                    │
@@ -164,7 +164,7 @@ github-deploy-token            GitHub     deployment-worker     Rotating
 ```
 
 The `+` action opens one three-step credential setup flow. A credential is a stable logical identity
-for the workload credential FireKey manages. It binds the systems needed for the full lifecycle:
+for the workload credential Uumi manages. It binds the systems needed for the full lifecycle:
 
 ```text
 Credential
@@ -185,7 +185,7 @@ The provider connection may use an API or browser interface. API connections exp
 connector operations. Browser connections must already have a published Playbook attached and
 an authenticated isolated browser session. The credential does not choose or assign a Playbook;
 it inherits the exact version pinned to its browser provider connection. The provider connection
-supplies only metadata where available. FireKey never asks the user to paste the existing workload
+supplies only metadata where available. Uumi never asks the user to paste the existing workload
 secret into Inventory. Runtime services are filtered to those that already reference the selected
 immutable secret version, and the environment-variable binding is discovered from runtime metadata
 rather than entered or generated by the user.
@@ -254,7 +254,7 @@ Each incident displays:
 - Source and source-event identifier.
 - Severity, confidence, and detection time.
 - Affected repository, project, service, or provider resource.
-- Correlated FireKey credential candidates.
+- Correlated Uumi credential candidates.
 - Current containment and rotation status.
 - Recommended action and the controls decision that produced it.
 - Linked rotation run, approval, and audit trail.
@@ -319,7 +319,7 @@ or credential material.
 The active Computer Use stage is the model exchange. It shows the exact approved prompt, system
 guardrail, and sanitised image sent to Gemini; streams any visible Gemini response and supported
 thought summary; then shows the returned intent, function call and arguments, safety decision,
-FireKey validation, and execution result. Hidden reasoning and encrypted thought signatures are not
+Uumi validation, and execution result. Hidden reasoning and encrypted thought signatures are not
 displayed because they are not user-facing model output. There is no separate production replay UI.
 
 ### Approvals
@@ -352,11 +352,11 @@ Approvals can protect:
 - Old-credential revocation.
 - Destructive browser actions.
 
-Every approval is bound to the exact proposed action rather than only to the run. FireKey computes an action digest over the organisation, run, credential generation, playbook and controls versions, tool name, canonical parameters, expected preconditions, and evidence snapshot. The approval stores that digest, the approver identity, decision, expiry, and hash and consumption state of a one-shot callback capability. If any protected input changes, the digest changes and FireKey must request a new approval; replaying an old approval cannot authorise a different action. Notification links return the user to the authenticated FireKey application; they never expose a raw Workflows callback URL or approval capability.
+Every approval is bound to the exact proposed action rather than only to the run. Uumi computes an action digest over the organisation, run, credential generation, playbook and controls versions, tool name, canonical parameters, expected preconditions, and evidence snapshot. The approval stores that digest, the approver identity, decision, expiry, and hash and consumption state of a one-shot callback capability. If any protected input changes, the digest changes and Uumi must request a new approval; replaying an old approval cannot authorise a different action. Notification links return the user to the authenticated Uumi application; they never expose a raw Workflows callback URL or approval capability.
 
 ### Credential controls
 
-Controls define when FireKey should act and the safety window it must observe. They are configured
+Controls define when Uumi should act and the safety window it must observe. They are configured
 inside credential setup and edited from the credential's `Controls` tab; there is no separate
 dashboard page or reusable policy-selection detour.
 
@@ -373,14 +373,14 @@ Verify before revoking
   Require no old-key usage before revocation
 ```
 
-FireKey adds the invariant execution checks, protected destructive actions, and rollback branches
+Uumi adds the invariant execution checks, protected destructive actions, and rollback branches
 that users should not have to repeat in every form. Saving creates an immutable Controls version
 and pins it to the credential, so an in-progress run cannot silently inherit later changes.
 
 ### Inventory: Playbooks
 
 A Playbook is a reusable, versioned browser procedure. It is required only when a provider has
-no adequate credential-management API and FireKey must operate the provider console. Actions are
+no adequate credential-management API and Uumi must operate the provider console. Actions are
 ordered steps inside one Playbook; an action is not a separate Playbook.
 
 ```text
@@ -396,8 +396,8 @@ The boundaries are explicit:
 
 ```text
 Playbook    → how to perform browser actions on a platform
-Connection  → which platform FireKey can access and how it is authorised
-Credential  → which provider credential and secret resource FireKey manages
+Connection  → which platform Uumi can access and how it is authorised
+Credential  → which provider credential and secret resource Uumi manages
 Application → which discovered runtime workload can consume it
 Controls    → triggers, approvals, probes, rollout, observation, and recovery for this credential
 ```
@@ -437,7 +437,7 @@ Type: Video
   Upload file | Cloud Storage link
 ```
 
-An organisation teaches FireKey by supplying:
+An organisation teaches Uumi by supplying:
 
 - Written operational instructions.
 - An instructional video upload or an accessible Cloud Storage video reference.
@@ -449,7 +449,7 @@ Playbook Builder Agent converts that evidence into a structured draft. The secon
 generated name, platform, domains, and ordered actions before the user adds the draft. Publication
 remains a separate authorised action and creates the immutable active version. Structural
 validation covers domains, selectors, checkpoints, Secure Capture declarations, and create/revoke
-coverage; FireKey does not perform a destructive dry run merely to publish a procedure.
+coverage; Uumi does not perform a destructive dry run merely to publish a procedure.
 
 #### Playbook structure
 
@@ -506,7 +506,7 @@ A playbook moves through:
 Draft → Published → Superseded
 ```
 
-FireKey does not publish a Playbook merely because a model extracted steps from source material.
+Uumi does not publish a Playbook merely because a model extracted steps from source material.
 The service validates its structure and security boundaries, and publication records the authorised
 reviewer. A published version still cannot execute until it is attached to a compatible browser
 connection and that connection is authenticated.
@@ -516,11 +516,11 @@ connection and that connection is authenticated.
 Published versions are immutable. Editing creates a new draft version. Every browser rotation
 records the exact Playbook version inherited from the provider connection.
 
-During Computer Use execution, FireKey compares the current interface with the approved checkpoints. Minor layout changes can be handled by the Console Operator Agent. Missing controls, unexpected domains, new permission choices, substantially different flows, or unrecognised security prompts cause the run to pause and the playbook to become `Review required`.
+During Computer Use execution, Uumi compares the current interface with the approved checkpoints. Minor layout changes can be handled by the Console Operator Agent. Missing controls, unexpected domains, new permission choices, substantially different flows, or unrecognised security prompts cause the run to pause and the playbook to become `Review required`.
 
 ### Internal agent runtime
 
-FireKey's four institutional agents are registered and governed in Google Agent Registry. They are
+Uumi's four institutional agents are registered and governed in Google Agent Registry. They are
 an internal execution subsystem, not a customer setup page. Runtime status, identity, approved
 callers, tool access, traces, and linked activity are surfaced only where they affect a rotation,
 connection, playbook, incident, or audit record.
@@ -532,11 +532,11 @@ connection, playbook, incident, or audit record.
 | Playbook Builder Agent | `build_playbook`, `analyse_walkthrough`, `validate_playbook` | Operations enablement and service owners turn institutional knowledge into reviewable browser procedures |
 | Console Operator Agent | `execute_console_playbook`, `detect_interface_drift` | Operations and legacy-system owners reuse governed console procedures without granting a general administrator agent |
 
-These are four separately deployed and registered agents, not four labels inside one general-purpose prompt. Cloud Workflows invokes the selected agent endpoint, and relevant decisions appear on the rotation, connection, playbook, incident, or audit record. Agent discovery never grants broader production permissions. Google Agent Identity, IAM policy, Agent Gateway, the FireKey Tool Broker, and the run's pinned controls continue to constrain every call.
+These are four separately deployed and registered agents, not four labels inside one general-purpose prompt. Cloud Workflows invokes the selected agent endpoint, and relevant decisions appear on the rotation, connection, playbook, incident, or audit record. Agent discovery never grants broader production permissions. Google Agent Identity, IAM policy, Agent Gateway, the Uumi Tool Broker, and the run's pinned controls continue to constrain every call.
 
 ### Inventory: Connections
 
-Connections are the authorised integrations FireKey uses to observe and act.
+Connections are the authorised integrations Uumi uses to observe and act.
 
 The dashboard starts with an integration catalogue rather than a generic connection form:
 
@@ -545,25 +545,25 @@ GitHub       Google Cloud       Custom API       Computer Use
 Connect      Connect            Configure        Set up
 ```
 
-- **GitHub** uses one Connect action. GitHub returns the App installation to FireKey, FireKey
+- **GitHub** uses one Connect action. GitHub returns the App installation to Uumi, Uumi
   continues the administrator authorization automatically, then presents the discovered
   repositories and their readiness. It verifies repository permissions, webhook delivery, and
   secret-scanning status before the connection becomes Ready. Repository monitoring is assigned
   later from the credential's Controls; the connection never selects a managed credential.
 - **Google Cloud** uses a PKCE-bound administrator authorization only to discover visible projects,
   Cloud Run services, and service accounts. The administrator selects the discovered project and
-  an existing FireKey automation identity; no project ID, region, or service-account address is
-  typed. FireKey then creates separate Cloud Run and Secret Manager connections bound to that
+  an existing Uumi automation identity; no project ID, region, or service-account address is
+  typed. Uumi then creates separate Cloud Run and Secret Manager connections bound to that
   workload identity and marks them Ready only after read-only resource discovery succeeds. The
   short-lived user token is cleared and never becomes the connection authorization.
 - **Custom API** imports a declarative credential API definition and management authentication
   reference. The definition contains the API origin, authentication transport, list/create/test/
-  revoke operations, request templates, success statuses, and response mappings. FireKey statically
+  revoke operations, request templates, success statuses, and response mappings. Uumi statically
   validates the HTTPS same-origin operations and response mappings, then performs
   only the adapter's read-only credential-list operation before marking the connection Ready. It
   never creates or revokes a credential as a setup test.
 - **Computer Use** attaches a published Playbook and opens an isolated secure browser for login and
-  MFA when the provider has no adequate management API. FireKey automatically stores the filtered
+  MFA when the provider has no adequate management API. Uumi automatically stores the filtered
   provider session in its organisation-isolated browser-session container; workload secrets are
   never offered as browser-session storage.
 
@@ -590,9 +590,9 @@ allowed_resources:
 status: ready
 ```
 
-Roles describe what FireKey uses the system for: `provider`, `runtime`, `secret-store`,
+Roles describe what Uumi uses the system for: `provider`, `runtime`, `secret-store`,
 `telemetry`, or `incident`. The interface describes how the deterministic connector operates it:
-`api` or `browser`. Authorisation describes how FireKey is permitted to use that interface:
+`api` or `browser`. Authorisation describes how Uumi is permitted to use that interface:
 `oauth`, `workload-identity`, `api-key`, or `browser-session`. HTTP bearer, header, and Basic
 schemes are connector transport details, not connection types. Human involvement is never an
 interface or executor type.
@@ -604,7 +604,7 @@ Connections use the safest supported authorisation method:
 3. A dedicated, least-privilege API key.
 4. A controlled browser session when no adequate programmatic interface exists.
 
-The credential being rotated is the **workload credential**. The connection used to create and revoke it is a separate **management connection**. A `mail.send` SendGrid key, for example, cannot create its own replacement unless it has inappropriate management permissions. FireKey uses a separate, restricted provider-management connection for that operation.
+The credential being rotated is the **workload credential**. The connection used to create and revoke it is a separate **management connection**. A `mail.send` SendGrid key, for example, cannot create its own replacement unless it has inappropriate management permissions. Uumi uses a separate, restricted provider-management connection for that operation.
 
 Every connection records:
 
@@ -614,9 +614,9 @@ Every connection records:
 - Token or session expiry.
 - Allowed resources and environments.
 - The single configured interface: API or browser.
-- The FireKey service identity authorised to use it.
+- The Uumi service identity authorised to use it.
 
-For API provider connections, FireKey represents the remotely managed credential boundary as
+For API provider connections, Uumi represents the remotely managed credential boundary as
 `<platform>:credentials:<provider-id>`; a connection can therefore allow an exact credential or a
 deliberate account-wide prefix such as `<platform>:credentials:*` without teaching core code a
 provider-specific identifier format.
@@ -640,12 +640,12 @@ remains the coordinator and deterministic components remain the executors.
 
 #### Auth Broker
 
-The FireKey Auth Broker is the deterministic security service that establishes and maintains authorised access to connected systems. It is not an AI model.
+The Uumi Auth Broker is the deterministic security service that establishes and maintains authorised access to connected systems. It is not an AI model.
 
 It handles two distinct boundaries:
 
 ```text
-FireKey authentication
+Uumi authentication
   Organisation SSO, user MFA, session management, roles, approvals
 
 Provider authentication
@@ -653,7 +653,7 @@ Provider authentication
   browser sessions, expiry, reauthentication, and human takeover
 ```
 
-For API execution, the Auth Broker supplies scoped authorisation to the FireKey MCP Tool Broker. For Computer Use, it attaches an authenticated provider session to an isolated browser VM before the Console Operator Agent begins. Raw passwords, OAuth refresh tokens, session cookies, and MFA values are never added to agent prompts.
+For API execution, the Auth Broker supplies scoped authorisation to the Uumi MCP Tool Broker. For Computer Use, it attaches an authenticated provider session to an isolated browser VM before the Console Operator Agent begins. Raw passwords, OAuth refresh tokens, session cookies, and MFA values are never added to agent prompts.
 
 If authentication expires during a run:
 
@@ -665,7 +665,7 @@ Pause playbook
 → resume from the recorded checkpoint
 ```
 
-FireKey does not solve CAPTCHAs, bypass MFA, or ask the Console Operator Agent to decide whether a provider's authentication control can be circumvented.
+Uumi does not solve CAPTCHAs, bypass MFA, or ask the Console Operator Agent to decide whether a provider's authentication control can be circumvented.
 
 ### Audit
 
@@ -691,11 +691,11 @@ Firestore stores only the searchable audit index. Canonical audit events are app
 
 ## Connections and system mapping
 
-FireKey does not assume that connecting a provider proves how every credential is used. Connections expose authorised metadata; the organisation confirms the operational mapping.
+Uumi does not assume that connecting a provider proves how every credential is used. Connections expose authorised metadata; the organisation confirms the operational mapping.
 
 ### Provider import
 
-Where supported, FireKey can request provider-side metadata:
+Where supported, Uumi can request provider-side metadata:
 
 ```text
 Provider key ID
@@ -745,7 +745,7 @@ Source: Secret Manager / sendgrid-api-key / version 7
 
 ### Confirmed mapping
 
-A managed credential becomes `Ready` when FireKey has a confirmed relationship between:
+A managed credential becomes `Ready` when Uumi has a confirmed relationship between:
 
 ```text
 Provider credential
@@ -760,55 +760,55 @@ Credential controls
 ```
 
 When verified-exposure automation is enabled, the credential's Controls also select the connected
-incident source and repository. A repository can be selected by several credentials; FireKey
+incident source and repository. A repository can be selected by several credentials; Uumi
 automates only an exact unique correlation and otherwise requests confirmation on the incident.
 
 For a browser provider connection, readiness also requires a compatible published Playbook and a
 valid browser session. API connections never require a Playbook.
 
-If FireKey finds an unregistered secret reference or an unresolved provider match, it presents a suggestion. It does not silently assert that the relationship is correct.
+If Uumi finds an unregistered secret reference or an unresolved provider match, it presents a suggestion. It does not silently assert that the relationship is correct.
 
 ## Trigger and ingestion layer
 
-FireKey includes a first-class ingestion layer. Its role is to receive signals that may require rotation and convert them into authenticated, deduplicated, correlated FireKey incidents or rotation requests.
+Uumi includes a first-class ingestion layer. Its role is to receive signals that may require rotation and convert them into authenticated, deduplicated, correlated Uumi incidents or rotation requests.
 
-FireKey does not replace the organisation's source-code scanner, cloud threat detector, or SIEM. Those systems detect suspicious conditions. FireKey owns the credential-specific response: identify the managed credential, determine a safe course of action, rotate it, verify recovery, and close the loop.
+Uumi does not replace the organisation's source-code scanner, cloud threat detector, or SIEM. Those systems detect suspicious conditions. Uumi owns the credential-specific response: identify the managed credential, determine a safe course of action, rotate it, verify recovery, and close the loop.
 
 ### Trigger sources
 
-FireKey accepts:
+Uumi accepts:
 
 | Trigger | Example | Typical response |
 | --- | --- | --- |
 | Manual | Operator clicks `Rotate` | Start under the credential's controls |
-| FireKey schedule | Credential reaches its 90-day due date | Routine rotation |
+| Uumi schedule | Credential reaches its 90-day due date | Routine rotation |
 | Secret-store schedule | Google Secret Manager emits `SECRET_ROTATE` | Routine rotation |
 | Repository leak alert | GitHub secret scanning creates or reopens an alert | Emergency triage and rotation |
 | Cloud security finding | Security Command Center publishes an active finding | Correlate and contain |
 | Provider signal | Provider reports expiry, disablement, abuse, or compromise | Emergency or recovery flow |
-| FireKey observation | Scheduled metadata scan finds expiry, scope drift, disablement, or a stale runtime binding | Exact credential incident and controls response |
+| Uumi observation | Scheduled metadata scan finds expiry, scope drift, disablement, or a stale runtime binding | Exact credential incident and controls response |
 | SIEM/SOAR webhook | Splunk, Chronicle, or another platform sends a finding | Controls-based triage |
-| FireKey telemetry | Authentication errors spike or old-key use continues | Pause, recover, or escalate |
-| FireKey API | An authorised internal system submits a request | Controls-based rotation |
+| Uumi telemetry | Authentication errors spike or old-key use continues | Pause, recover, or escalate |
+| Uumi API | An authorised internal system submits a request | Controls-based rotation |
 
 Google Secret Manager can publish a `SECRET_ROTATE` message to Pub/Sub at a configured rotation time. Security Command Center can publish new and updated findings to Pub/Sub in near real time. GitHub exposes secret-scanning alerts through webhooks and APIs.
 
 ### GitHub customer onboarding
 
-FireKey integrates through a customer-installed GitHub App; it does not depend on secret scanning
-being enabled on FireKey's own source repository. An authorised tenant administrator begins an
+Uumi integrates through a customer-installed GitHub App; it does not depend on secret scanning
+being enabled on Uumi's own source repository. An authorised tenant administrator begins an
 installation with a short-lived state value and PKCE challenge. After GitHub returns the App
-installation, FireKey exchanges a one-time user authorization code and uses that temporary user
+installation, Uumi exchanges a one-time user authorization code and uses that temporary user
 token only inside the deterministic connector to prove that the administrator can access the
 claimed installation. The token is cleared after the metadata check and is never persisted or
 sent to an agent. Secret-scanning API probes request hidden-secret responses, and alert
-normalisation discards any unapproved payload fields before creating FireKey metadata.
+normalisation discards any unapproved payload fields before creating Uumi metadata.
 
 Onboarding verifies that the installation grants read access to secret-scanning alerts, subscribes
 to `secret_scanning_alert`, and exposes no more than 400 selected repositories. Every selected
 repository must report secret scanning enabled. A globally signed installation delivery proves the configured webhook path;
 the installation is ready only after both that delivery and the repository checks succeed. The
-global installation index then routes signed alert deliveries to exactly one FireKey organisation.
+global installation index then routes signed alert deliveries to exactly one Uumi organisation.
 Suspending or deleting the GitHub App installation immediately disables that routing. GitHub App
 repository-selection changes also fail closed and invalidate readiness until an administrator
 repeats the ownership and scanning checks. Credential-side source bindings remain unchanged until
@@ -818,7 +818,7 @@ the administrator selects another ready repository.
 
 ```mermaid
 flowchart LR
-    A["Schedules, scanners, providers, SIEM, API"] --> B["FireKey Ingestion Gateway"]
+    A["Schedules, scanners, providers, SIEM, API"] --> B["Uumi Ingestion Gateway"]
     B --> C["Authenticate and validate source"]
     C --> D["Normalise event"]
     D --> E["Deduplicate and persist"]
@@ -831,7 +831,7 @@ flowchart LR
 
 #### 1. Authenticate
 
-FireKey validates each source before processing its payload:
+Uumi validates each source before processing its payload:
 
 - Webhook HMAC signatures and delivery identifiers.
 - Google Cloud IAM-authenticated Pub/Sub delivery.
@@ -861,11 +861,11 @@ Every source becomes a canonical event:
 }
 ```
 
-The canonical record contains references and safe metadata. FireKey does not place an exposed plaintext secret into agent prompts, logs, Firestore, or Audit.
+The canonical record contains references and safe metadata. Uumi does not place an exposed plaintext secret into agent prompts, logs, Firestore, or Audit.
 
 #### 3. Deduplicate
 
-The same provider event may be delivered more than once. FireKey uses the organisation, source, source-event ID, and event type as an idempotency key. Duplicate delivery updates the existing incident rather than starting a second rotation.
+The same provider event may be delivered more than once. Uumi uses the organisation, source, source-event ID, and event type as an idempotency key. Duplicate delivery updates the existing incident rather than starting a second rotation.
 
 Undeliverable events are retried and eventually routed to a dead-letter queue for operator review. A rotation run also holds a renewable lease with a monotonically increasing fencing token on its credential. Every mutation includes the current token, so a delayed worker whose lease expired cannot continue changing the credential after a replacement worker takes ownership.
 
@@ -880,13 +880,13 @@ The Inventory and Exposure Agent and deterministic indexes compare the event wit
 - Existing credential incidents and runs.
 - Provider status or validity checks where available.
 
-Correlation returns candidates with reasons and confidence. When there is one verified match, the credential's controls may allow automatic response. When several credentials could match, FireKey asks an authorised person to confirm the affected credential.
+Correlation returns candidates with reasons and confidence. When there is one verified match, the credential's controls may allow automatic response. When several credentials could match, Uumi asks an authorised person to confirm the affected credential.
 
 #### 5. Decide and notify
 
 The controls engine determines the permitted action:
 
-| Condition | FireKey behaviour |
+| Condition | Uumi behaviour |
 | --- | --- |
 | Scheduled and credential is healthy | Start routine rotation |
 | Verified leak, exact credential match, emergency response enabled in controls | Notify immediately and start emergency rotation |
@@ -895,7 +895,7 @@ The controls engine determines the permitted action:
 | Low-confidence finding | Notify and hold for triage |
 | Duplicate or already-contained finding | Link to existing incident and run |
 
-Notifications can be delivered in-app and through configured email, Slack, or incident-management channels. Notification links open the authenticated FireKey incident or approval page; sensitive decisions are not executed merely by replying to a message.
+Notifications can be delivered in-app and through configured email, Slack, or incident-management channels. Notification links open the authenticated Uumi incident or approval page; sensitive decisions are not executed merely by replying to a message.
 
 ### Routine and emergency modes
 
@@ -920,7 +920,7 @@ Validate incident
 → verify containment
 ```
 
-If a compromised credential is actively being abused, leaving it valid for a long observation window may be more dangerous than a short interruption. FireKey makes that trade-off explicit through the credential's emergency controls and human approval rules; an agent does not silently choose it.
+If a compromised credential is actively being abused, leaving it valid for a long observation window may be more dangerous than a short interruption. Uumi makes that trade-off explicit through the credential's emergency controls and human approval rules; an agent does not silently choose it.
 
 ## Rotation strategies
 
@@ -944,13 +944,13 @@ It applies when the provider permits two independently valid credentials with eq
 
 ### Dual-slot strategy
 
-Some systems expose primary and secondary credential slots. FireKey writes the inactive slot, migrates consumers, promotes it, and then replaces the old slot.
+Some systems expose primary and secondary credential slots. Uumi writes the inactive slot, migrates consumers, promotes it, and then replaces the old slot.
 
 ### Immediate-invalidation strategy
 
-Some provider “roll” operations immediately invalidate the previous value. FireKey does not describe these as zero-downtime unless consumer behaviour provides another safe overlap mechanism.
+Some provider “roll” operations immediately invalidate the previous value. Uumi does not describe these as zero-downtime unless consumer behaviour provides another safe overlap mechanism.
 
-Before proceeding, FireKey must either:
+Before proceeding, Uumi must either:
 
 - Find an alternate parallel-key method.
 - Coordinate an atomic consumer update.
@@ -969,7 +969,7 @@ production-mailer-key
 └── invoice-worker
 ```
 
-FireKey creates one dependency plan and tracks every consumer separately. The old key cannot be revoked until all required consumers have migrated or the credential's emergency controls explicitly accept the impact.
+Uumi creates one dependency plan and tracks every consumer separately. The old key cannot be revoked until all required consumers have migrated or the credential's emergency controls explicitly accept the impact.
 
 ### Provider execution paths
 
@@ -996,11 +996,11 @@ Auth Broker attaches authenticated session
 
 Provider pages can contain untrusted or adversarial text. Browser workers use domain allowlists, prompt-injection detection, restricted actions, isolated profiles, step budgets, and explicit confirmation for destructive operations.
 
-If a newly generated secret appears in the browser, Secure Capture transfers it directly to the configured secret store and masks it from subsequent screenshots. Secure Capture is a FireKey component, not a Gemini or Google Cloud product. If FireKey cannot prove that the field was captured and masked before another screenshot, the model loop and recording freeze and the run pauses for authorised exceptional recovery. The agent remains the coordinator; the recovery does not become a separate execution method.
+If a newly generated secret appears in the browser, Secure Capture transfers it directly to the configured secret store and masks it from subsequent screenshots. Secure Capture is a Uumi component, not a Gemini or Google Cloud product. If Uumi cannot prove that the field was captured and masked before another screenshot, the model loop and recording freeze and the run pauses for authorised exceptional recovery. The agent remains the coordinator; the recovery does not become a separate execution method.
 
 ## Rotation lifecycle
 
-Every FireKey rotation is a durable state machine. It can pause for minutes or days, resume after process restarts, retry safe steps, and recover from partial failure.
+Every Uumi rotation is a durable state machine. It can pause for minutes or days, resume after process restarts, retry safe steps, and recover from partial failure.
 
 The state machine retains all 12 safety stages. The dashboard and demo group them into six parent phases to reduce operator navigation without removing work:
 
@@ -1035,7 +1035,7 @@ flowchart TD
 
 ### Stage 1: Trigger intake
 
-FireKey records:
+Uumi records:
 
 - Who or what requested the rotation.
 - Source event and reason.
@@ -1047,7 +1047,7 @@ It authenticates the request, deduplicates it, checks for an existing active run
 
 ### Stage 2: Preflight
 
-Preflight confirms that FireKey has enough information and authority to act:
+Preflight confirms that Uumi has enough information and authority to act:
 
 - Provider connection is healthy.
 - Credential exists and is active or its current condition is known.
@@ -1063,7 +1063,7 @@ Preflight confirms that FireKey has enough information and authority to act:
 - Every provider mutation declares its retry or compensation semantics, and any required reconciliation or orphan-cleanup permission is available before creation.
 - No incompatible change is already running.
 
-If zero-downtime rotation is not feasible, FireKey stops before creating a destructive change and explains the exact limitation.
+If zero-downtime rotation is not feasible, Uumi stops before creating a destructive change and explains the exact limitation.
 
 ### Stage 3: Build and bind the rotation plan
 
@@ -1090,7 +1090,7 @@ unpublished/mismatched browser Playbook causes rejection.
 
 ### Stage 4: Create replacement credential
 
-Cloud Workflows dispatches the approved creation operation to the FireKey MCP Tool Broker. An API connector performs deterministic mutations. Only a console-only operation is delegated to the Console Operator Agent in an isolated Computer Use VM. The operation creates a new credential with the intended name, scope, resource boundary, expiry, and network restrictions.
+Cloud Workflows dispatches the approved creation operation to the Uumi MCP Tool Broker. An API connector performs deterministic mutations. Only a console-only operation is delegated to the Console Operator Agent in an isolated Computer Use VM. The operation creates a new credential with the intended name, scope, resource boundary, expiry, and network restrictions.
 
 Each connector declares one mutation mode:
 
@@ -1121,11 +1121,11 @@ secret_reference: projects/acme-prod/secrets/sendgrid-api-key/versions/8
 
 It does not receive the secret value.
 
-FireKey verifies that the new version exists and is accessible to the intended consumer identity without changing the live binding.
+Uumi verifies that the new version exists and is accessible to the intended consumer identity without changing the live binding.
 
 ### Stage 6: Candidate deployment
 
-FireKey deploys the intended consumer with an explicit reference to the new version. It does not rely on an uncontrolled `latest` pointer for a production canary.
+Uumi deploys the intended consumer with an explicit reference to the new version. It does not rely on an uncontrolled `latest` pointer for a production canary.
 
 For Cloud Run:
 
@@ -1133,16 +1133,16 @@ For Cloud Run:
 Current revision: notification-worker-r17 → secret version 7
 Candidate revision: notification-worker-r18 → secret version 8
 Candidate traffic: 0%
-Candidate tag: firekey-rot-0042
+Candidate tag: uumi-rot-0042
 ```
 
 The tagged candidate can be addressed directly for verification before receiving production traffic.
 
-The runtime connector also injects `FIREKEY_GENERATION_ID=gen_8` and the equivalent `firekey.credential_generation` OpenTelemetry resource attribute. When telemetry is connected, FireKey uses that non-secret identifier to correlate candidate health and old-generation use; the credential value itself is never logged.
+The runtime connector also injects `UUMI_GENERATION_ID=gen_8` and the equivalent `uumi.credential_generation` OpenTelemetry resource attribute. When telemetry is connected, Uumi uses that non-secret identifier to correlate candidate health and old-generation use; the credential value itself is never logged.
 
 ### Stage 7: Pre-live verification
 
-The deterministic Verification Service executes the configured probes and evaluates their typed results against the pinned controls. It does not ask an agent to decide whether its own mutation succeeded. Before production switches, FireKey must pass all applicable gates:
+The deterministic Verification Service executes the configured probes and evaluates their typed results against the pinned controls. It does not ask an agent to decide whether its own mutation succeeded. Before production switches, Uumi must pass all applicable gates:
 
 1. **Provider gate** — the new credential exists, is enabled, and has no unexpected permission expansion.
 2. **Secret-store gate** — the new version exists and the correct consumer identity can access it.
@@ -1151,7 +1151,7 @@ The deterministic Verification Service executes the configured probes and evalua
 5. **Rollback gate** — the previous healthy revision and old credential remain available.
 6. **Optional telemetry gate** — when a telemetry connection is attached, logs, metrics, traces, retries, authentication failures, and old-generation use must remain within the configured thresholds.
 
-The required gates prove that the provider accepts the replacement credential, the secret-store version is usable by the runtime identity, and the candidate runtime is ready with that exact version. FireKey labels this result `deployment verified`; it does not claim that runtime readiness alone proves an application-specific business operation.
+The required gates prove that the provider accepts the replacement credential, the secret-store version is usable by the runtime identity, and the candidate runtime is ready with that exact version. Uumi labels this result `deployment verified`; it does not claim that runtime readiness alone proves an application-specific business operation.
 
 ### Stage 8: Production rollout
 
@@ -1166,11 +1166,11 @@ The rollout mechanism depends on the runtime:
 | VM service | Blue/green process, safe reload, or approved restart procedure |
 | CI/CD pipeline | Test workflow with new secret, update the protected environment, then wait for in-flight jobs |
 
-At every stage FireKey compares actual results with controls thresholds. A detected regression stops promotion and starts recovery.
+At every stage Uumi compares actual results with controls thresholds. A detected regression stops promotion and starts recovery.
 
 ### Stage 9: Observation
 
-At 100% rollout, FireKey observes:
+At 100% rollout, Uumi observes:
 
 - Credential-dependent success rate.
 - Provider authentication failures.
@@ -1180,13 +1180,13 @@ At 100% rollout, FireKey observes:
 - Requests from unmigrated consumers.
 - Provider-side old-key usage where available.
 
-Every candidate deployment also emits a non-secret `FIREKEY_GENERATION_ID` in logs, traces, and verification events. When telemetry is connected, FireKey uses that signal with the explicit runtime binding to identify which credential generation served traffic and whether the previous generation is still in use. Without telemetry, the approval evidence states that behavioural observation is unavailable rather than inventing an application-specific test.
+Every candidate deployment also emits a non-secret `UUMI_GENERATION_ID` in logs, traces, and verification events. When telemetry is connected, Uumi uses that signal with the explicit runtime binding to identify which credential generation served traffic and whether the previous generation is still in use. Without telemetry, the approval evidence states that behavioural observation is unavailable rather than inventing an application-specific test.
 
 The observation period can be shortened by emergency controls or extended when traffic is too low to provide confidence.
 
 ### Stage 10: Revocation approval gate
 
-FireKey evaluates the credential's immutable Controls version. When human approval is not required, the gate records that decision and proceeds automatically. When Controls require approval before revocation, FireKey presents the approver with the trigger, plan, test results, rollout history, observation data, consumer coverage, rollback state, and known residual risk.
+Uumi evaluates the credential's immutable Controls version. When human approval is not required, the gate records that decision and proceeds automatically. When Controls require approval before revocation, Uumi presents the approver with the trigger, plan, test results, rollout history, observation data, consumer coverage, rollback state, and known residual risk.
 
 When required, the approval is bound to the exact revocation action digest, plan hash, credential generation, evidence snapshot, and expiry. Any material change after the approval screen was generated invalidates it and returns the run to `Approval required`.
 
@@ -1200,7 +1200,7 @@ When approval is required, the approver may:
 
 ### Stage 11: Revoke and clean up
 
-After the approval gate, FireKey:
+After the approval gate, Uumi:
 
 1. Re-checks the approval-policy result and, when present, the approval digest, consumer-generation bindings, observation evidence, and current fencing token immediately before the irreversible step.
 2. Prepares a restricted negative-test handle for the old credential where the provider supports a safe authentication probe. If plaintext is required, a deterministic verifier reads it just in time from the still-enabled old secret version into ephemeral memory; it is never sent to an agent, log, screenshot, or audit event.
@@ -1228,7 +1228,7 @@ Audit contains the full operation and approvals
 
 ## Agentic system
 
-FireKey uses four bounded institutional agents built with Gemini and Google's Agent Development Kit. Each agent is separately deployed to Agent Runtime, automatically catalogued in Agent Registry, and assigned its own Agent Identity and registered skills. Four is sufficient because each boundary represents a genuinely different kind of adaptive reasoning; deterministic orchestration, controls evaluation, verification, and mutation execution are services rather than agents.
+Uumi uses four bounded institutional agents built with Gemini and Google's Agent Development Kit. Each agent is separately deployed to Agent Runtime, automatically catalogued in Agent Registry, and assigned its own Agent Identity and registered skills. Four is sufficient because each boundary represents a genuinely different kind of adaptive reasoning; deterministic orchestration, controls evaluation, verification, and mutation execution are services rather than agents.
 
 Cloud Workflows is the authoritative coordinator. It selects eligible stages, dispatches bounded tasks, waits for callbacks and timers, enforces leases, and resumes long-running runs from Firestore. Removing a Coordinator Agent avoids a second, competing state machine.
 
@@ -1294,7 +1294,7 @@ The Console Operator Agent exists only for provider operations without an adequa
 - Stops at authentication, safety, Secure Capture, and approval checkpoints.
 - Detects material interface drift and requests playbook review.
 
-It receives page state with protected fields redacted and typed tool results with secret references, never raw credential values. It cannot directly deploy consumers, shift traffic, write arbitrary secrets, or call arbitrary provider endpoints. Those deterministic operations remain behind the FireKey MCP Tool Broker.
+It receives page state with protected fields redacted and typed tool results with secret references, never raw credential values. It cannot directly deploy consumers, shift traffic, write arbitrary secrets, or call arbitrary provider endpoints. Those deterministic operations remain behind the Uumi MCP Tool Broker.
 
 ### Deterministic Verification Service
 
@@ -1309,9 +1309,9 @@ Verification is deliberately not a fifth agent. A model must not grade its own w
 
 An inconclusive or failed result may invoke the Rotation Planning and Recovery Agent for bounded diagnosis, but the agent cannot rewrite the measured result or bypass a gate.
 
-### What makes FireKey agentic
+### What makes Uumi agentic
 
-FireKey is agentic because it can take a high-level objective such as:
+Uumi is agentic because it can take a high-level objective such as:
 
 ```text
 Safely rotate the production SendGrid credential affected by this leak.
@@ -1386,7 +1386,7 @@ flowchart TB
     PLAN --> AGW
     BUILD --> AGW
     CONSOLE --> AGW
-    AGW --> BROKER["FireKey MCP Tool Broker"]
+    AGW --> BROKER["Uumi MCP Tool Broker"]
     WF --> BROKER
     BROKER <--> REG
 
@@ -1397,7 +1397,7 @@ flowchart TB
     BROKER --> VM["One-run Computer Use VM"]
     HUMAN --> STREAM["Authenticated Browser Session Gateway"]
     STREAM --> VM
-    VM --> CAPTURE["FireKey Secure Capture"]
+    VM --> CAPTURE["Uumi Secure Capture"]
     CAPTURE --> SECRET
 
     PROVIDER --> SAAS["SendGrid, GitHub, Stripe, Cloudflare, others"]
@@ -1419,6 +1419,8 @@ flowchart TB
 
 The dashboard and authenticated API run on Cloud Run. They provide tenant-aware access to Inventory, Incidents, Rotations, Approvals, credential Controls, Playbooks, Connections, and Audit.
 
+After authentication, the API resolves organisation memberships from the verified identity. A pending invitation for the same verified email is accepted into its existing organisation before the dashboard loads. Only an identity with no membership or invitation is asked to name a new organisation; creation atomically records the organisation and its first administrator. The client derives every organisation-scoped request from that active membership and never embeds a demo tenant identifier.
+
 ### Ingestion Gateway and Pub/Sub
 
 The Ingestion Gateway terminates authenticated webhooks and cloud events. It validates source identity before publishing safe canonical events to Pub/Sub.
@@ -1433,11 +1435,11 @@ The workflow engine, not the model, decides whether the state machine may advanc
 
 ### Agent runtime
 
-The four ADK agents run as separate deployments on Gemini Enterprise Agent Platform Agent Runtime. Deployment registers them in Agent Registry and gives each agent an independently governable version, identity, endpoint, skills card, and observability surface. Cloud Run remains the host for FireKey application services; it is not presented as a substitute agent runtime in this architecture.
+The four ADK agents run as separate deployments on Gemini Enterprise Agent Platform Agent Runtime. Deployment registers them in Agent Registry and gives each agent an independently governable version, identity, endpoint, skills card, and observability surface. Cloud Run remains the host for Uumi application services; it is not presented as a substitute agent runtime in this architecture.
 
 ### Operational state, Sessions, and Memory Bank
 
-FireKey deliberately uses three state layers:
+Uumi deliberately uses three state layers:
 
 | Layer | Purpose | Must not contain |
 | --- | --- | --- |
@@ -1453,9 +1455,9 @@ A run that lasts for weeks does not keep a model process alive. Cloud Workflows 
 
 ### Data sovereignty and regional deployment
 
-An organisation selects a supported Google Cloud region when its FireKey environment is provisioned. Firestore, Agent Runtime, Sessions, Memory Bank, Workflows, Pub/Sub, logs, evidence storage, CMEK keys, and Computer Use VMs are created in or constrained to that approved regional boundary where the selected service supports it. Organisation policy blocks cross-region agent, model, tool, and evidence routes; unsupported provider or model geography is disclosed before activation rather than silently falling back.
+An organisation selects a supported Google Cloud region when its Uumi environment is provisioned. Firestore, Agent Runtime, Sessions, Memory Bank, Workflows, Pub/Sub, logs, evidence storage, CMEK keys, and Computer Use VMs are created in or constrained to that approved regional boundary where the selected service supports it. Organisation policy blocks cross-region agent, model, tool, and evidence routes; unsupported provider or model geography is disclosed before activation rather than silently falling back.
 
-FireKey records the region for every agent deployment, run, session, memory, browser session, audit event, and evidence object. An enforced project location policy admits only the selected region for services that support resource-location constraints. VPC Service Controls protects the supported Google data APIs inside the project perimeter; it does not claim to govern third-party internet traffic. Private service access, IAM, CMEK, retention policy, Agent Gateway, and Secure Web Proxy provide the remaining service-appropriate layers.
+Uumi records the region for every agent deployment, run, session, memory, browser session, audit event, and evidence object. An enforced project location policy admits only the selected region for services that support resource-location constraints. VPC Service Controls protects the supported Google data APIs inside the project perimeter; it does not claim to govern third-party internet traffic. Private service access, IAM, CMEK, retention policy, Agent Gateway, and Secure Web Proxy provide the remaining service-appropriate layers.
 
 ### Firestore
 
@@ -1476,11 +1478,11 @@ Plaintext workload credentials are not stored in Firestore.
 
 ### Google Agent Gateway and Model Armor
 
-Google Agent Gateway is the governed network path for agent ingress and agent-to-tool egress. It applies Agent Identity and IAM policy to registered destinations, and Model Armor screens supported prompt, response, and MCP traffic for prompt injection, tool poisoning, and sensitive-data leakage. It does not replace FireKey's domain-specific transaction controls or prove that a provider mutation succeeded.
+Google Agent Gateway is the governed network path for agent ingress and agent-to-tool egress. It applies Agent Identity and IAM policy to registered destinations, and Model Armor screens supported prompt, response, and MCP traffic for prompt injection, tool poisoning, and sensitive-data leakage. It does not replace Uumi's domain-specific transaction controls or prove that a provider mutation succeeded.
 
-### FireKey MCP Tool Broker
+### Uumi MCP Tool Broker
 
-Agents cannot directly call arbitrary provider endpoints. The FireKey MCP Tool Broker is FireKey's application service behind Agent Gateway and is registered in Agent Registry as an MCP server with versioned tool schemas. Read and planning tools may be reached through a governed agent call; state-changing tools additionally require a short-lived action capability minted for the current Cloud Workflows stage. Workflows can also invoke those typed mutations directly. The broker exposes operations such as:
+Agents cannot directly call arbitrary provider endpoints. The Uumi MCP Tool Broker is Uumi's application service behind Agent Gateway and is registered in Agent Registry as an MCP server with versioned tool schemas. Read and planning tools may be reached through a governed agent call; state-changing tools additionally require a short-lived action capability minted for the current Cloud Workflows stage. Workflows can also invoke those typed mutations directly. The broker exposes operations such as:
 
 ```text
 provider.listCredentialMetadata
@@ -1518,13 +1520,13 @@ before a Playbook can attach to a browser connection.
 
 ### Auth Broker
 
-The Auth Broker manages FireKey user identity and provider authorisation. It supplies short-lived, scoped credentials or authenticated browser sessions at execution time and keeps raw authentication material outside agent context.
+The Auth Broker manages Uumi user identity and provider authorisation. It supplies short-lived, scoped credentials or authenticated browser sessions at execution time and keeps raw authentication material outside agent context.
 
 Where supported, Google Agent Identity and its Auth Manager provide agent identity and OAuth or API-key handling. Provider-session renewal, MFA, CAPTCHA, and other human verification steps pause the run for an authorised user rather than being delegated to a model.
 
 ### Secure Capture
 
-Secure Capture is a custom FireKey privileged helper inside the Computer Use VM. It is not a Gemini feature and it is not a general screen-redaction promise. It protects a new credential that a provider displays only once through an explicitly declared playbook field:
+Secure Capture is a custom Uumi privileged helper inside the Computer Use VM. It is not a Gemini feature and it is not a general screen-redaction promise. It protects a new credential that a provider displays only once through an explicitly declared playbook field:
 
 1. Before the protected create click, the worker arms a barrier that pauses model screenshots, live-view frames, and model-input evidence capture until Secure Capture completes. A deterministic Playwright and DOM hook then locates the declared field and validates the expected page state.
 2. A privileged process reads the value into a bounded in-memory buffer that is inaccessible to the model and normal browser telemetry.
@@ -1532,7 +1534,7 @@ Secure Capture is a custom FireKey privileged helper inside the Computer Use VM.
 4. It verifies the stored generation, records only a one-way fingerprint where appropriate, replaces the DOM value with a mask, clears permitted clipboard or download surfaces, and zeroises buffers under its control; final VM teardown removes the ephemeral environment.
 5. Only after masking succeeds may the worker capture another screenshot or resume the Gemini loop. The Console Operator Agent receives only the secret reference and safe status metadata.
 
-If the expected field cannot be located, its value cannot be read deterministically, or masking cannot be verified, FireKey freezes the Gemini loop before another screen capture. An authorised user can then take over the same isolated browser through FireKey's authenticated live view and transfer the value through a dedicated secure input action. Model screenshots and model-input evidence remain paused during that transfer. The secret is never pasted into chat or exposed to Gemini.
+If the expected field cannot be located, its value cannot be read deterministically, or masking cannot be verified, Uumi freezes the Gemini loop before another screen capture. An authorised user can then take over the same isolated browser through Uumi's authenticated live view and transfer the value through a dedicated secure input action. Model screenshots and model-input evidence remain paused during that transfer. The secret is never pasted into chat or exposed to Gemini.
 
 ### Computer Use VM and model exchange
 
@@ -1546,21 +1548,21 @@ Computer Use is a controlled fallback for provider consoles that lack an adequat
 - Restricted clipboard, download, upload, popup, and navigation behaviour.
 - Prompt-injection detection, DOM and screenshot redaction, and protected-action confirmation.
 
-The Auth Broker attaches a provider session before browser execution begins. Gemini Computer Use receives the approved objective plus a sanitised screenshot and returns a proposed UI action. The FireKey client, not Gemini, validates and executes the action, checks the resulting URL and page state, applies Secure Capture and redaction, then decides whether another screenshot can be sent.
+The Auth Broker attaches a provider session before browser execution begins. Gemini Computer Use receives the approved objective plus a sanitised screenshot and returns a proposed UI action. The Uumi client, not Gemini, validates and executes the action, checks the resulting URL and page state, applies Secure Capture and redaction, then decides whether another screenshot can be sent.
 
-Authorised users can watch the session live and take control through an identity-aware stream embedded in the FireKey dashboard. The live stream is redacted and its secret-transfer moment is masked or paused under the Secure Capture rules above.
+Authorised users can watch the session live and take control through an identity-aware stream embedded in the Uumi dashboard. The live stream is redacted and its secret-transfer moment is masked or paused under the Secure Capture rules above.
 
-The stream is brokered by a Browser Session Gateway on Cloud Run. It authenticates the user and run-specific takeover capability, reaches only the VM's internal address through the FireKey VPC, and carries redacted frames plus validated keyboard or pointer events over an authenticated WebSocket. The browser VM remains unreachable from the public internet.
+The stream is brokered by a Browser Session Gateway on Cloud Run. It authenticates the user and run-specific takeover capability, reaches only the VM's internal address through the Uumi VPC, and carries redacted frames plus validated keyboard or pointer events over an authenticated WebSocket. The browser VM remains unreachable from the public internet.
 
-For each model turn, FireKey persists the exact sanitised image sent to Gemini and the visible returned events needed to reconstruct the action: thought summary when available, response text, intent, function arguments, safety decision, validation, and execution result. Raw secret-bearing frames are never persisted. Teaching walkthroughs remain separate Playbook Builder source material and use disposable non-production credentials under the same redaction and protected-storage rules.
+For each model turn, Uumi persists the exact sanitised image sent to Gemini and the visible returned events needed to reconstruct the action: thought summary when available, response text, intent, function arguments, safety decision, validation, and execution result. Raw secret-bearing frames are never persisted. Teaching walkthroughs remain separate Playbook Builder source material and use disposable non-production credentials under the same redaction and protected-storage rules.
 
-Gemini Computer Use is Preview and is not FireKey's authority for critical decisions or irreversible actions. In production console runs it operates human-on-the-loop: an authorised operator can watch continuously, and the model must stop at authentication, secret-transfer, scope changes, credential creation, revocation, deletion, unexpected security prompts, and interface drift. The controls engine and action-bound approval decide whether the step is allowed; for the final protected commit, the deterministic client validates the declared control and executes only after the required real-time human confirmation. Organisations can disable Computer Use entirely and require an API connector for an automated playbook.
+Gemini Computer Use is Preview and is not Uumi's authority for critical decisions or irreversible actions. In production console runs it operates human-on-the-loop: an authorised operator can watch continuously, and the model must stop at authentication, secret-transfer, scope changes, credential creation, revocation, deletion, unexpected security prompts, and interface drift. The controls engine and action-bound approval decide whether the step is allowed; for the final protected commit, the deterministic client validates the declared control and executes only after the required real-time human confirmation. Organisations can disable Computer Use entirely and require an API connector for an automated playbook.
 
 ### Observability
 
 Each run has a trace identifier propagated across ingestion, workflow, agents, tools, connectors, browser actions, approvals, and audit.
 
-FireKey records:
+Uumi records:
 
 - Workflow duration and stage latency.
 - Agent invocation and tool-selection metrics.
@@ -1604,7 +1606,7 @@ May an ambiguous request be retried?
 What compensation quarantines, disables, or revokes an orphan?
 ```
 
-FireKey plans from declared and verified capability data rather than assuming every provider rotates keys in the same way. Display names and FireKey run tags are evidence for an operator, not uniqueness or idempotency unless the provider contract guarantees that behaviour.
+Uumi plans from declared and verified capability data rather than assuming every provider rotates keys in the same way. Display names and Uumi run tags are evidence for an operator, not uniqueness or idempotency unless the provider contract guarantees that behaviour.
 
 ### Secret-store connector
 
@@ -1639,7 +1641,7 @@ An incident adapter supports:
 - Source-event deduplication.
 - Safe resource and credential hints.
 - Source status updates where authorised.
-- Linking the source finding to a FireKey incident and resolution.
+- Linking the source finding to a Uumi incident and resolution.
 
 ### Playbook execution contract
 
@@ -1681,25 +1683,25 @@ For browser-generated credentials, Secure Capture masks the provider field befor
 
 The Auth Broker keeps passwords, OAuth grants, refresh tokens, API keys, browser cookies, and MFA values outside model context. Agents receive an opaque connection handle and capability result, such as `authenticated` or `reauthentication_required`.
 
-Browser takeover occurs inside the isolated session. Authentication material is not copied into FireKey chat, a playbook, an agent prompt, or Audit.
+Browser takeover occurs inside the isolated session. Authentication material is not copied into Uumi chat, a playbook, an agent prompt, or Audit.
 
 ### Teaching-material protection
 
-Uploaded videos and recorded walkthroughs may contain account names, interface data, or accidental secrets. FireKey scans and redacts teaching material before model analysis, restricts access to authorised playbook authors and reviewers, and applies an organisation-controlled retention period. Production passwords, MFA codes, live keys, and session tokens must not be recorded as teaching examples.
+Uploaded videos and recorded walkthroughs may contain account names, interface data, or accidental secrets. Uumi scans and redacts teaching material before model analysis, restricts access to authorised playbook authors and reviewers, and applies an organisation-controlled retention period. Production passwords, MFA codes, live keys, and session tokens must not be recorded as teaching examples.
 
 ### Least privilege
 
-FireKey separates identities by role and connector capability. An incident reader, provider creator, secret-version writer, runtime deployer, telemetry reader, and provider revoker do not need identical permissions.
+Uumi separates identities by role and connector capability. An incident reader, provider creator, secret-version writer, runtime deployer, telemetry reader, and provider revoker do not need identical permissions.
 
 High-risk tools are unavailable to agents or runs that do not require them. A provider-creation identity does not automatically receive revocation permission.
 
 ### Human authority
 
-Organisations control which steps require approval. FireKey always supports protected checkpoints before actions that are destructive, irreversible, high-blast-radius, or cannot preserve continuity.
+Organisations control which steps require approval. Uumi always supports protected checkpoints before actions that are destructive, irreversible, high-blast-radius, or cannot preserve continuity.
 
 ### Fail closed
 
-FireKey stops and requests attention when:
+Uumi stops and requests attention when:
 
 - Event authentication fails.
 - Credential mapping is materially ambiguous.
@@ -1719,7 +1721,7 @@ Every API request, event, workflow, document, tool invocation, connector session
 
 ### Prompt-injection resistance
 
-Provider consoles, logs, repository text, and incident descriptions are untrusted inputs. FireKey:
+Provider consoles, logs, repository text, and incident descriptions are untrusted inputs. Uumi:
 
 - Separates instructions from retrieved content.
 - Uses typed tools instead of free-form shell or HTTP execution.
@@ -1732,7 +1734,7 @@ Provider consoles, logs, repository text, and incident descriptions are untruste
 
 ## Failure recovery
 
-FireKey plans compensation before making the first change.
+Uumi plans compensation before making the first change.
 
 | Failure | Safe response |
 | --- | --- |
@@ -1748,11 +1750,11 @@ FireKey plans compensation before making the first change.
 | Provider revocation fails | Keep run in cleanup-required state; retry and alert; do not claim completion |
 | New key fails after old key is revoked | Use provider-specific emergency recovery or mint another key; mark incident severity critical |
 
-Recovery itself is visible in the run timeline and Audit. A run is not labelled successful merely because FireKey accepted an action or exhausted its retries.
+Recovery itself is visible in the run timeline and Audit. A run is not labelled successful merely because Uumi accepted an action or exhausted its retries.
 
 ## End-to-end example: SendGrid password-reset email
 
-This is one example configuration of FireKey's provider adapter. SendGrid is not a built-in
+This is one example configuration of Uumi's provider adapter. SendGrid is not a built-in
 connection or a provider-specific execution path.
 
 ### Managed configuration
@@ -1790,55 +1792,55 @@ The `notification-worker` is the credential consumer because it makes the SendGr
 ### Routine rotation run
 
 1. The credential's 90-day controls create `ROT-2026-0812-0042`.
-2. FireKey obtains the renewable lease and fencing token for `production-password-emailer` so a concurrent or stale worker cannot mutate it.
+2. Uumi obtains the renewable lease and fencing token for `production-password-emailer` so a concurrent or stale worker cannot mutate it.
 3. Preflight confirms the SendGrid, Google Secret Manager, and Cloud Run connections and obtains scoped provider authorisation from the Auth Broker.
 4. The Inventory and Exposure Agent confirms that `notification-worker` is the only required consumer.
 5. The Rotation Planning and Recovery Agent selects the typed provider strategy from the SendGrid API connection and confirms that a second key can coexist with the old key.
-6. Cloud Workflows asks the FireKey MCP Tool Broker to execute the typed provider-adapter operation configured by this connection. It creates `production-password-emailer-rot-0042-a1` with `mail.send` only.
+6. Cloud Workflows asks the Uumi MCP Tool Broker to execute the typed provider-adapter operation configured by this connection. It creates `production-password-emailer-rot-0042-a1` with `mail.send` only.
 7. The secure connector writes the value to Secret Manager as version 8.
-8. FireKey deploys `notification-worker-r18` with version 8 and 0% production traffic.
-9. FireKey invokes the tagged candidate with a synthetic password-reset task addressed to a controlled inbox.
+8. Uumi deploys `notification-worker-r18` with version 8 and 0% production traffic.
+9. Uumi invokes the tagged candidate with a synthetic password-reset task addressed to a controlled inbox.
 10. SendGrid accepts the request, the expected email arrives, the template is correct, and the reset link is valid for the test user.
-11. FireKey moves traffic through 5%, 25%, 50%, and 100% while monitoring errors, latency, retries, and delivery results.
-12. FireKey observes production for 30 minutes and confirms `FIREKEY_GENERATION_ID=gen_8` on credential-dependent requests, no old-generation evidence, and no authentication regression. Secret Manager access logs are supporting evidence rather than the sole proof.
+11. Uumi moves traffic through 5%, 25%, 50%, and 100% while monitoring errors, latency, retries, and delivery results.
+12. Uumi observes production for 30 minutes and confirms `UUMI_GENERATION_ID=gen_8` on credential-dependent requests, no old-generation evidence, and no authentication regression. Secret Manager access logs are supporting evidence rather than the sole proof.
 13. An authorised approver reviews the evidence and approves the exact action digest for old-key revocation.
-14. FireKey re-checks the approved action digest, reads version 7 just in time into the restricted verifier, and deletes the old SendGrid key.
-15. The deterministic Verification Service confirms the new key can send the controlled test and the old key is rejected, zeroises the old-key test buffer, and then FireKey disables Secret Manager version 7.
+14. Uumi re-checks the approved action digest, reads version 7 just in time into the restricted verifier, and deletes the old SendGrid key.
+15. The deterministic Verification Service confirms the new key can send the controlled test and the old key is rejected, zeroises the old-key test buffer, and then Uumi disables Secret Manager version 7.
 16. The run completes and Audit records the full history; version 7 is destroyed only after the retention period.
 
-This example's provider-adapter configuration declares key creation as `compensatable non-idempotent`. SendGrid does not return the secret again, and FireKey does not assume that a name or run tag is unique. Before creation the adapter snapshots visible key IDs. If the create response is lost, it does not repeat the request. It compares the post-attempt inventory with that snapshot; an attributable orphan is deleted before a new attempt, while multiple or uncertain candidates move the run to `Cleanup required` for authorised resolution. This preserves safe retry without pretending that the configured provider supplies an operation ID it does not document.
+This example's provider-adapter configuration declares key creation as `compensatable non-idempotent`. SendGrid does not return the secret again, and Uumi does not assume that a name or run tag is unique. Before creation the adapter snapshots visible key IDs. If the create response is lost, it does not repeat the request. It compares the post-attempt inventory with that snapshot; an attributable orphan is deleted before a new attempt, while multiple or uncertain candidates move the run to `Cleanup required` for authorised resolution. This preserves safe retry without pretending that the configured provider supplies an operation ID it does not document.
 
 ### Incident-triggered rotation
 
 Suppose GitHub secret scanning reports a SendGrid-shaped secret in `acme/store-api`:
 
 1. GitHub delivers a signed secret-scanning webhook.
-2. FireKey validates the signature and delivery ID.
+2. Uumi validates the signature and delivery ID.
 3. The event is normalised without placing the exposed value in an agent prompt or log.
 4. The incident is linked to the Acme Store application and SendGrid provider.
-5. FireKey correlates the repository, production environment, secret reference, and consumer mapping.
+5. Uumi correlates the repository, production environment, secret reference, and consumer mapping.
 6. If the exact credential match is verified, the credential's emergency controls create a rotation run and notify the security team.
-7. If the match remains ambiguous, FireKey presents the candidate credentials and asks an authorised user to confirm.
+7. If the match remains ambiguous, Uumi presents the candidate credentials and asks an authorised user to confirm.
 8. Rotation follows the same create, store, candidate-test, rollout, observe, approve, revoke, and verify lifecycle, with emergency timing and approval rules.
-9. When the old key is revoked and the new key is healthy, FireKey marks the incident contained and then resolved.
+9. When the old key is revoked and the new key is healthy, Uumi marks the incident contained and then resolved.
 
 ## End-to-end example: taught Computer Use playbook
 
-An internal vendor portal has no supported credential-management API. Acme teaches FireKey how to manage its key once, then reuses the approved playbook for later rotations.
+An internal vendor portal has no supported credential-management API. Acme teaches Uumi how to manage its key once, then reuses the approved playbook for later rotations.
 
 ### Build and approve the playbook
 
 1. A Playbook Author opens `Playbooks → + → Record browser walkthrough`.
-2. FireKey creates a one-run isolated Compute Engine browser VM against the vendor's test account and exposes its authorised, redacted live view in the dashboard.
+2. Uumi creates a one-run isolated Compute Engine browser VM against the vendor's test account and exposes its authorised, redacted live view in the dashboard.
 3. The Auth Broker pauses for the author to complete login and MFA; authentication values are excluded from the recording.
 4. The author demonstrates how to open credential settings, create a restricted test key, identify the one-time secret field, inspect the new key's permissions, and delete the test key.
 5. The author adds written browser requirements for naming, scope, page checkpoints, and expected outputs.
 6. The Playbook Builder Agent turns the demonstration and text into `Internal Vendor Key Rotation v1` as a structured draft.
-7. FireKey declares the secret output as a Secure Capture field and restricts navigation to the vendor domain; credential controls separately decide which tools require approval.
+7. Uumi declares the secret output as a Secure Capture field and restricts navigation to the vendor domain; credential controls separately decide which tools require approval.
 8. The author reviews the ordered actions, selectors, expected screen states, and Secure Capture boundary.
-9. FireKey performs structural domain, selector, checkpoint, and Secure Capture validation. The author may also run the draft against a disposable sandbox account when one exists.
+9. Uumi performs structural domain, selector, checkpoint, and Secure Capture validation. The author may also run the draft against a disposable sandbox account when one exists.
 10. An authorised reviewer publishes immutable version 1 and attaches it to the Internal Vendor browser connection.
-11. The user selects `Open browser`, completes provider login and MFA inside the isolated session, and FireKey marks the connection ready.
+11. The user selects `Open browser`, completes provider login and MFA inside the isolated session, and Uumi marks the connection ready.
 
 ### Use the playbook for a production credential
 
@@ -1854,22 +1856,22 @@ Browser Playbook: inherited from the management connection
 
 When rotation starts:
 
-1. FireKey validates that the browser connection is ready and its pinned published Playbook is compatible with the platform and domains.
+1. Uumi validates that the browser connection is ready and its pinned published Playbook is compatible with the platform and domains.
 2. The Auth Broker attaches an authenticated vendor session to a fresh one-run Compute Engine browser VM with no public IP.
 3. The Console Operator Agent follows the approved playbook and adapts to harmless layout differences while remaining inside its domain and action allowlists; authorised operators can watch the redacted live view.
-4. FireKey requests confirmation immediately before creating the credential if required by its controls or Computer Use safety controls.
+4. Uumi requests confirmation immediately before creating the credential if required by its controls or Computer Use safety controls.
 5. Secure Capture writes the new one-time value directly to the configured secret-store version and returns only its reference.
-6. FireKey updates and verifies the candidate `order-worker`, promotes it under the pinned controls, and observes production.
-7. After the approval gate, the Console Operator Agent reopens the vendor console and locates the old key by its provider ID. When Controls require human approval, FireKey waits for it before the revocation action; otherwise execution continues automatically.
-8. FireKey executes the controls-authorised deletion; the deterministic Verification Service proves the old key is rejected and the replacement remains healthy, then FireKey disables the old secret-store version.
+6. Uumi updates and verifies the candidate `order-worker`, promotes it under the pinned controls, and observes production.
+7. After the approval gate, the Console Operator Agent reopens the vendor console and locates the old key by its provider ID. When Controls require human approval, Uumi waits for it before the revocation action; otherwise execution continues automatically.
+8. Uumi executes the controls-authorised deletion; the deterministic Verification Service proves the old key is rejected and the replacement remains healthy, then Uumi disables the old secret-store version.
 
-If the provider interface differs materially from the Playbook checkpoints, FireKey does not
+If the provider interface differs materially from the Playbook checkpoints, Uumi does not
 improvise a new credential-management flow in production. It pauses the rotation, marks the
 Playbook `Review required`, and requests an authorised update. The replacement version must pass
 structural validation and may be exercised in a sandbox before publication.
 
 If the provider cannot separate model-assisted navigation from authentication, secret handling,
-and the final protected commit, the Playbook is ineligible for publication. FireKey requires an
+and the final protected commit, the Playbook is ineligible for publication. Uumi requires an
 adequate API connector; otherwise that provider operation cannot be automated safely.
 
 ## Data model
@@ -1901,7 +1903,7 @@ adequate API connector; otherwise that provider operation cannot be automated sa
 
 ## Notifications
 
-FireKey sends notifications for:
+Uumi sends notifications for:
 
 - New critical or high-confidence credential incidents.
 - Ambiguous incidents requiring credential confirmation.
@@ -1914,15 +1916,15 @@ FireKey sends notifications for:
 - Successful revocation and completed rotation.
 - Cleanup-required or unverified terminal states.
 
-Notifications include safe identifiers and a link to FireKey. They do not include secret values, connection tokens, or approval capability in the message itself.
+Notifications include safe identifiers and a link to Uumi. They do not include secret values, connection tokens, or approval capability in the message itself.
 
 ## Fortified Enterprise Fleet judging proof
 
-FireKey enters **The Fortified Enterprise Fleet**. The submission should make the track requirements and judging evidence visible rather than leaving them as architecture claims:
+Uumi enters **The Fortified Enterprise Fleet**. The submission should make the track requirements and judging evidence visible rather than leaving them as architecture claims:
 
 | Judging area | What the continuous demo proves | Repository or cloud evidence |
 | --- | --- | --- |
-| Innovation and operational utility — 40% | A GitHub leak or schedule triggers a background run; FireKey identifies the credential and consumers, plans, creates, stores, verifies provider, secret-store, and runtime state, promotes, obtains protected approval, revokes, and proves the old key is dead | Runnable provider adapter, Secret Manager, Cloud Run, GitHub, and verification integrations; persisted run timeline |
+| Innovation and operational utility — 40% | A GitHub leak or schedule triggers a background run; Uumi identifies the credential and consumers, plans, creates, stores, verifies provider, secret-store, and runtime state, promotes, obtains protected approval, revokes, and proves the old key is dead | Runnable provider adapter, Secret Manager, Cloud Run, GitHub, and verification integrations; persisted run timeline |
 | Architectural discipline and tech stack — 30% | Four separately catalogued agents, durable pause and resume, safe cross-run context, generation-aware state, governed tools, human-on-the-loop Computer Use, compensation, and immutable audit | Agent Registry, Agent Runtime, Sessions, Memory Bank, Agent Identity, Agent Gateway, Model Armor, Workflows, Firestore, Pub/Sub, IAM, regional resources, and OpenTelemetry traces |
 | Demo and production readiness — 30% | One continuous, understandable dashboard flow shows Google Cloud execution, real external effects, rollback state, exact approval evidence, positive and negative verification, and the live sanitised Computer Use model exchange or takeover | Hosted URL, Google Cloud project proof, public or shared repository, architecture diagram, and complete spin-up instructions |
 
@@ -1930,7 +1932,7 @@ The approximately four-minute video uses credential controls with a short observ
 
 ## End-to-end acceptance criteria
 
-A complete FireKey flow demonstrates all of the following:
+A complete Uumi flow demonstrates all of the following:
 
 - A credential enters Inventory through provider import or manual configuration.
 - The credential is mapped to a real secret reference and consumer service.
@@ -1955,7 +1957,7 @@ A complete FireKey flow demonstrates all of the following:
 
 ## Reference architecture stack
 
-| Capability | FireKey component | Google Cloud implementation |
+| Capability | Uumi component | Google Cloud implementation |
 | --- | --- | --- |
 | Web application and API | Dashboard, API, ingestion endpoints | Cloud Run |
 | Agent framework | Four specialised institutional agents and typed tools | Google Agent Development Kit |
@@ -1966,12 +1968,12 @@ A complete FireKey flow demonstrates all of the following:
 | Async messaging | Triggers, connector events, retries | Pub/Sub |
 | Durable operational state | Inventory, generations, consumer bindings, incidents, runs, policies, playbooks, leases, and fencing tokens | Firestore |
 | Deterministic orchestration | Authoritative state transitions, retries, timers, callbacks, approvals, and compensation | Google Cloud Workflows |
-| Authentication | User identity, provider authorisation, and agent identity | FireKey Auth Broker, Agent Identity Auth Manager, IAM |
+| Authentication | User identity, provider authorisation, and agent identity | Uumi Auth Broker, Agent Identity Auth Manager, IAM |
 | Secret protection | Management-connection material and workload credential generations | Google Secret Manager plus restricted secret connector processes |
 | Governed agent traffic | Agent routing, IAM enforcement, and prompt or tool screening | Agent Gateway and Model Armor |
-| Typed operational tools | Provider, secret-store, runtime, telemetry, verification, and browser operations | FireKey MCP Tool Broker on Cloud Run |
+| Typed operational tools | Provider, secret-store, runtime, telemetry, verification, and browser operations | Uumi MCP Tool Broker on Cloud Run |
 | Browser playbook execution | One-run provider-console automation with authorised live view | Gemini Computer Use plus isolated Playwright on Compute Engine |
-| Browser secret transfer | Deterministic capture, store, mask, and zeroisation before another screenshot | FireKey Secure Capture plus Google Secret Manager |
+| Browser secret transfer | Deterministic capture, store, mask, and zeroisation before another screenshot | Uumi Secure Capture plus Google Secret Manager |
 | Teaching and Computer Use evidence | Sanitised walkthroughs and exact model-input images | Protected regional Cloud Storage |
 | Observability | Agent, workflow, connector, and application telemetry | Cloud Logging, Monitoring, Trace, OpenTelemetry |
 | Immutable audit | Hash-chained events, locked retention, indexed evidence | Locked Cloud Logging and Cloud Storage buckets plus Firestore index |

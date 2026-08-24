@@ -4,7 +4,7 @@ variable "project_id" {
 }
 
 variable "location" {
-  description = "Firestore location colocated with the FireKey control plane."
+  description = "Firestore location colocated with the Uumi control plane."
   type        = string
 }
 
@@ -102,7 +102,7 @@ variable "secret_accessors" {
 }
 
 variable "browser_session_organisations" {
-  description = "FireKey organisations receiving an isolated browser-session secret container."
+  description = "Uumi organisations receiving an isolated browser-session secret container."
   type        = set(string)
   default     = []
 
@@ -111,7 +111,7 @@ variable "browser_session_organisations" {
       for organisation_id in var.browser_session_organisations :
       can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation_id))
     ])
-    error_message = "Browser-session organisations must use FireKey identifiers."
+    error_message = "Browser-session organisations must use Uumi identifiers."
   }
 }
 

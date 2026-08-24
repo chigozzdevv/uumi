@@ -45,7 +45,7 @@ async def test_live_endpoint_has_no_provider_dependency() -> None:
 def test_settings_require_lease_longer_than_publish_timeout() -> None:
     with pytest.raises(ValidationError, match="lease must exceed"):
         PublisherSettings(
-            project_id="firekey-test",
+            project_id="uumi-test",
             region="us-east1",
             publish_timeout_seconds=20,
             outbox_lease_seconds=20,

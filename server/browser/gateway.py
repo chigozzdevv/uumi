@@ -53,7 +53,7 @@ class BrowserSessionGateway:
             address = _private_address(session.internal_address)
             async with connect(
                 f"ws://{address}:8080/v1/live",
-                additional_headers={"x-firekey-capability": capability},
+                additional_headers={"x-uumi-capability": capability},
                 open_timeout=10,
                 max_size=5 * 1024 * 1024,
             ) as worker:
@@ -81,7 +81,7 @@ class BrowserSessionGateway:
             address = _private_address(session.internal_address)
             async with connect(
                 f"ws://{address}:8080/v1/setup/live",
-                additional_headers={"x-firekey-setup": token},
+                additional_headers={"x-uumi-setup": token},
                 open_timeout=10,
                 max_size=5 * 1024 * 1024,
             ) as worker:

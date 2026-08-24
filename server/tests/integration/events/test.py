@@ -33,7 +33,7 @@ def anyio_backend() -> str:
 @pytest.mark.anyio
 async def test_outbox_delivers_ordered_events_once() -> None:
     suffix = secrets.token_hex(6)
-    project_id = "firekey-test"
+    project_id = "uumi-test"
     topic_id = f"events-{suffix}"
     subscription_id = f"events-{suffix}"
     options = types.PublisherOptions(enable_message_ordering=True)

@@ -11,7 +11,7 @@ resource "google_cloud_run_v2_service" "gateway" {
 
   project             = var.project_id
   location            = var.region
-  name                = "firekey-browser-gateway"
+  name                = "uumi-browser-gateway"
   description         = "IAP-authenticated live browser view and takeover gateway."
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_ALL"
@@ -33,7 +33,7 @@ resource "google_cloud_run_v2_service" "gateway" {
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-runtime"]
+        tags       = ["uumi-runtime"]
       }
     }
 
@@ -47,19 +47,19 @@ resource "google_cloud_run_v2_service" "gateway" {
       }
 
       env {
-        name  = "FIREKEY_PROJECT_ID"
+        name  = "UUMI_PROJECT_ID"
         value = var.project_id
       }
       env {
-        name  = "FIREKEY_REGION"
+        name  = "UUMI_REGION"
         value = var.region
       }
       env {
-        name  = "FIREKEY_IAP_AUDIENCE"
-        value = "/projects/${data.google_project.current.number}/locations/${var.region}/services/firekey-browser-gateway"
+        name  = "UUMI_IAP_AUDIENCE"
+        value = "/projects/${data.google_project.current.number}/locations/${var.region}/services/uumi-browser-gateway"
       }
       env {
-        name  = "FIREKEY_CAPABILITY_PUBLIC_KEY"
+        name  = "UUMI_CAPABILITY_PUBLIC_KEY"
         value = var.capability_public_key
       }
 

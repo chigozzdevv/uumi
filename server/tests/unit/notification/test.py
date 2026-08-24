@@ -133,8 +133,8 @@ async def test_email_endpoint_uses_platform_delivery_configuration() -> None:
         repository,
         lambda: NOW,
         EmailDeliveryConfiguration(
-            "projects/firekey-project/secrets/email-delivery/versions/2",
-            "alerts@firekey.example",
+            "projects/uumi-project/secrets/email-delivery/versions/2",
+            "alerts@uumi.example",
         ),
     )
 
@@ -149,7 +149,7 @@ async def test_email_endpoint_uses_platform_delivery_configuration() -> None:
     assert endpoint.display_name == "owner@acme.example"
     assert endpoint.principal_id == "actor_owner"
     assert endpoint.recipients == ("owner@acme.example",)
-    assert endpoint.sender == "alerts@firekey.example"
+    assert endpoint.sender == "alerts@uumi.example"
     assert endpoint.auth_reference.endswith("/email-delivery/versions/2")
 
 
@@ -168,37 +168,37 @@ async def test_email_endpoint_requires_platform_delivery_configuration() -> None
 
 async def test_api_email_delivery_configuration_is_complete_and_immutable() -> None:
     base = {
-        "project_id": "firekey-project",
+        "project_id": "uumi-project",
         "region": "us-central1",
-        "oidc_audience": "https://api.firekey.example",
-        "capability_secret": "projects/firekey-project/secrets/capability/versions/1",
-        "browser_gateway_url": "https://browser.firekey.example",
-        "walkthrough_bucket": "firekey-walkthroughs",
+        "oidc_audience": "https://api.uumi.example",
+        "capability_secret": "projects/uumi-project/secrets/capability/versions/1",
+        "browser_gateway_url": "https://browser.uumi.example",
+        "walkthrough_bucket": "uumi-walkthroughs",
     }
     configured = Settings(
         **base,
         notification_email_secret_version=(
-            "projects/firekey-project/secrets/email-delivery/versions/2"
+            "projects/uumi-project/secrets/email-delivery/versions/2"
         ),
-        notification_email_sender="alerts@firekey.example",
+        notification_email_sender="alerts@uumi.example",
     )
 
-    assert configured.notification_email_sender == "alerts@firekey.example"
+    assert configured.notification_email_sender == "alerts@uumi.example"
     with pytest.raises(ValidationError, match="configuration is incomplete"):
-        Settings(**base, notification_email_sender="alerts@firekey.example")
+        Settings(**base, notification_email_sender="alerts@uumi.example")
     with pytest.raises(ValidationError, match="immutable"):
         Settings(
             **base,
             notification_email_secret_version=(
-                "projects/firekey-project/secrets/email-delivery/versions/latest"
+                "projects/uumi-project/secrets/email-delivery/versions/latest"
             ),
-            notification_email_sender="alerts@firekey.example",
+            notification_email_sender="alerts@uumi.example",
         )
 
 
 IDENTITY = AuthenticatedIdentity(
     subject="user-one",
-    issuer="https://securetoken.google.com/firekey-project",
+    issuer="https://securetoken.google.com/uumi-project",
     email="owner@acme.example",
 )
 
@@ -239,8 +239,8 @@ def notification_app() -> FastAPI:
         Notifications(),
         lambda: NOW,
         EmailDeliveryConfiguration(
-            "projects/firekey-project/secrets/email-delivery/versions/2",
-            "alerts@firekey.example",
+            "projects/uumi-project/secrets/email-delivery/versions/2",
+            "alerts@uumi.example",
         ),
     )
     return create_app(

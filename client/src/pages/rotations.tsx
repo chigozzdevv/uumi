@@ -170,7 +170,7 @@ function ComputerUseStream({ runId, activities, secretStoreName }: { runId: stri
           : validation?.status === "validated" ? "validated" : "rejected"
         return <div key={turn} className="space-y-4">
           {input && <>
-            <ChatMessage sender="FireKey" dark>
+            <ChatMessage sender="Uumi" dark>
               <span>{input.prompt}</span>
             </ChatMessage>
             <div className="max-w-[720px]">
@@ -198,7 +198,7 @@ function ComputerUseStream({ runId, activities, secretStoreName }: { runId: stri
           </ChatMessage>}
           {receipt && <div className="flex items-center gap-2 text-[10px] text-[var(--ink-soft)]">
             {receiptLabel === "completed" ? <span aria-hidden="true">✅</span> : receiptLabel === "validated" ? <Check className="size-3.5 text-[var(--green)]" aria-hidden="true" /> : receiptLabel === "paused" ? <Pause className="size-3.5" aria-hidden="true" /> : <X className="size-3.5 text-[var(--red)]" aria-hidden="true" />}
-            {receiptLabel === "completed" ? <span className="font-semibold text-[var(--ink)]">{input?.effect === "create-credential" ? `Credential added to ${secretStoreName}` : input?.effect === "revoke-credential" ? "Previous credential revoked" : "Step completed"}</span> : <span><strong className="font-semibold text-[var(--ink)]">FireKey {receiptLabel}</strong>{receipt.target ? ` · ${receipt.target}` : ""}</span>}
+            {receiptLabel === "completed" ? <span className="font-semibold text-[var(--ink)]">{input?.effect === "create-credential" ? `Credential added to ${secretStoreName}` : input?.effect === "revoke-credential" ? "Previous credential revoked" : "Step completed"}</span> : <span><strong className="font-semibold text-[var(--ink)]">Uumi {receiptLabel}</strong>{receipt.target ? ` · ${receipt.target}` : ""}</span>}
           </div>}
         </div>
       })}
@@ -289,7 +289,7 @@ export function RotationsPage({ activeRunId, onNavigateApproval, onNavigateContr
     const secretStoreName = (connections.data!.find((item) => item.id === credential?.secret_store_connection_id)?.display_name ?? "configured secret store").split("·")[0].trim()
     const stageIndex = stages.findIndex((stage) => stage.id === selected.stage)
     return <div className="page">
-      <PageHeader eyebrow="Operations / Rotations" title={credential?.display_name ?? "Rotation"} titlePrefix={<Provider value={credential?.provider ?? "firekey"} label={false} />} onBack={() => setSelectedId("")} actions={selected.status === "paused" && selected.stage === "approval" ? <Button onClick={onNavigateApproval}>Review approval <Clock3 className="size-3.5" /></Button> : undefined} />
+      <PageHeader eyebrow="Operations / Rotations" title={credential?.display_name ?? "Rotation"} titlePrefix={<Provider value={credential?.provider ?? "uumi"} label={false} />} onBack={() => setSelectedId("")} actions={selected.status === "paused" && selected.stage === "approval" ? <Button onClick={onNavigateApproval}>Review approval <Clock3 className="size-3.5" /></Button> : undefined} />
       <DetailCard>
         <div>
           <div className="space-y-1" aria-label={`Rotation is at ${titleCase(selected.stage)}`}>
@@ -351,7 +351,7 @@ export function RotationsPage({ activeRunId, onNavigateApproval, onNavigateContr
         const credential = graph.data!.credentials.find((item) => item.id === run.credential_id)
         const needsApproval = run.status === "paused" && run.stage === "approval"
         return <TableRow key={run.id}>
-          <TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left font-medium hover:underline" onClick={() => setSelectedId(run.id)}><Provider value={credential?.provider ?? "firekey"} label={false} />{credential?.display_name ?? "Credential"}</button></TableCell>
+          <TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left font-medium hover:underline" onClick={() => setSelectedId(run.id)}><Provider value={credential?.provider ?? "uumi"} label={false} />{credential?.display_name ?? "Credential"}</button></TableCell>
           <TableCell>{titleCase(run.stage)}</TableCell>
           <TableCell><RunStatus run={run} /></TableCell>
           <TableCell className="text-[var(--ink-soft)]">{triggerName(run.trigger.source)}</TableCell>

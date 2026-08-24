@@ -82,7 +82,7 @@ async def test_slack_delivery_contains_only_safe_message_and_app_link() -> None:
 
     connector = NotificationConnector(
         SlackSecrets(),
-        "https://app.firekey.example",
+        "https://app.uumi.example",
         httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     notification = _notification()
@@ -92,7 +92,7 @@ async def test_slack_delivery_contains_only_safe_message_and_app_link() -> None:
 
     assert receipt.startswith("accepted-")
     payload = requests[0].content.decode()
-    assert "https://app.firekey.example/organisations/org_one/runs/run_one" in payload
+    assert "https://app.uumi.example/organisations/org_one/runs/run_one" in payload
     assert "token=" not in payload
     assert "provider-auth" not in payload
     await connector.close()
@@ -112,7 +112,7 @@ async def test_resend_delivery_is_idempotent_and_hides_the_api_key() -> None:
 
     connector = NotificationConnector(
         ResendSecrets(),
-        "https://app.firekey.example",
+        "https://app.uumi.example",
         httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     endpoint = NotificationEndpoint(
@@ -124,7 +124,7 @@ async def test_resend_delivery_is_idempotent_and_hides_the_api_key() -> None:
         auth_reference="projects/project-one/secrets/notification/versions/1",
         event_kinds=frozenset({NotificationKind.ROTATION_FAILED}),
         recipients=("oncall@acme.example",),
-        sender="FireKey <notifications@firekey.example>",
+        sender="Uumi <notifications@uumi.example>",
         created_at=NOW,
         updated_at=NOW,
     )
@@ -137,7 +137,7 @@ async def test_resend_delivery_is_idempotent_and_hides_the_api_key() -> None:
     assert request.headers["Authorization"] == "Bearer re_provider_auth"
     assert request.headers["Idempotency-Key"] == "delivery_one"
     payload = request.content.decode()
-    assert "https://app.firekey.example/organisations/org_one/runs/run_one" in payload
+    assert "https://app.uumi.example/organisations/org_one/runs/run_one" in payload
     assert "oncall@acme.example" in payload
     assert "re_provider_auth" not in payload
     await connector.close()

@@ -19,8 +19,8 @@ resource "google_project_iam_member" "database_user" {
   member  = each.value
 
   condition {
-    title       = "firekey-${each.key}-database"
-    description = "Restricts FireKey data access to its primary database."
+    title       = "uumi-${each.key}-database"
+    description = "Restricts Uumi data access to its primary database."
     expression  = "resource.name == '${google_firestore_database.primary.id}'"
   }
 }
@@ -126,8 +126,8 @@ resource "google_firestore_index" "active_approvals" {
 resource "google_logging_project_bucket_config" "audit" {
   project        = var.project_id
   location       = var.location
-  bucket_id      = "firekey-audit"
-  description    = "Canonical FireKey hash-chained audit events."
+  bucket_id      = "uumi-audit"
+  description    = "Canonical Uumi hash-chained audit events."
   retention_days = 2555
   locked         = true
   cmek_settings {
@@ -141,9 +141,9 @@ resource "google_logging_project_bucket_config" "audit" {
 
 resource "google_logging_project_sink" "audit" {
   project                = var.project_id
-  name                   = "firekey-audit"
+  name                   = "uumi-audit"
   destination            = "logging.googleapis.com/${google_logging_project_bucket_config.audit.id}"
-  filter                 = "logName=\"projects/${var.project_id}/logs/firekey-audit\""
+  filter                 = "logName=\"projects/${var.project_id}/logs/uumi-audit\""
   unique_writer_identity = true
 }
 
@@ -153,15 +153,15 @@ resource "google_project_iam_member" "audit_sink" {
   member  = google_logging_project_sink.audit.writer_identity
 }
 
-resource "google_kms_key_ring" "firekey" {
+resource "google_kms_key_ring" "uumi" {
   project  = var.project_id
-  name     = "firekey"
+  name     = "uumi"
   location = var.location
 }
 
 resource "google_kms_crypto_key" "evidence" {
-  name            = "firekey-evidence"
-  key_ring        = google_kms_key_ring.firekey.id
+  name            = "uumi-evidence"
+  key_ring        = google_kms_key_ring.uumi.id
   rotation_period = "7776000s"
   purpose         = "ENCRYPT_DECRYPT"
 
@@ -216,7 +216,7 @@ resource "google_kms_crypto_key_iam_member" "service_crypto" {
 
 resource "google_storage_bucket" "evidence" {
   project                     = var.project_id
-  name                        = "${var.project_id}-firekey-evidence"
+  name                        = "${var.project_id}-uumi-evidence"
   location                    = var.location
   force_destroy               = false
   uniform_bucket_level_access = true
@@ -253,7 +253,7 @@ resource "google_storage_bucket" "evidence" {
 
 resource "google_storage_bucket" "agents" {
   project                     = var.project_id
-  name                        = "${var.project_id}-firekey-agents"
+  name                        = "${var.project_id}-uumi-agents"
   location                    = var.location
   force_destroy               = false
   uniform_bucket_level_access = true
@@ -274,7 +274,7 @@ resource "google_storage_bucket" "agents" {
 
 resource "google_storage_bucket" "walkthroughs" {
   project                     = var.project_id
-  name                        = "${var.project_id}-firekey-walkthroughs"
+  name                        = "${var.project_id}-uumi-walkthroughs"
   location                    = var.location
   force_destroy               = false
   uniform_bucket_level_access = true
@@ -378,7 +378,7 @@ resource "google_kms_crypto_key_iam_member" "evidence_crypto" {
 
 resource "google_secret_manager_secret" "capability" {
   project   = var.project_id
-  secret_id = "firekey-capability"
+  secret_id = "uumi-capability"
 
   replication {
     user_managed {
@@ -407,7 +407,7 @@ resource "google_secret_manager_secret" "browser_session" {
   for_each = var.browser_session_organisations
 
   project   = var.project_id
-  secret_id = "firekey-browser-session-${each.value}"
+  secret_id = "uumi-browser-session-${each.value}"
 
   replication {
     user_managed {
@@ -452,7 +452,7 @@ resource "google_secret_manager_secret_iam_member" "browser_session_manage" {
 
 resource "google_secret_manager_secret" "github_webhook" {
   project   = var.project_id
-  secret_id = "firekey-github-webhook"
+  secret_id = "uumi-github-webhook"
 
   replication {
     user_managed {
@@ -479,7 +479,7 @@ resource "google_secret_manager_secret_iam_member" "github_webhook" {
 
 resource "google_secret_manager_secret" "github_oauth" {
   project   = var.project_id
-  secret_id = "firekey-github-oauth-client"
+  secret_id = "uumi-github-oauth-client"
 
   replication {
     user_managed {
@@ -508,7 +508,7 @@ resource "google_secret_manager_secret" "provider" {
   for_each = var.provider_sources
 
   project   = var.project_id
-  secret_id = "firekey-provider-webhook-${each.value.organisation_id}-${each.value.provider}"
+  secret_id = "uumi-provider-webhook-${each.value.organisation_id}-${each.value.provider}"
 
   replication {
     user_managed {

@@ -1,11 +1,11 @@
 [project]
-name = "firekey-policy"
+name = "uumi-policy"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["firekey-contracts"]
+dependencies = ["uumi-contracts"]
 
 [tool.uv.sources]
-firekey-contracts = { workspace = true }
+uumi-contracts = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

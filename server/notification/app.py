@@ -91,8 +91,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await runtime.close()
 
 
-app = FastAPI(title="FireKey Notification Worker", docs_url=None, lifespan=lifespan)
-instrument(app, "firekey-notification")
+app = FastAPI(title="Uumi Notification Worker", docs_url=None, lifespan=lifespan)
+instrument(app, "uumi-notification")
 
 
 @app.get("/health/live")

@@ -178,7 +178,7 @@ class ProbeExecutor:
                         "verification-field-mismatch", f"response field {path} changed"
                     )
             checks.add("response-fields-matched")
-        observed_generation = response.headers.get("x-firekey-generation-id")
+        observed_generation = response.headers.get("x-uumi-generation-id")
         if observed_generation is None and isinstance(body, dict):
             value = body.get("generation_id")
             observed_generation = value if isinstance(value, str) else None
@@ -193,7 +193,7 @@ class ProbeExecutor:
             key.lower(): value
             for key, value in response.headers.items()
             if key.lower()
-            in {"content-type", "date", "server", "x-firekey-generation-id", "x-request-id"}
+            in {"content-type", "date", "server", "x-uumi-generation-id", "x-request-id"}
         }
         record = {
             "status": response.status_code,
@@ -267,7 +267,7 @@ class ProbeExecutor:
                 "verification-email-downstream",
                 "controlled inbox did not confirm the expected business email",
             )
-        generation = response.headers.get("x-firekey-generation-id")
+        generation = response.headers.get("x-uumi-generation-id")
         if generation is None:
             value = submitted.get("generation_id")
             generation = value if isinstance(value, str) else None
@@ -349,7 +349,7 @@ class ProbeExecutor:
                 connection=connection,
             )
             labels = revision_data.get("labels")
-            if not isinstance(labels, dict) or labels.get("firekey-generation") != expected:
+            if not isinstance(labels, dict) or labels.get("uumi-generation") != expected:
                 raise ConnectorError(
                     "verification-generation-label",
                     "ready revision does not carry the expected generation label",
@@ -382,9 +382,9 @@ class ProbeExecutor:
             )
         since = datetime.now(UTC) - timedelta(seconds=thresholds.window_seconds)
         generation_filter = (
-            'jsonPayload."firekey.credential_generation"="' + expected.replace('"', '\\"') + '"'
+            'jsonPayload."uumi.credential_generation"="' + expected.replace('"', '\\"') + '"'
         )
-        declared_filter = definition.headers.get("x-firekey-log-filter", "")
+        declared_filter = definition.headers.get("x-uumi-log-filter", "")
         base_filter = (
             f'({declared_filter}) AND {generation_filter} AND timestamp>="{since.isoformat()}"'
         )

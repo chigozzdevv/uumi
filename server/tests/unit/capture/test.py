@@ -34,7 +34,7 @@ class Locator:
             return "input"
         assert values == {"secret": "one-time-key", "mask": "••••••••"}
         self.masked = True
-        return '<input data-firekey-capture="masked" aria-label="Credential stored securely">'
+        return '<input data-uumi-capture="masked" aria-label="Credential stored securely">'
 
     async def input_value(self) -> str:
         return self.value

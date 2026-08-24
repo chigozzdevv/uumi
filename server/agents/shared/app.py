@@ -8,7 +8,7 @@ from google.adk.apps import App
 
 def managed_app(app: App, skills: Collection[str]) -> Any:
     vertexai.init(
-        project=os.environ.get("GOOGLE_CLOUD_PROJECT", "firekey-local"),
+        project=os.environ.get("GOOGLE_CLOUD_PROJECT", "uumi-local"),
         location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
     )
     from a2a.types import AgentSkill
@@ -24,8 +24,8 @@ def managed_app(app: App, skills: Collection[str]) -> Any:
             AgentSkill(
                 id=skill,
                 name=skill.replace("_", " ").title(),
-                description=f"FireKey {skill.replace('_', ' ')} capability.",
-                tags=["firekey", skill],
+                description=f"Uumi {skill.replace('_', ' ')} capability.",
+                tags=["uumi", skill],
             )
             for skill in sorted(skills)
         ],
@@ -69,9 +69,9 @@ def _request(context: Any, part_converter: Any) -> Any:
     request = convert_a2a_request_to_agent_run_request(context, part_converter)
     message = getattr(context, "message", None)
     metadata = _compat.meta_to_dict(getattr(message, "metadata", None))
-    organisation_id = metadata.get("firekey_organisation_id")
+    organisation_id = metadata.get("uumi_organisation_id")
     if not isinstance(organisation_id, str) or not organisation_id:
-        raise ValueError("A2A request is missing its FireKey organisation binding")
+        raise ValueError("A2A request is missing its Uumi organisation binding")
     request.user_id = organisation_id
     return request
 

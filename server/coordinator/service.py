@@ -793,7 +793,7 @@ class StageCoordinator:
                         "secret_name": secret_name,
                         "secret_version": secret_version,
                         "generation_id": _required(run.target_generation_id, "target generation"),
-                        "tag": f"firekey-{run.id[-12:]}",
+                        "tag": f"uumi-{run.id[-12:]}",
                         **(
                             {"container_name": binding.runtime_container_name}
                             if binding.runtime_container_name is not None

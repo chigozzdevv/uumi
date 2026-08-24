@@ -1,10 +1,10 @@
 output "name" {
-  description = "Enforced FireKey VPC Service Controls perimeter."
-  value       = google_access_context_manager_service_perimeter.firekey.name
+  description = "Enforced Uumi VPC Service Controls perimeter."
+  value       = google_access_context_manager_service_perimeter.uumi.name
 }
 
 output "restricted_services" {
-  description = "Google APIs protected by the FireKey service perimeter."
+  description = "Google APIs protected by the Uumi service perimeter."
   value       = local.restricted_services
 }
 

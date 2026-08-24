@@ -28,5 +28,5 @@ secret values in a playbook or response.""",
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,
 )
-app = App(name="firekey_playbook", root_agent=root_agent)
+app = App(name="uumi_playbook", root_agent=root_agent)
 agent_app = managed_app(app, {"build_playbook", "analyse_walkthrough", "validate_playbook"})

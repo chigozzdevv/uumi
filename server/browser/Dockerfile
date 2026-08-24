@@ -14,12 +14,12 @@ COPY pyproject.toml uv.lock ./
 COPY packages ./packages
 COPY server ./server
 
-RUN uv sync --frozen --no-dev --no-editable --package firekey-server \
+RUN uv sync --frozen --no-dev --no-editable --package uumi-server \
     && find /app -type d -name __pycache__ -prune -exec rm -rf {} +
 
-RUN useradd --create-home --uid 10001 firekey
+RUN useradd --create-home --uid 10001 uumi
 
-USER firekey
+USER uumi
 
 EXPOSE 8080
 

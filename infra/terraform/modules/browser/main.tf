@@ -1,6 +1,6 @@
-resource "google_compute_network" "firekey" {
+resource "google_compute_network" "uumi" {
   project                 = var.project_id
-  name                    = "firekey"
+  name                    = "uumi"
   auto_create_subnetworks = false
   routing_mode            = "REGIONAL"
 }
@@ -8,8 +8,8 @@ resource "google_compute_network" "firekey" {
 resource "google_compute_subnetwork" "browser" {
   project                  = var.project_id
   region                   = var.region
-  name                     = "firekey-browser"
-  network                  = google_compute_network.firekey.id
+  name                     = "uumi-browser"
+  network                  = google_compute_network.uumi.id
   ip_cidr_range            = "10.76.0.0/24"
   purpose                  = "PRIVATE"
   role                     = "ACTIVE"
@@ -25,8 +25,8 @@ resource "google_compute_subnetwork" "browser" {
 resource "google_compute_subnetwork" "proxy" {
   project       = var.project_id
   region        = var.region
-  name          = "firekey-browser-proxy"
-  network       = google_compute_network.firekey.id
+  name          = "uumi-browser-proxy"
+  network       = google_compute_network.uumi.id
   ip_cidr_range = "10.76.2.0/23"
   purpose       = "REGIONAL_MANAGED_PROXY"
   role          = "ACTIVE"
@@ -35,8 +35,8 @@ resource "google_compute_subnetwork" "proxy" {
 resource "google_compute_subnetwork" "runtime" {
   project                  = var.project_id
   region                   = var.region
-  name                     = "firekey-runtime"
-  network                  = google_compute_network.firekey.id
+  name                     = "uumi-runtime"
+  network                  = google_compute_network.uumi.id
   ip_cidr_range            = "10.76.4.0/23"
   purpose                  = "PRIVATE"
   role                     = "ACTIVE"
@@ -81,7 +81,7 @@ locals {
 resource "google_network_security_gateway_security_policy" "browser" {
   project         = var.project_id
   location        = var.region
-  name            = "firekey-browser-egress"
+  name            = "uumi-browser-egress"
   description     = "Default-deny browser egress policy for approved provider and Google domains."
   deletion_policy = "PREVENT"
 }
@@ -117,13 +117,13 @@ resource "google_network_security_gateway_security_policy_rule" "runtime" {
 resource "google_network_services_gateway" "browser" {
   project                              = var.project_id
   location                             = var.region
-  name                                 = "firekey-browser-egress"
+  name                                 = "uumi-browser-egress"
   description                          = "Regional next-hop Secure Web Proxy for one-run browser workers."
   type                                 = "SECURE_WEB_GATEWAY"
   ports                                = [443]
-  scope                                = "firekey-browser"
+  scope                                = "uumi-browser"
   gateway_security_policy              = google_network_security_gateway_security_policy.browser.id
-  network                              = google_compute_network.firekey.id
+  network                              = google_compute_network.uumi.id
   subnetwork                           = google_compute_subnetwork.browser.id
   routing_mode                         = "NEXT_HOP_ROUTING_MODE"
   delete_swg_autogen_router_on_destroy = true
@@ -139,26 +139,26 @@ resource "google_compute_route" "browser_proxy" {
   provider = google-beta
 
   project      = var.project_id
-  name         = "firekey-browser-proxy"
+  name         = "uumi-browser-proxy"
   description  = "Routes browser worker internet traffic through Secure Web Proxy."
-  network      = google_compute_network.firekey.name
+  network      = google_compute_network.uumi.name
   dest_range   = "0.0.0.0/0"
   priority     = 100
-  tags         = ["firekey-browser", "firekey-runtime"]
+  tags         = ["uumi-browser", "uumi-runtime"]
   next_hop_ilb = one(google_network_services_gateway.browser.addresses)
 }
 
 resource "google_compute_router" "browser" {
   project = var.project_id
   region  = var.region
-  name    = "firekey-browser"
-  network = google_compute_network.firekey.id
+  name    = "uumi-browser"
+  network = google_compute_network.uumi.id
 }
 
 resource "google_compute_router_nat" "browser" {
   project                            = var.project_id
   region                             = var.region
-  name                               = "firekey-browser"
+  name                               = "uumi-browser"
   router                             = google_compute_router.browser.name
   nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
@@ -176,8 +176,8 @@ resource "google_compute_router_nat" "browser" {
 
 resource "google_compute_firewall" "worker" {
   project   = var.project_id
-  name      = "firekey-browser-worker"
-  network   = google_compute_network.firekey.name
+  name      = "uumi-browser-worker"
+  network   = google_compute_network.uumi.name
   direction = "INGRESS"
   priority  = 1000
 
@@ -185,7 +185,7 @@ resource "google_compute_firewall" "worker" {
     google_compute_subnetwork.browser.ip_cidr_range,
     google_compute_subnetwork.runtime.ip_cidr_range,
   ]
-  target_tags = ["firekey-browser"]
+  target_tags = ["uumi-browser"]
 
   allow {
     protocol = "tcp"
@@ -199,13 +199,13 @@ resource "google_compute_firewall" "worker" {
 
 resource "google_compute_firewall" "egress" {
   project   = var.project_id
-  name      = "firekey-browser-egress"
-  network   = google_compute_network.firekey.name
+  name      = "uumi-browser-egress"
+  network   = google_compute_network.uumi.name
   direction = "EGRESS"
   priority  = 1000
 
   destination_ranges = ["0.0.0.0/0"]
-  target_tags        = ["firekey-browser"]
+  target_tags        = ["uumi-browser"]
 
   allow {
     protocol = "tcp"
@@ -219,12 +219,12 @@ resource "google_compute_firewall" "egress" {
 
 resource "google_compute_firewall" "runtime_egress" {
   project            = var.project_id
-  name               = "firekey-runtime-egress"
-  network            = google_compute_network.firekey.name
+  name               = "uumi-runtime-egress"
+  network            = google_compute_network.uumi.name
   direction          = "EGRESS"
   priority           = 1000
   destination_ranges = ["0.0.0.0/0"]
-  target_tags        = ["firekey-runtime"]
+  target_tags        = ["uumi-runtime"]
 
   allow {
     protocol = "tcp"
@@ -238,12 +238,12 @@ resource "google_compute_firewall" "runtime_egress" {
 
 resource "google_compute_firewall" "gateway_worker" {
   project            = var.project_id
-  name               = "firekey-gateway-worker"
-  network            = google_compute_network.firekey.name
+  name               = "uumi-gateway-worker"
+  network            = google_compute_network.uumi.name
   direction          = "EGRESS"
   priority           = 800
   destination_ranges = [google_compute_subnetwork.browser.ip_cidr_range]
-  target_tags        = ["firekey-runtime"]
+  target_tags        = ["uumi-runtime"]
 
   allow {
     protocol = "tcp"
@@ -257,12 +257,12 @@ resource "google_compute_firewall" "gateway_worker" {
 
 resource "google_compute_firewall" "metadata" {
   project            = var.project_id
-  name               = "firekey-metadata"
-  network            = google_compute_network.firekey.name
+  name               = "uumi-metadata"
+  network            = google_compute_network.uumi.name
   direction          = "EGRESS"
   priority           = 850
   destination_ranges = ["169.254.169.254/32"]
-  target_tags        = ["firekey-browser", "firekey-runtime"]
+  target_tags        = ["uumi-browser", "uumi-runtime"]
 
   allow {
     protocol = "tcp"
@@ -276,12 +276,12 @@ resource "google_compute_firewall" "metadata" {
 
 resource "google_compute_firewall" "dns" {
   project            = var.project_id
-  name               = "firekey-browser-dns"
-  network            = google_compute_network.firekey.name
+  name               = "uumi-browser-dns"
+  network            = google_compute_network.uumi.name
   direction          = "EGRESS"
   priority           = 900
   destination_ranges = ["169.254.169.254/32"]
-  target_tags        = ["firekey-browser", "firekey-runtime"]
+  target_tags        = ["uumi-browser", "uumi-runtime"]
 
   allow {
     protocol = "udp"
@@ -300,12 +300,12 @@ resource "google_compute_firewall" "dns" {
 
 resource "google_compute_firewall" "deny_egress" {
   project            = var.project_id
-  name               = "firekey-deny-egress"
-  network            = google_compute_network.firekey.name
+  name               = "uumi-deny-egress"
+  network            = google_compute_network.uumi.name
   direction          = "EGRESS"
   priority           = 2000
   destination_ranges = ["0.0.0.0/0"]
-  target_tags        = ["firekey-browser", "firekey-runtime"]
+  target_tags        = ["uumi-browser", "uumi-runtime"]
 
   deny {
     protocol = "all"
@@ -318,11 +318,11 @@ resource "google_compute_firewall" "deny_egress" {
 
 resource "google_compute_instance_template" "browser" {
   project      = var.project_id
-  name_prefix  = "firekey-browser-"
-  description  = "Single-run shielded FireKey Computer Use worker."
+  name_prefix  = "uumi-browser-"
+  description  = "Single-run shielded Uumi Computer Use worker."
   machine_type = "e2-standard-4"
   region       = var.region
-  tags         = ["firekey-browser"]
+  tags         = ["uumi-browser"]
 
   disk {
     source_image = "projects/cos-cloud/global/images/family/cos-stable"
@@ -336,7 +336,7 @@ resource "google_compute_instance_template" "browser" {
   }
 
   network_interface {
-    network    = google_compute_network.firekey.id
+    network    = google_compute_network.uumi.id
     subnetwork = google_compute_subnetwork.browser.id
   }
 
@@ -376,7 +376,7 @@ resource "google_compute_instance_template" "browser" {
 
 resource "google_kms_key_ring" "browser" {
   project  = var.project_id
-  name     = "firekey-browser"
+  name     = "uumi-browser"
   location = var.region
 }
 

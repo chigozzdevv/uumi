@@ -66,7 +66,7 @@ from browser.worker import ComputerUseWorker, ProposedBrowserAction
 
 
 class WorkerSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="FIREKEY_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="UUMI_", extra="ignore")
 
     project_id: str = Field(min_length=4)
     firestore_database: str = "(default)"
@@ -281,10 +281,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await app.state.runtime.close()
 
 
-app = FastAPI(title="FireKey Browser Worker", docs_url=None, lifespan=lifespan)
-instrument(app, "firekey-browser")
-Capability = Annotated[str, Header(alias="X-FireKey-Capability", min_length=32)]
-SetupToken = Annotated[str, Header(alias="X-FireKey-Setup", min_length=32)]
+app = FastAPI(title="Uumi Browser Worker", docs_url=None, lifespan=lifespan)
+instrument(app, "uumi-browser")
+Capability = Annotated[str, Header(alias="X-Uumi-Capability", min_length=32)]
+SetupToken = Annotated[str, Header(alias="X-Uumi-Setup", min_length=32)]
 
 
 @app.exception_handler(AuthenticationRequiredError)
@@ -780,7 +780,7 @@ async def live_browser(websocket: WebSocket) -> None:
     if runtime is None:
         await websocket.close(code=4404, reason="browser worker is in setup mode")
         return
-    capability = websocket.headers.get("x-firekey-capability")
+    capability = websocket.headers.get("x-uumi-capability")
     if capability is None:
         await websocket.close(code=4401, reason="browser capability is required")
         return
@@ -1181,7 +1181,7 @@ async def setup_live(websocket: WebSocket) -> None:
     if setup is None:
         await websocket.close(code=4404, reason="browser worker is not in setup mode")
         return
-    token = websocket.headers.get("x-firekey-setup")
+    token = websocket.headers.get("x-uumi-setup")
     presented = hashlib.sha256((token or "").encode()).hexdigest()
     if not token or not hmac.compare_digest(presented, setup.token_hash):
         await websocket.close(code=4403, reason="setup token is invalid")

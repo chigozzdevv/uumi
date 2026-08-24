@@ -37,7 +37,7 @@ variable "allowed_domains" {
 }
 
 variable "connector_domains" {
-  description = "External provider API domains allowed from FireKey runtime connectors."
+  description = "External provider API domains allowed from Uumi runtime connectors."
   type        = set(string)
   default     = []
 

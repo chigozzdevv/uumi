@@ -10,39 +10,39 @@ maybe() {
   curl --fail --silent --header "$header" "$metadata/$1" 2>/dev/null || true
 }
 
-organisation="$(get firekey-organisation)"
-session="$(get firekey-session)"
-project="$(get firekey-project)"
-capability_public="$(get firekey-capability-public)"
-evidence="$(get firekey-evidence)"
-region="$(get firekey-region)"
-image="$(get firekey-worker-image)"
-model_armor_template="$(get firekey-model-armor-template)"
-setup="$(maybe firekey-setup)"
+organisation="$(get uumi-organisation)"
+session="$(get uumi-session)"
+project="$(get uumi-project)"
+capability_public="$(get uumi-capability-public)"
+evidence="$(get uumi-evidence)"
+region="$(get uumi-region)"
+image="$(get uumi-worker-image)"
+model_armor_template="$(get uumi-model-armor-template)"
+setup="$(maybe uumi-setup)"
 
 docker-credential-gcr configure-docker --registries="${region}-docker.pkg.dev"
 docker pull "$image"
 
 args=(
-  --detach --restart=no --init --network=host --name=firekey-browser
+  --detach --restart=no --init --network=host --name=uumi-browser
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=512m --shm-size=1g
   --security-opt=no-new-privileges --cap-drop=ALL
-  --env "FIREKEY_PROJECT_ID=$project"
-  --env "FIREKEY_ORGANISATION_ID=$organisation"
-  --env "FIREKEY_SESSION_ID=$session"
-  --env "FIREKEY_CAPABILITY_PUBLIC_KEY=$capability_public"
-  --env "FIREKEY_EVIDENCE_BUCKET=$evidence"
-  --env "FIREKEY_REGION=$region"
-  --env "FIREKEY_MODEL_ARMOR_TEMPLATE=$model_armor_template"
-  --env FIREKEY_TELEMETRY_ENABLED=true
+  --env "UUMI_PROJECT_ID=$project"
+  --env "UUMI_ORGANISATION_ID=$organisation"
+  --env "UUMI_SESSION_ID=$session"
+  --env "UUMI_CAPABILITY_PUBLIC_KEY=$capability_public"
+  --env "UUMI_EVIDENCE_BUCKET=$evidence"
+  --env "UUMI_REGION=$region"
+  --env "UUMI_MODEL_ARMOR_TEMPLATE=$model_armor_template"
+  --env UUMI_TELEMETRY_ENABLED=true
 )
 if [[ "$setup" == "true" ]]; then
   args+=(
-    --env FIREKEY_SETUP=true
-    --env "FIREKEY_SETUP_TOKEN_HASH=$(get firekey-setup-token-hash)"
-    --env "FIREKEY_SETUP_DOMAINS=$(get firekey-setup-domains)"
-    --env "FIREKEY_SETUP_STORAGE_DOMAINS=$(get firekey-setup-storage-domains)"
-    --env "FIREKEY_SETUP_SECRET=$(get firekey-setup-secret)"
+    --env UUMI_SETUP=true
+    --env "UUMI_SETUP_TOKEN_HASH=$(get uumi-setup-token-hash)"
+    --env "UUMI_SETUP_DOMAINS=$(get uumi-setup-domains)"
+    --env "UUMI_SETUP_STORAGE_DOMAINS=$(get uumi-setup-storage-domains)"
+    --env "UUMI_SETUP_SECRET=$(get uumi-setup-secret)"
   )
 fi
 

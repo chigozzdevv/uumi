@@ -1,62 +1,62 @@
-class FireKeyError(Exception):
+class UumiError(Exception):
     pass
 
 
-class RevisionConflictError(FireKeyError):
+class RevisionConflictError(UumiError):
     pass
 
 
-class LeaseConflictError(FireKeyError):
+class LeaseConflictError(UumiError):
     pass
 
 
-class TransitionRejectedError(FireKeyError):
+class TransitionRejectedError(UumiError):
     pass
 
 
-class RunNotFoundError(FireKeyError):
+class RunNotFoundError(UumiError):
     pass
 
 
-class ActiveRunConflictError(FireKeyError):
+class ActiveRunConflictError(UumiError):
     pass
 
 
-class IdempotencyConflictError(FireKeyError):
+class IdempotencyConflictError(UumiError):
     pass
 
 
-class StorageIntegrityError(FireKeyError):
+class StorageIntegrityError(UumiError):
     pass
 
 
-class OutboxLeaseError(FireKeyError):
+class OutboxLeaseError(UumiError):
     pass
 
 
-class AuthenticationError(FireKeyError):
+class AuthenticationError(UumiError):
     pass
 
 
-class AuthorizationError(FireKeyError):
+class AuthorizationError(UumiError):
     pass
 
 
-class ResourceNotFoundError(FireKeyError):
+class ResourceNotFoundError(UumiError):
     pass
 
 
-class ResourceConflictError(FireKeyError):
+class ResourceConflictError(UumiError):
     pass
 
 
-class ApprovalError(FireKeyError):
+class ApprovalError(UumiError):
     pass
 
 
-class PlaybookError(FireKeyError):
+class PlaybookError(UumiError):
     pass
 
 
-class CapabilityError(FireKeyError):
+class CapabilityError(UumiError):
     pass

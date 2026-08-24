@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "Google Cloud project that owns FireKey runtime resources."
+  description = "Google Cloud project that owns Uumi runtime resources."
   type        = string
 }
 
@@ -72,7 +72,7 @@ variable "event_member" {
 variable "event_topic" {
   description = "Pub/Sub topic receiving ordered run events."
   type        = string
-  default     = "firekey-events"
+  default     = "uumi-events"
 }
 
 variable "workflow_member" {
@@ -284,7 +284,7 @@ variable "notification_app_url" {
 }
 
 variable "notification_email_secret_version" {
-  description = "Immutable Secret Manager version holding FireKey's email delivery credential."
+  description = "Immutable Secret Manager version holding Uumi's email delivery credential."
   type        = string
   default     = ""
 
@@ -298,7 +298,7 @@ variable "notification_email_secret_version" {
 }
 
 variable "notification_email_sender" {
-  description = "Verified sender address used by FireKey email notifications."
+  description = "Verified sender address used by Uumi email notifications."
   type        = string
   default     = ""
 

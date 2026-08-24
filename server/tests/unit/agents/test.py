@@ -41,7 +41,7 @@ def registration() -> AgentRegistration:
                 "recommend_authorised_recovery",
             }
         ),
-        owner="FireKey",
+        owner="Uumi",
         identity="principal://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/agents/subject/planner",
         endpoint="https://us-central1-aiplatform.googleapis.com",
         deployment="projects/test/locations/us-central1/reasoningEngines/planner",
@@ -81,7 +81,7 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
         AgentKind.PLANNER,
         "1.2.3",
         "gs://staging",
-        "projects/project-one/locations/us-central1/keyRings/firekey/cryptoKeys/agents",
+        "projects/project-one/locations/us-central1/keyRings/uumi/cryptoKeys/agents",
         "projects/project-one/locations/us-central1/agentGateways/ingress",
         "projects/project-one/locations/us-central1/agentGateways/egress",
     )
@@ -113,7 +113,7 @@ async def test_agent_deployment_grants_only_declared_callers() -> None:
         google,  # type: ignore[arg-type]
         "us-central1",
         "projects/test/locations/us-central1/reasoningEngines/planner",
-        "projects/test/roles/firekeyAgentCaller",
+        "projects/test/roles/uumiAgentCaller",
         frozenset(
             {
                 "serviceAccount:api@test.iam.gserviceaccount.com",
@@ -125,7 +125,7 @@ async def test_agent_deployment_grants_only_declared_callers() -> None:
     assert google.policy["bindings"] == [
         {"role": "roles/viewer", "members": ["group:security@example.com"]},
         {
-            "role": "projects/test/roles/firekeyAgentCaller",
+            "role": "projects/test/roles/uumiAgentCaller",
             "members": [
                 "serviceAccount:api@test.iam.gserviceaccount.com",
                 "serviceAccount:coordinator@test.iam.gserviceaccount.com",
@@ -139,7 +139,7 @@ async def test_agent_deployment_removes_obsolete_callers() -> None:
     google = PolicyGoogle()
     google.policy["bindings"] = [
         {
-            "role": "projects/test/roles/firekeyAgentCaller",
+            "role": "projects/test/roles/uumiAgentCaller",
             "members": ["serviceAccount:obsolete@test.iam.gserviceaccount.com"],
         }
     ]
@@ -148,13 +148,13 @@ async def test_agent_deployment_removes_obsolete_callers() -> None:
         google,  # type: ignore[arg-type]
         "us-central1",
         "projects/test/locations/us-central1/reasoningEngines/planner",
-        "projects/test/roles/firekeyAgentCaller",
+        "projects/test/roles/uumiAgentCaller",
         frozenset({"serviceAccount:coordinator@test.iam.gserviceaccount.com"}),
     )
 
     assert google.policy["bindings"] == [
         {
-            "role": "projects/test/roles/firekeyAgentCaller",
+            "role": "projects/test/roles/uumiAgentCaller",
             "members": ["serviceAccount:coordinator@test.iam.gserviceaccount.com"],
         }
     ]
@@ -240,7 +240,7 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     message = google.body["message"]
     assert isinstance(message, dict)
     assert message["contextId"] == "session-task-one"
-    assert message["metadata"] == {"firekey_organisation_id": "org_acme"}
+    assert message["metadata"] == {"uumi_organisation_id": "org_acme"}
     assert "do-not-send" not in message["parts"][0]["text"]
 
 

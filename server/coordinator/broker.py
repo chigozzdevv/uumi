@@ -54,7 +54,7 @@ class McpBrokerClient:
         )
         headers = {"Authorization": f"Bearer {await self._identity_token()}"}
         if tool not in _READ_TOOLS:
-            headers["X-FireKey-Capability"] = await self._capability(run, request, approval_id)
+            headers["X-Uumi-Capability"] = await self._capability(run, request, approval_id)
         transport = HeaderTransport(self._url, headers)
         async with Client(cast(Any, transport), raise_exceptions=True) as client:
             response = await client.call_tool(

@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "Google Cloud project that owns FireKey event delivery."
+  description = "Google Cloud project that owns Uumi event delivery."
   type        = string
 }
 
@@ -69,7 +69,7 @@ variable "reaper_service_account" {
 }
 
 variable "reaper_organisations" {
-  description = "FireKey organisations whose expired run leases are reconciled."
+  description = "Uumi organisations whose expired run leases are reconciled."
   type        = set(string)
   default     = []
 
@@ -78,7 +78,7 @@ variable "reaper_organisations" {
       for organisation in var.reaper_organisations :
       can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation))
     ])
-    error_message = "Reaper organisations require valid FireKey identifiers."
+    error_message = "Reaper organisations require valid Uumi identifiers."
   }
 }
 
@@ -116,7 +116,7 @@ variable "oidc_audience" {
 }
 
 variable "scc_sources" {
-  description = "SCC organisation sources keyed by FireKey organisation ID."
+  description = "SCC organisation sources keyed by Uumi organisation ID."
   type = map(object({
     cloud_organisation_id = string
     filter                = string
@@ -132,12 +132,12 @@ variable "scc_sources" {
       can(regex("^(global|eu|[a-z]+-[a-z]+[0-9])$", source.location)) &&
       length(trimspace(source.filter)) > 0
     ])
-    error_message = "SCC sources require a FireKey organisation, numeric Cloud organisation, valid location, and filter."
+    error_message = "SCC sources require a Uumi organisation, numeric Cloud organisation, valid location, and filter."
   }
 }
 
 variable "secret_sources" {
-  description = "FireKey organisations receiving Secret Manager notifications."
+  description = "Uumi organisations receiving Secret Manager notifications."
   type        = set(string)
   default     = []
 
@@ -146,12 +146,12 @@ variable "secret_sources" {
       for organisation in var.secret_sources :
       can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation))
     ])
-    error_message = "Secret sources require valid FireKey organisation identifiers."
+    error_message = "Secret sources require valid Uumi organisation identifiers."
   }
 }
 
 variable "rotation_schedules" {
-  description = "Recurring FireKey credential rotations keyed by stable schedule ID."
+  description = "Recurring Uumi credential rotations keyed by stable schedule ID."
   type = map(object({
     organisation_id = string
     credential_id   = string
@@ -174,7 +174,7 @@ variable "rotation_schedules" {
 }
 
 variable "detection_organisations" {
-  description = "FireKey organisations scanned for provider expiry and runtime drift."
+  description = "Uumi organisations scanned for provider expiry and runtime drift."
   type        = set(string)
   default     = []
 
@@ -183,6 +183,6 @@ variable "detection_organisations" {
       for organisation in var.detection_organisations :
       can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation))
     ])
-    error_message = "Detection organisations require valid FireKey identifiers."
+    error_message = "Detection organisations require valid Uumi identifiers."
   }
 }

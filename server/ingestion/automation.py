@@ -67,7 +67,7 @@ class IncidentAutomation:
                 event.organisation_id,
                 incident.id,
                 command_id,
-                "firekey_ingestion",
+                "uumi_ingestion",
                 controls.id,
                 _rotation_reason(event.kind),
                 urgency,

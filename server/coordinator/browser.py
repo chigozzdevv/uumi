@@ -326,7 +326,7 @@ class BrowserStepExecutor:
         )
         response = await self._http.post(
             f"http://{session.internal_address}:8080{path}",
-            headers={"X-FireKey-Capability": capability},
+            headers={"X-Uumi-Capability": capability},
             json=payload,
         )
         try:

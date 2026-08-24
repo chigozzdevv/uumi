@@ -9,34 +9,34 @@ def run_notification(
             NotificationKind.ROTATION_FAILED,
             Severity.CRITICAL,
             "Credential rotation failed",
-            f"FireKey run {event.run_id} failed during {event.stage.value}.",
+            f"Uumi run {event.run_id} failed during {event.stage.value}.",
         )
     if event.kind is EventKind.RECOVERY_STARTED:
         return (
             NotificationKind.RECOVERY_STARTED,
             Severity.HIGH,
             "Automatic recovery started",
-            f"FireKey run {event.run_id} started its authorised recovery branch.",
+            f"Uumi run {event.run_id} started its authorised recovery branch.",
         )
     if event.kind is EventKind.CLEANUP_REQUIRED:
         return (
             NotificationKind.CLEANUP_REQUIRED,
             Severity.CRITICAL,
             "Credential cleanup is required",
-            f"FireKey run {event.run_id} stopped in a cleanup-required state.",
+            f"Uumi run {event.run_id} stopped in a cleanup-required state.",
         )
     if event.kind is EventKind.RUN_COMPLETED:
         return (
             NotificationKind.ROTATION_COMPLETED,
             Severity.LOW,
             "Credential rotation completed",
-            f"FireKey run {event.run_id} completed with verification evidence.",
+            f"Uumi run {event.run_id} completed with verification evidence.",
         )
     if event.kind is EventKind.STAGE_COMPLETED and event.stage is Stage.COMPLETE:
         return (
             NotificationKind.REVOCATION_SUCCEEDED,
             Severity.LOW,
             "Old credential was revoked",
-            f"FireKey run {event.run_id} completed the protected revocation stage.",
+            f"Uumi run {event.run_id} completed the protected revocation stage.",
         )
     return None

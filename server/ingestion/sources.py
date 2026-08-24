@@ -27,7 +27,7 @@ class ScheduleSource:
             Severity.MEDIUM,
             Confidence.VERIFIED,
             SourceResource(credential_id=credential_id),
-            f"firekey://schedules/{schedule_id}",
+            f"uumi://schedules/{schedule_id}",
             received_at,
         )
 

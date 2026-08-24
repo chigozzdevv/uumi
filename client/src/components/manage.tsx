@@ -128,7 +128,7 @@ export function ManageResourceModal({
                 ))}
               </div>
             </div>
-          : <p className="text-[10px] text-[var(--ink-soft)]">This removes the {resourceLabel} from FireKey.</p>
+          : <p className="text-[10px] text-[var(--ink-soft)]">This removes the {resourceLabel} from Uumi.</p>
       )}
       {error && <div role="alert" className="mt-4 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{error}</div>}
     </Modal>

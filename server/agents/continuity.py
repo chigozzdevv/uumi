@@ -42,9 +42,9 @@ class AgentContinuityService:
             "userId": registration.organisation_id,
             "ttl": f"{int(ttl.total_seconds())}s",
             "labels": {
-                "firekey-org": registration.organisation_id,
-                "firekey-run": run_id,
-                "firekey-agent": registration.kind.value,
+                "uumi-org": registration.organisation_id,
+                "uumi-run": run_id,
+                "uumi-agent": registration.kind.value,
             },
             "sessionState": {
                 "organisation_id": registration.organisation_id,
@@ -105,7 +105,7 @@ class AgentContinuityService:
         remote_id = _remote_id(memory_id)
         body = {
             "displayName": memory_id,
-            "description": "Approved FireKey operational fact",
+            "description": "Approved Uumi operational fact",
             "fact": fact,
             "scope": {
                 "organisation": registration.organisation_id,

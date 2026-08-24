@@ -81,7 +81,7 @@ export function OverviewPage({ onNavigate, onNavigateRotation, onNavigateInciden
         id: `approval:${approval.id}`,
         task: "Review revocation",
         resource: item?.display_name ?? "Credential",
-        provider: item?.provider ?? "firekey",
+        provider: item?.provider ?? "uumi",
         reason: "Approval is required before revocation.",
         action: "Review",
         open: () => onNavigateApproval(approval.id),
@@ -94,7 +94,7 @@ export function OverviewPage({ onNavigate, onNavigateRotation, onNavigateInciden
         id: `incident:${incident.id}`,
         task: incident.credential_id ? "Start incident rotation" : "Confirm affected credential",
         resource: item?.display_name ?? incident.resource.service ?? incident.resource.repository ?? "Affected resource",
-        provider: item?.provider ?? incident.resource.provider ?? "firekey",
+        provider: item?.provider ?? incident.resource.provider ?? "uumi",
         reason: `${titleCase(incident.source)} reported a credential exposure.`,
         action: "Review",
         open: () => onNavigateIncident(incident.id),
@@ -106,7 +106,7 @@ export function OverviewPage({ onNavigate, onNavigateRotation, onNavigateInciden
         id: `rotation:${run.id}`,
         task: run.status === "paused" ? "Resume rotation" : failureTask(run),
         resource: item?.display_name ?? "Credential",
-        provider: item?.provider ?? "firekey",
+        provider: item?.provider ?? "uumi",
         reason: run.failure?.message ?? `Rotation stopped during ${titleCase(run.stage)}.`,
         action: "Open",
         open: () => onNavigateRotation(run.id),
@@ -177,7 +177,7 @@ export function OverviewPage({ onNavigate, onNavigateRotation, onNavigateInciden
             {visibleRecentRuns.map((run) => {
               const item = credential(run.credential_id)
               return <button key={run.id} className="focus-ring group flex w-full items-center gap-3 px-5 py-[18px] text-left transition hover:bg-[var(--surface-soft)]" onClick={() => onNavigateRotation(run.id)}>
-                <Provider value={item?.provider ?? "firekey"} label={false} />
+                <Provider value={item?.provider ?? "uumi"} label={false} />
                 <span className="min-w-0 flex-1">
                   <span className="block font-medium text-[var(--ink)]">{activityLabel(run)}</span>
                   <span className="mt-1 block truncate text-[10px] text-[var(--ink-muted)]">{item?.display_name ?? "Credential"}</span>

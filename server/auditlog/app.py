@@ -89,8 +89,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await runtime.close()
 
 
-app = FastAPI(title="FireKey Audit Log Publisher", docs_url=None, lifespan=lifespan)
-instrument(app, "firekey-auditlog")
+app = FastAPI(title="Uumi Audit Log Publisher", docs_url=None, lifespan=lifespan)
+instrument(app, "uumi-auditlog")
 
 
 @app.get("/health/live")

@@ -1,14 +1,14 @@
 [project]
-name = "firekey-server"
+name = "uumi-server"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "cachecontrol>=0.14,<1",
     "cryptography>=46,<48",
     "fastapi>=0.116,<1",
-    "firekey-contracts",
-    "firekey-policy",
-    "firekey-telemetry",
+    "uumi-contracts",
+    "uumi-policy",
+    "uumi-telemetry",
     "google-cloud-firestore>=2.28,<3",
     "google-cloud-pubsub>=2.39,<3",
     "httpx>=0.28,<1",
@@ -26,9 +26,9 @@ browser = ["playwright>=1.55,<2"]
 mcp = ["mcp>=2,<3"]
 
 [tool.uv.sources]
-firekey-contracts = { workspace = true }
-firekey-policy = { workspace = true }
-firekey-telemetry = { workspace = true }
+uumi-contracts = { workspace = true }
+uumi-policy = { workspace = true }
+uumi-telemetry = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

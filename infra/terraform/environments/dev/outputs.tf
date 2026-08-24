@@ -1,10 +1,10 @@
 output "region" {
-  description = "Region selected for FireKey."
+  description = "Region selected for Uumi."
   value       = var.region
 }
 
 output "services" {
-  description = "APIs managed for the FireKey project."
+  description = "APIs managed for the Uumi project."
   value       = module.project.services
 }
 
@@ -14,12 +14,12 @@ output "database_id" {
 }
 
 output "service_accounts" {
-  description = "FireKey service account emails keyed by account ID."
+  description = "Uumi service account emails keyed by account ID."
   value       = module.identity.emails
 }
 
 output "api_uri" {
-  description = "Private FireKey API URI, or null before the first image deployment."
+  description = "Private Uumi API URI, or null before the first image deployment."
   value       = module.runtime.api_uri
 }
 
@@ -29,7 +29,7 @@ output "identity_platform_issuer" {
 }
 
 output "publisher_uri" {
-  description = "Private FireKey publisher URI, or null before the first image deployment."
+  description = "Private Uumi publisher URI, or null before the first image deployment."
   value       = module.runtime.publisher_uri
 }
 
@@ -49,12 +49,12 @@ output "auditlog_uri" {
 }
 
 output "event_topic" {
-  description = "Ordered FireKey run event topic."
+  description = "Ordered Uumi run event topic."
   value       = module.events.topic
 }
 
 output "scc_topics" {
-  description = "SCC finding topics keyed by FireKey organisation."
+  description = "SCC finding topics keyed by Uumi organisation."
   value       = module.events.scc_topics
 }
 
@@ -94,7 +94,7 @@ output "github_oauth_secret" {
 }
 
 output "image_repository" {
-  description = "Artifact Registry repository prefix for FireKey images."
+  description = "Artifact Registry repository prefix for Uumi images."
   value       = module.runtime.repository
 }
 

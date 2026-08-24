@@ -4,7 +4,7 @@ output "api_uri" {
 }
 
 output "repository" {
-  description = "Docker repository prefix for FireKey images."
+  description = "Docker repository prefix for Uumi images."
   value       = "${google_artifact_registry_repository.runtime.location}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.runtime.repository_id}"
 }
 

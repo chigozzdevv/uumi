@@ -126,7 +126,7 @@ class GcsEvidenceSink:
         }
         headers = {
             "Content-Type": content_type,
-            "x-goog-meta-firekey-digest": content_digest,
+            "x-goog-meta-uumi-digest": content_digest,
         }
         try:
             return await self._client.request(
@@ -141,6 +141,6 @@ class GcsEvidenceSink:
         )
         existing = await self._client.request("GET", metadata_url)
         metadata = existing.get("metadata")
-        if not isinstance(metadata, dict) or metadata.get("firekey-digest") != content_digest:
+        if not isinstance(metadata, dict) or metadata.get("uumi-digest") != content_digest:
             raise ResourceConflictError("immutable evidence object contains different bytes")
         return existing

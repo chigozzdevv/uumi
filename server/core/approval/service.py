@@ -122,7 +122,7 @@ class ApprovalService:
                 NotificationKind.APPROVAL_REQUIRED,
                 Severity.HIGH,
                 "Protected action needs approval",
-                f"FireKey run {stored.run_id} is waiting for approval {stored.id}.",
+                f"Uumi run {stored.run_id} is waiting for approval {stored.id}.",
                 f"/organisations/{stored.organisation_id}/approvals/{stored.id}",
                 stored.id,
                 run_id=stored.run_id,

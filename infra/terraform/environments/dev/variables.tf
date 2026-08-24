@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "Google Cloud project that owns FireKey."
+  description = "Google Cloud project that owns Uumi."
   type        = string
 
   validation {
@@ -9,7 +9,7 @@ variable "project_id" {
 }
 
 variable "region" {
-  description = "Shared region for FireKey control-plane and agent resources."
+  description = "Shared region for Uumi control-plane and agent resources."
   type        = string
   default     = "us-east1"
 
@@ -93,12 +93,12 @@ variable "workflow_organisations" {
       for organisation_id in var.workflow_organisations :
       can(regex("^[a-z][a-z0-9_-]{2,127}$", organisation_id))
     ])
-    error_message = "Workflow organisation IDs must satisfy the FireKey identifier contract."
+    error_message = "Workflow organisation IDs must satisfy the Uumi identifier contract."
   }
 }
 
 variable "api_image" {
-  description = "Immutable FireKey API image reference; null bootstraps the registry only."
+  description = "Immutable Uumi API image reference; null bootstraps the registry only."
   type        = string
   default     = null
   nullable    = true
@@ -113,7 +113,7 @@ variable "api_image" {
 }
 
 variable "publisher_image" {
-  description = "Immutable FireKey publisher image reference; null leaves delivery disabled."
+  description = "Immutable Uumi publisher image reference; null leaves delivery disabled."
   type        = string
   default     = null
   nullable    = true
@@ -128,7 +128,7 @@ variable "publisher_image" {
 }
 
 variable "ingestion_image" {
-  description = "Immutable FireKey incident ingestion image reference."
+  description = "Immutable Uumi incident ingestion image reference."
   type        = string
   default     = null
   nullable    = true
@@ -143,7 +143,7 @@ variable "ingestion_image" {
 }
 
 variable "notification_image" {
-  description = "Immutable FireKey notification worker image reference."
+  description = "Immutable Uumi notification worker image reference."
   type        = string
   default     = null
   nullable    = true
@@ -158,7 +158,7 @@ variable "notification_image" {
 }
 
 variable "auditlog_image" {
-  description = "Immutable FireKey audit log publisher image reference."
+  description = "Immutable Uumi audit log publisher image reference."
   type        = string
   default     = null
   nullable    = true
@@ -173,7 +173,7 @@ variable "auditlog_image" {
 }
 
 variable "notification_app_url" {
-  description = "Authenticated FireKey application origin used for safe notification links."
+  description = "Authenticated Uumi application origin used for safe notification links."
   type        = string
   default     = null
   nullable    = true
@@ -188,7 +188,7 @@ variable "notification_app_url" {
 }
 
 variable "notification_email_secret_version" {
-  description = "Immutable Secret Manager version holding FireKey's email delivery credential."
+  description = "Immutable Secret Manager version holding Uumi's email delivery credential."
   type        = string
   default     = null
   nullable    = true
@@ -203,7 +203,7 @@ variable "notification_email_secret_version" {
 }
 
 variable "notification_email_sender" {
-  description = "Verified sender address used by FireKey email notifications."
+  description = "Verified sender address used by Uumi email notifications."
   type        = string
   default     = null
   nullable    = true
@@ -342,7 +342,7 @@ variable "notification_secrets" {
 }
 
 variable "scc_sources" {
-  description = "SCC organisation sources keyed by FireKey organisation ID."
+  description = "SCC organisation sources keyed by Uumi organisation ID."
   type = map(object({
     cloud_organisation_id = string
     filter                = string
@@ -352,7 +352,7 @@ variable "scc_sources" {
 }
 
 variable "secret_sources" {
-  description = "FireKey organisations receiving Secret Manager event notifications."
+  description = "Uumi organisations receiving Secret Manager event notifications."
   type        = set(string)
   default     = []
 }
@@ -378,7 +378,7 @@ variable "rotation_schedules" {
 }
 
 variable "broker_image" {
-  description = "Immutable FireKey MCP broker image reference."
+  description = "Immutable Uumi MCP broker image reference."
   type        = string
   default     = null
   nullable    = true
@@ -393,7 +393,7 @@ variable "broker_image" {
 }
 
 variable "coordinator_image" {
-  description = "Immutable FireKey stage coordinator image reference."
+  description = "Immutable Uumi stage coordinator image reference."
   type        = string
   default     = null
   nullable    = true
@@ -408,7 +408,7 @@ variable "coordinator_image" {
 }
 
 variable "browser_image" {
-  description = "Immutable FireKey browser worker image reference."
+  description = "Immutable Uumi browser worker image reference."
   type        = string
   default     = null
   nullable    = true
@@ -423,7 +423,7 @@ variable "browser_image" {
 }
 
 variable "gateway_image" {
-  description = "Immutable FireKey browser gateway image reference."
+  description = "Immutable Uumi browser gateway image reference."
   type        = string
   default     = null
   nullable    = true
@@ -475,13 +475,13 @@ variable "gateway_users" {
 }
 
 variable "identity_platform_domains" {
-  description = "Domains allowed to complete Identity Platform sign-in redirects, including the FireKey client origin."
+  description = "Domains allowed to complete Identity Platform sign-in redirects, including the Uumi client origin."
   type        = list(string)
   default     = []
 }
 
 variable "oidc_audience" {
-  description = "Stable audience used by Cloud Run and FireKey token verification."
+  description = "Stable audience used by Cloud Run and Uumi token verification."
   type        = string
-  default     = "https://api.firekey.internal"
+  default     = "https://api.uumi.internal"
 }

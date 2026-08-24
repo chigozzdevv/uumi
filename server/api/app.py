@@ -4,7 +4,6 @@ from core.errors import (
     ActiveRunConflictError,
     AuthenticationError,
     AuthorizationError,
-    FireKeyError,
     IdempotencyConflictError,
     LeaseConflictError,
     PlaybookError,
@@ -14,6 +13,7 @@ from core.errors import (
     RunNotFoundError,
     StorageIntegrityError,
     TransitionRejectedError,
+    UumiError,
 )
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -45,7 +45,7 @@ ErrorHandler = Callable[[Request, Exception], Awaitable[JSONResponse]]
 
 
 def create_app(services: ApiServices | None = None) -> FastAPI:
-    app = FastAPI(title="FireKey", version="0.1.0", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Uumi", version="0.1.0", docs_url=None, redoc_url=None)
     app.state.services = services or build_services()
     app.include_router(health_router)
     app.include_router(session_router)
@@ -64,13 +64,13 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.include_router(audit_router)
     app.include_router(overview_router)
     app.include_router(settings_router)
-    app.add_exception_handler(FireKeyError, _firekey_error)
+    app.add_exception_handler(UumiError, _uumi_error)
     app.add_exception_handler(PolicyViolationError, _controls_error)
-    instrument(app, "firekey-api")
+    instrument(app, "uumi-api")
     return app
 
 
-async def _firekey_error(request: Request, error: Exception) -> JSONResponse:
+async def _uumi_error(request: Request, error: Exception) -> JSONResponse:
     del request
     if isinstance(error, AuthenticationError):
         return _error(status.HTTP_401_UNAUTHORIZED, "unauthenticated", str(error))
@@ -102,7 +102,7 @@ async def _firekey_error(request: Request, error: Exception) -> JSONResponse:
     return _error(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
         "internal-error",
-        "an internal FireKey error occurred",
+        "an internal Uumi error occurred",
     )
 
 

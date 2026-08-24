@@ -85,8 +85,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _runtime = None
 
 
-app = FastAPI(title="FireKey Event Publisher", version="0.1.0", lifespan=lifespan)
-instrument(app, "firekey-publisher")
+app = FastAPI(title="Uumi Event Publisher", version="0.1.0", lifespan=lifespan)
+instrument(app, "uumi-publisher")
 
 
 @app.get("/health/live")

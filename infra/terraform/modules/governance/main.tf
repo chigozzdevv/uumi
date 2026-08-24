@@ -50,10 +50,10 @@ locals {
   )
 }
 
-resource "google_model_armor_template" "firekey" {
+resource "google_model_armor_template" "uumi" {
   project         = var.project_id
   location        = var.region
-  template_id     = "firekey-agent-guardrails"
+  template_id     = "uumi-agent-guardrails"
   deletion_policy = "ENABLED"
 
   filter_config {
@@ -89,9 +89,9 @@ resource "google_model_armor_template" "firekey" {
     log_sanitize_operations                  = true
     log_template_operations                  = true
     custom_prompt_safety_error_code          = 403
-    custom_prompt_safety_error_message       = "FireKey agent input was blocked by policy."
+    custom_prompt_safety_error_message       = "Uumi agent input was blocked by policy."
     custom_llm_response_safety_error_code    = 403
-    custom_llm_response_safety_error_message = "FireKey agent output was blocked by policy."
+    custom_llm_response_safety_error_message = "Uumi agent output was blocked by policy."
 
     filter_version_selector {
       alias = "FILTER_VERSION_ALIAS_STABLE"
@@ -106,8 +106,8 @@ resource "google_model_armor_template" "firekey" {
 resource "google_network_services_agent_gateway" "ingress" {
   project         = var.project_id
   location        = var.region
-  name            = "firekey-agent-ingress"
-  description     = "Model Armor governed client access to FireKey Agent Runtime."
+  name            = "uumi-agent-ingress"
+  description     = "Model Armor governed client access to Uumi Agent Runtime."
   deletion_policy = "PREVENT"
 
   google_managed {
@@ -118,8 +118,8 @@ resource "google_network_services_agent_gateway" "ingress" {
 resource "google_network_services_agent_gateway" "egress" {
   project         = var.project_id
   location        = var.region
-  name            = "firekey-agent-egress"
-  description     = "Default-deny governed egress from FireKey Agent Runtime."
+  name            = "uumi-agent-egress"
+  description     = "Default-deny governed egress from Uumi Agent Runtime."
   registries      = [local.registry]
   deletion_policy = "PREVENT"
 
@@ -131,16 +131,16 @@ resource "google_network_services_agent_gateway" "egress" {
 resource "google_network_services_authz_extension" "armor" {
   project         = var.project_id
   location        = var.region
-  name            = "firekey-model-armor"
-  description     = "Fail-closed content screening for FireKey agent traffic."
+  name            = "uumi-model-armor"
+  description     = "Fail-closed content screening for Uumi agent traffic."
   service         = "modelarmor.${var.region}.rep.googleapis.com"
   timeout         = "1s"
   fail_open       = false
   deletion_policy = "PREVENT"
   metadata = {
     model_armor_settings = jsonencode([{
-      request_template_id  = google_model_armor_template.firekey.name
-      response_template_id = google_model_armor_template.firekey.name
+      request_template_id  = google_model_armor_template.uumi.name
+      response_template_id = google_model_armor_template.uumi.name
     }])
   }
 }
@@ -148,8 +148,8 @@ resource "google_network_services_authz_extension" "armor" {
 resource "google_network_services_authz_extension" "iap" {
   project         = var.project_id
   location        = var.region
-  name            = "firekey-iap"
-  description     = "Fail-closed identity authorization for FireKey agent egress."
+  name            = "uumi-iap"
+  description     = "Fail-closed identity authorization for Uumi agent egress."
   service         = "iap.googleapis.com"
   timeout         = "1s"
   fail_open       = false
@@ -162,8 +162,8 @@ resource "google_network_services_authz_extension" "iap" {
 resource "google_network_security_authz_policy" "ingress" {
   project         = var.project_id
   location        = var.region
-  name            = "firekey-agent-ingress-armor"
-  description     = "Screens FireKey agent prompts and responses."
+  name            = "uumi-agent-ingress-armor"
+  description     = "Screens Uumi agent prompts and responses."
   policy_profile  = "CONTENT_AUTHZ"
   action          = "CUSTOM"
   deletion_policy = "PREVENT"
@@ -182,8 +182,8 @@ resource "google_network_security_authz_policy" "ingress" {
 resource "google_network_security_authz_policy" "egress" {
   project         = var.project_id
   location        = var.region
-  name            = "firekey-agent-egress-armor"
-  description     = "Screens supported FireKey MCP, agent, and model egress."
+  name            = "uumi-agent-egress-armor"
+  description     = "Screens supported Uumi MCP, agent, and model egress."
   policy_profile  = "CONTENT_AUTHZ"
   action          = "CUSTOM"
   deletion_policy = "PREVENT"
@@ -202,8 +202,8 @@ resource "google_network_security_authz_policy" "egress" {
 resource "google_network_security_authz_policy" "egress_identity" {
   project         = var.project_id
   location        = var.region
-  name            = "firekey-agent-egress-identity"
-  description     = "Enforces Agent Identity and IAP policy on FireKey agent egress."
+  name            = "uumi-agent-egress-identity"
+  description     = "Enforces Agent Identity and IAP policy on Uumi agent egress."
   policy_profile  = "REQUEST_AUTHZ"
   action          = "CUSTOM"
   deletion_policy = "PREVENT"
@@ -224,9 +224,9 @@ resource "google_agent_registry_service" "endpoint" {
 
   project         = var.project_id
   location        = var.region
-  service_id      = "firekey-${replace(each.key, "_", "-")}"
+  service_id      = "uumi-${replace(each.key, "_", "-")}"
   display_name    = each.value.display_name
-  description     = "Approved FireKey Agent Gateway destination."
+  description     = "Approved Uumi Agent Gateway destination."
   deletion_policy = "PREVENT"
 
   interfaces {
@@ -244,9 +244,9 @@ resource "google_agent_registry_service" "broker" {
 
   project         = var.project_id
   location        = var.region
-  service_id      = "firekey-broker"
-  display_name    = "FireKey MCP broker"
-  description     = "Capability-scoped FireKey provider and runtime tools."
+  service_id      = "uumi-broker"
+  display_name    = "Uumi MCP broker"
+  description     = "Capability-scoped Uumi provider and runtime tools."
   deletion_policy = "PREVENT"
 
   interfaces {
@@ -332,9 +332,9 @@ resource "google_project_iam_member" "agent" {
 
 resource "google_project_iam_custom_role" "caller" {
   project     = var.project_id
-  role_id     = "firekeyAgentCaller"
-  title       = "FireKey Agent Caller"
-  description = "Queries managed FireKey agent deployments."
+  role_id     = "uumiAgentCaller"
+  title       = "Uumi Agent Caller"
+  description = "Queries managed Uumi agent deployments."
   permissions = [
     "aiplatform.reasoningEngines.get",
     "aiplatform.reasoningEngines.query",
@@ -343,9 +343,9 @@ resource "google_project_iam_custom_role" "caller" {
 
 resource "google_project_iam_custom_role" "deployer" {
   project     = var.project_id
-  role_id     = "firekeyAgentDeployer"
-  title       = "FireKey Agent IAM Deployer"
-  description = "Applies approved caller bindings to managed FireKey agent deployments."
+  role_id     = "uumiAgentDeployer"
+  title       = "Uumi Agent IAM Deployer"
+  description = "Applies approved caller bindings to managed Uumi agent deployments."
   permissions = [
     "aiplatform.reasoningEngines.getIamPolicy",
     "aiplatform.reasoningEngines.setIamPolicy",

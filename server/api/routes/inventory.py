@@ -859,7 +859,7 @@ async def archive_credential(
                 organisation_id,
                 incident.id,
                 incident.revision,
-                "Credential removed from FireKey.",
+                "Credential removed from Uumi.",
                 identity.actor_id,
             )
     changed = await inventory.archive_credential(

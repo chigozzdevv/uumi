@@ -24,7 +24,7 @@ const visuals: Record<string, ProviderVisual> = {
   "google-cloud": { logo: googleCloud },
   "google-secret-manager": { logo: googleCloud },
   "cloud-monitoring": { logo: googleCloud },
-  firekey: { icon: KeyRound },
+  uumi: { icon: KeyRound },
 }
 
 export function Provider({ value, label = true }: { value: string; label?: boolean }) {

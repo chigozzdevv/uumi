@@ -375,7 +375,7 @@ async def test_secret_store_access_is_encrypted_and_bound_to_one_browser_session
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        capability = request.headers["X-FireKey-Capability"]
+        capability = request.headers["X-Uumi-Capability"]
         claims.append(signer.verify(capability, NOW))
         if request.url.path.endswith("/v1/access/key"):
             return httpx.Response(200, json={"public_key": public_key.decode()})
@@ -482,7 +482,7 @@ async def test_computer_use_enables_injection_detection_and_parses_supported_act
     client = ComputerUseClient(
         cast(Any, google),
         "project-one",
-        "projects/project-one/locations/us-east1/templates/firekey-guardrails",
+        "projects/project-one/locations/us-east1/templates/uumi-guardrails",
     )
 
     proposal = await client.propose("click the approved control", b"image")
@@ -494,11 +494,9 @@ async def test_computer_use_enables_injection_detection_and_parses_supported_act
     assert computer["enablePromptInjectionDetection"] is True
     assert "navigate" not in computer["excludedPredefinedFunctions"]
     assert google.body["modelArmorConfig"] == {
-        "promptTemplateName": (
-            "projects/project-one/locations/us-east1/templates/firekey-guardrails"
-        ),
+        "promptTemplateName": ("projects/project-one/locations/us-east1/templates/uumi-guardrails"),
         "responseTemplateName": (
-            "projects/project-one/locations/us-east1/templates/firekey-guardrails"
+            "projects/project-one/locations/us-east1/templates/uumi-guardrails"
         ),
     }
     assert proposal.safety_explanation == "confirm the browser action"
@@ -557,7 +555,7 @@ async def test_computer_use_streams_visible_thought_summary_before_function_call
     client = ComputerUseClient(
         cast(Any, google),
         "project-one",
-        "projects/project-one/locations/us-east1/templates/firekey-guardrails",
+        "projects/project-one/locations/us-east1/templates/uumi-guardrails",
     )
 
     async def record(event: Any) -> None:
@@ -577,7 +575,7 @@ async def test_computer_use_rejects_model_navigation() -> None:
     client = ComputerUseClient(
         cast(Any, ComputerGoogle("navigate")),
         "project-one",
-        "projects/project-one/locations/us-east1/templates/firekey-guardrails",
+        "projects/project-one/locations/us-east1/templates/uumi-guardrails",
     )
 
     with pytest.raises(ConnectorError, match="unsupported browser action"):
@@ -1015,7 +1013,7 @@ def _setup_service(
                 200,
                 json={
                     "secret_reference": (
-                        "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
+                        "projects/project-one/secrets/uumi-browser-session-org_one/versions/2"
                     ),
                     "fingerprint": "a" * 64,
                 },
@@ -1029,7 +1027,7 @@ def _setup_service(
         connections,
         vms,
         secrets,
-        "https://gateway.firekey.example",
+        "https://gateway.uumi.example",
         "project-one",
         lambda: NOW,
         http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
@@ -1097,7 +1095,7 @@ async def test_setup_complete_captures_only_the_provider_session() -> None:
     assert completed.status is SetupStatus.COMPLETE
     assert (
         completed.auth_reference
-        == "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
+        == "projects/project-one/secrets/uumi-browser-session-org_one/versions/2"
     )
     assert connection.status is ConnectionStatus.READY
     assert connection.authorization_reference == completed.auth_reference
@@ -1170,7 +1168,7 @@ async def test_setup_reconciles_an_ambiguous_worker_secret_write() -> None:
         await service.complete("org_one", session.id, session.revision, token, "user_one")
 
     assert secrets.disabled == [
-        "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
+        "projects/project-one/secrets/uumi-browser-session-org_one/versions/2"
     ]
     stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
     assert stored.status is SetupStatus.TERMINATED
@@ -1222,7 +1220,7 @@ async def test_setup_disables_stored_version_when_connection_update_fails() -> N
         await service.complete("org_one", session.id, session.revision, token, "user_one")
 
     assert secrets.disabled == [
-        "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
+        "projects/project-one/secrets/uumi-browser-session-org_one/versions/2"
     ]
     stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
     assert stored.status is SetupStatus.TERMINATED
@@ -1297,8 +1295,8 @@ async def test_setup_vm_metadata_contains_only_the_token_hash() -> None:
         "p" * 43,
         "evidence-bucket",
         "us-east1",
-        "us-east1-docker.pkg.dev/project-one/firekey/browser@sha256:" + "a" * 64,
-        "projects/project-one/locations/us-east1/templates/firekey-guardrails",
+        "us-east1-docker.pkg.dev/project-one/uumi/browser@sha256:" + "a" * 64,
+        "projects/project-one/locations/us-east1/templates/uumi-guardrails",
     )
     raw = "setup-token-that-must-not-enter-metadata"
     token_hash = hashlib.sha256(raw.encode()).hexdigest()
@@ -1316,7 +1314,7 @@ async def test_setup_vm_metadata_contains_only_the_token_hash() -> None:
     encoded = json.dumps(compute.body)
     assert raw not in encoded
     assert token_hash in encoded
-    assert 'firekey-setup-token"' not in encoded
+    assert 'uumi-setup-token"' not in encoded
 
 
 @pytest.mark.anyio
@@ -1358,9 +1356,7 @@ async def test_setup_store_requires_the_setup_token_and_returns_metadata_only() 
 
     class Google:
         async def request(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {
-                "name": "projects/project-one/secrets/firekey-browser-session-org_one/versions/2"
-            }
+            return {"name": "projects/project-one/secrets/uumi-browser-session-org_one/versions/2"}
 
     token = "t" * 43
     app.state.setup = SetupRuntime(
@@ -1368,15 +1364,15 @@ async def test_setup_store_requires_the_setup_token_and_returns_metadata_only() 
         cast(Any, None),
         hashlib.sha256(token.encode()).hexdigest(),
         ("*.vendor.example.com",),
-        "projects/project-one/secrets/firekey-browser-session-org_one",
+        "projects/project-one/secrets/uumi-browser-session-org_one",
         cast(Any, Google()),
     )
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     try:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             missing = await client.post("/v1/setup/store")
-            wrong = await client.post("/v1/setup/store", headers={"X-FireKey-Setup": "x" * 43})
-            stored = await client.post("/v1/setup/store", headers={"X-FireKey-Setup": token})
+            wrong = await client.post("/v1/setup/store", headers={"X-Uumi-Setup": "x" * 43})
+            stored = await client.post("/v1/setup/store", headers={"X-Uumi-Setup": token})
     finally:
         del app.state.setup
 

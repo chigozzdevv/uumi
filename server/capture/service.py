@@ -262,7 +262,7 @@ _MASK_SCRIPT = """
   } else {
     element.textContent = mask;
   }
-  element.dataset.firekeyCapture = 'masked';
+  element.dataset.uumiCapture = 'masked';
   element.setAttribute('aria-label', 'Credential stored securely');
   const observer = new MutationObserver(() => {
     if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {

@@ -9,7 +9,7 @@ variable "project_number" {
 }
 
 variable "access_policy_id" {
-  description = "Organisation Access Context Manager policy containing the FireKey perimeter."
+  description = "Organisation Access Context Manager policy containing the Uumi perimeter."
   type        = string
 
   validation {
@@ -29,6 +29,6 @@ variable "operator_access_level" {
 }
 
 variable "region" {
-  description = "Only Google Cloud region in which new FireKey resources may be created."
+  description = "Only Google Cloud region in which new Uumi resources may be created."
   type        = string
 }

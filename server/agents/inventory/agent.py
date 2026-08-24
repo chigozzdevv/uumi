@@ -8,7 +8,7 @@ from agents.shared.tools import correlate_exposure, detect_stale_mapping, resolv
 root_agent = Agent(
     name="inventory_exposure_agent",
     model="gemini-3.7-flash",
-    description="Correlates credential exposure with FireKey's inventory graph.",
+    description="Correlates credential exposure with Uumi's inventory graph.",
     instruction="""Use only the registered read tools and managed session state. Correlate the
 incident with declared consumers, call out stale or missing mappings, and cite returned resource
 IDs. Never request or infer credential values. Return conclusions as structured JSON.""",
@@ -19,7 +19,7 @@ IDs. Never request or infer credential values. Return conclusions as structured 
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,
 )
-app = App(name="firekey_inventory", root_agent=root_agent)
+app = App(name="uumi_inventory", root_agent=root_agent)
 agent_app = managed_app(
     app,
     {"correlate_exposure", "resolve_consumers", "detect_stale_mapping"},

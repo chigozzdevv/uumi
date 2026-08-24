@@ -24,13 +24,13 @@ variable "event_topic" {
 }
 
 variable "api_url" {
-  description = "Private FireKey control API URL."
+  description = "Private Uumi control API URL."
   type        = string
   nullable    = true
 }
 
 variable "coordinator_url" {
-  description = "Private FireKey stage coordinator URL."
+  description = "Private Uumi stage coordinator URL."
   type        = string
   nullable    = true
 }

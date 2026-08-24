@@ -68,7 +68,7 @@ async def test_http_probe_requires_exact_generation_telemetry() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            headers={"x-firekey-generation-id": "generation_new"},
+            headers={"x-uumi-generation-id": "generation_new"},
             json={"healthy": True, "service": {"ready": True}},
         )
 
@@ -105,7 +105,7 @@ async def test_http_probe_fails_closed_on_generation_mismatch() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            headers={"x-firekey-generation-id": "generation_old"},
+            headers={"x-uumi-generation-id": "generation_old"},
             json={"healthy": True},
         )
 
@@ -142,7 +142,7 @@ async def test_email_probe_requires_confirmed_downstream_result() -> None:
         if request.url.path == "/password-reset":
             return httpx.Response(
                 202,
-                headers={"x-firekey-generation-id": "generation_new"},
+                headers={"x-uumi-generation-id": "generation_new"},
                 json={"receipt": {"id": "message_one"}},
             )
         return httpx.Response(200, json={"delivered": True, "template": "password-reset"})
@@ -193,7 +193,7 @@ async def test_telemetry_probe_binds_generation_and_thresholds() -> None:
                         "insertId": "entry_one",
                         "severity": "INFO",
                         "jsonPayload": {
-                            "firekey.credential_generation": "generation_new",
+                            "uumi.credential_generation": "generation_new",
                             "authentication_failure": False,
                         },
                     }
@@ -219,14 +219,14 @@ async def test_telemetry_probe_binds_generation_and_thresholds() -> None:
         expected_generation_id="generation_new",
         generation_binding=GenerationBinding.TARGET,
         telemetry=TelemetryThresholds(minimum_count=1, window_seconds=300),
-        headers={"x-firekey-log-filter": 'resource.type="cloud_run_revision"'},
+        headers={"x-uumi-log-filter": 'resource.type="cloud_run_revision"'},
     )
 
     result = await executor.execute(definition, _connection(), _context(), lambda: NOW)
 
     assert result.status is VerificationStatus.PASSED
     assert result.generation_id == "generation_new"
-    assert "firekey.credential_generation" in str(captured["filter"])
+    assert "uumi.credential_generation" in str(captured["filter"])
     assert "telemetry-generation-bound" in result.checks
 
 

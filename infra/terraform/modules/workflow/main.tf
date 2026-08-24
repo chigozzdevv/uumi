@@ -7,16 +7,16 @@ resource "google_workflows_workflow" "rotation" {
 
   project             = var.project_id
   region              = var.region
-  name                = "firekey-rotation"
-  description         = "Authoritative FireKey twelve-stage credential rotation state machine."
+  name                = "uumi-rotation"
+  description         = "Authoritative Uumi twelve-stage credential rotation state machine."
   service_account     = var.service_account
   deletion_protection = true
   source_contents     = file("${path.root}/../../../workflows/rotation.yaml")
 
   user_env_vars = {
-    FIREKEY_API_URL         = var.api_url
-    FIREKEY_COORDINATOR_URL = var.coordinator_url
-    FIREKEY_OIDC_AUDIENCE   = var.oidc_audience
+    UUMI_API_URL         = var.api_url
+    UUMI_COORDINATOR_URL = var.coordinator_url
+    UUMI_OIDC_AUDIENCE   = var.oidc_audience
   }
 }
 
@@ -41,7 +41,7 @@ resource "google_eventarc_trigger" "rotation" {
 
   project                 = var.project_id
   location                = var.region
-  name                    = "firekey-run-events"
+  name                    = "uumi-run-events"
   service_account         = var.event_service_account
   deletion_policy         = "PREVENT"
   event_data_content_type = "application/json"

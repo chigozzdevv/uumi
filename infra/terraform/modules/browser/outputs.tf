@@ -1,6 +1,6 @@
 output "network" {
-  description = "FireKey browser VPC resource name."
-  value       = google_compute_network.firekey.id
+  description = "Uumi browser VPC resource name."
+  value       = google_compute_network.uumi.id
 }
 
 output "subnetwork" {

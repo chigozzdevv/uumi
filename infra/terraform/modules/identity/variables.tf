@@ -4,7 +4,7 @@ variable "project_id" {
 }
 
 variable "accounts" {
-  description = "FireKey service accounts keyed by stable account ID."
+  description = "Uumi service accounts keyed by stable account ID."
   type = map(object({
     display_name = string
     description  = string

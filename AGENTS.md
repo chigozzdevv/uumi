@@ -1,6 +1,6 @@
-# FireKey engineering rules
+# Uumi engineering rules
 
-- Build complete, production-shaped features against the contracts in `firekey.md`.
+- Build complete, production-shaped features against the contracts in `uumi.md`.
 - Keep server code in Python and infrastructure in Terraform or YAML.
 - Prefer single-word lowercase file and directory names. Use at most one hyphen when a separator is necessary.
 - Keep provider-specific behaviour in connectors. Core code must remain provider-independent.

@@ -37,31 +37,31 @@ image: api-image
 images: api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image notification-image auditlog-image
 
 api-image:
-	docker build --file server/api/Dockerfile --tag firekey-api:local .
+	docker build --file server/api/Dockerfile --tag uumi-api:local .
 
 publisher-image:
-	docker build --file server/publisher/Dockerfile --tag firekey-publisher:local .
+	docker build --file server/publisher/Dockerfile --tag uumi-publisher:local .
 
 ingestion-image:
-	docker build --file server/ingestion/Dockerfile --tag firekey-ingestion:local .
+	docker build --file server/ingestion/Dockerfile --tag uumi-ingestion:local .
 
 broker-image:
-	docker build --file server/broker/Dockerfile --tag firekey-broker:local .
+	docker build --file server/broker/Dockerfile --tag uumi-broker:local .
 
 coordinator-image:
-	docker build --file server/coordinator/Dockerfile --tag firekey-coordinator:local .
+	docker build --file server/coordinator/Dockerfile --tag uumi-coordinator:local .
 
 browser-image:
-	docker build --file server/browser/worker.Dockerfile --tag firekey-browser:local .
+	docker build --file server/browser/worker.Dockerfile --tag uumi-browser:local .
 
 gateway-image:
-	docker build --file server/browser/Dockerfile --tag firekey-gateway:local .
+	docker build --file server/browser/Dockerfile --tag uumi-gateway:local .
 
 notification-image:
-	docker build --file server/notification/Dockerfile --tag firekey-notification:local .
+	docker build --file server/notification/Dockerfile --tag uumi-notification:local .
 
 auditlog-image:
-	docker build --file server/auditlog/Dockerfile --tag firekey-auditlog:local .
+	docker build --file server/auditlog/Dockerfile --tag uumi-auditlog:local .
 
 infra:
 	mkdir -p $(TF_CACHE_DIR)

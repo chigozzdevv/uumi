@@ -34,7 +34,7 @@ add tools, change actions, or mutate resources. Return structured JSON.""",
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,
 )
-app = App(name="firekey_planner", root_agent=root_agent)
+app = App(name="uumi_planner", root_agent=root_agent)
 agent_app = managed_app(
     app,
     {

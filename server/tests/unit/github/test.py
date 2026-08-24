@@ -42,9 +42,9 @@ async def test_onboarding_verifies_repositories_and_signed_delivery() -> None:
     service = GitHubOnboardingService(
         repository,
         Connector(),  # type: ignore[arg-type]
-        "firekey-app",
+        "uumi-app",
         "client-one",
-        "https://app.firekey.example/github/callback",
+        "https://app.uumi.example/github/callback",
         lambda: NOW,
     )
     session, state, verifier, installation_url, authorization_url = await service.begin(
@@ -145,7 +145,7 @@ async def test_connector_uses_user_access_to_verify_installation_without_persist
     connector = GitHubOnboardingConnector(
         "client-one",
         "projects/project-one/secrets/github-oauth/versions/1",
-        "https://app.firekey.example/github/callback",
+        "https://app.uumi.example/github/callback",
         SecretManagerConnector(google),
         github,
     )
@@ -171,7 +171,7 @@ def test_secret_scanning_event_uses_the_confirmed_source_connection() -> None:
                 "number": 7,
                 "html_url": "https://github.com/customer/api/security/secret-scanning/7",
                 "secret_type": "customer_platform_token",
-                "secret": "must-never-enter-firekey-metadata",
+                "secret": "must-never-enter-uumi-metadata",
                 "created_at": NOW.isoformat(),
                 "updated_at": NOW.isoformat(),
             },
@@ -190,7 +190,7 @@ def test_secret_scanning_event_uses_the_confirmed_source_connection() -> None:
     assert event.resource.credential_id is None
     assert event.resource.repository == "customer/api"
     assert event.resource.provider is None
-    assert "must-never-enter-firekey-metadata" not in event.model_dump_json()
+    assert "must-never-enter-uumi-metadata" not in event.model_dump_json()
 
 
 def test_public_leak_event_is_an_exposure_trigger() -> None:

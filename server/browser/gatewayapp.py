@@ -14,7 +14,7 @@ from browser.gateway_storage import FirestoreGatewayRepository
 
 
 class GatewaySettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="FIREKEY_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="UUMI_", extra="ignore")
 
     project_id: str = Field(min_length=4)
     firestore_database: str = "(default)"
@@ -37,8 +37,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     firestore.close()  # type: ignore[no-untyped-call]
 
 
-app = FastAPI(title="FireKey Browser Gateway", docs_url=None, lifespan=lifespan)
-instrument(app, "firekey-gateway")
+app = FastAPI(title="Uumi Browser Gateway", docs_url=None, lifespan=lifespan)
+instrument(app, "uumi-gateway")
 
 
 @app.get("/health/live")

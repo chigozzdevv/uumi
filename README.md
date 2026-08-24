@@ -1,8 +1,8 @@
-# FireKey
+# Uumi
 
-FireKey is an enterprise credential-rotation platform that discovers credential exposure, plans safe rotations, deploys replacement generations, verifies real application behaviour, obtains action-bound approval, revokes old credentials, and produces immutable evidence.
+Uumi is an enterprise credential-rotation platform that discovers credential exposure, plans safe rotations, deploys replacement generations, verifies real application behaviour, obtains action-bound approval, revokes old credentials, and produces immutable evidence.
 
-The product and end-to-end safety contract live in [`firekey.md`](firekey.md).
+The product and end-to-end safety contract live in [`uumi.md`](uumi.md).
 
 ## End-to-end architecture
 
@@ -94,7 +94,7 @@ make images
 The deployed demo uses the Google Cloud runtimes configured by Terraform.
 When running the API process outside Cloud Run, copy `.env.example` to the ignored `.env` and
 load it into the process environment. Terraform-generated integration and worker configuration is
-kept in `values.tfvars` rather than duplicated in that local file. FireKey-owned secret values
+kept in `values.tfvars` rather than duplicated in that local file. Uumi-owned secret values
 remain in Secret Manager.
 
 `make verify` runs formatting, lint, static typing, contracts, policy, state-machine, broker,

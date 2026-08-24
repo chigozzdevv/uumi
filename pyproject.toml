@@ -1,5 +1,5 @@
 [project]
-name = "firekey"
+name = "uumi"
 version = "0.1.0"
 description = "Enterprise credential rotation and verification platform"
 requires-python = ">=3.12,<3.13"

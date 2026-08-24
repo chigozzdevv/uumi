@@ -19,7 +19,7 @@ resource "google_cloud_run_v2_service" "auditlog" {
 
   project             = var.project_id
   location            = var.region
-  name                = "firekey-auditlog"
+  name                = "uumi-auditlog"
   description         = "Private canonical audit log publisher."
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -41,7 +41,7 @@ resource "google_cloud_run_v2_service" "auditlog" {
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-runtime"]
+        tags       = ["uumi-runtime"]
       }
     }
 
@@ -55,24 +55,24 @@ resource "google_cloud_run_v2_service" "auditlog" {
       }
 
       env {
-        name  = "FIREKEY_PROJECT_ID"
+        name  = "UUMI_PROJECT_ID"
         value = var.project_id
       }
       env {
-        name  = "FIREKEY_FIRESTORE_DATABASE"
+        name  = "UUMI_FIRESTORE_DATABASE"
         value = "(default)"
       }
 
       env {
-        name  = "FIREKEY_REGION"
+        name  = "UUMI_REGION"
         value = var.region
       }
       env {
-        name  = "FIREKEY_OIDC_AUDIENCE"
+        name  = "UUMI_OIDC_AUDIENCE"
         value = var.oidc_audience
       }
       env {
-        name  = "FIREKEY_TRUSTED_PUSH_SERVICE_ACCOUNT"
+        name  = "UUMI_TRUSTED_PUSH_SERVICE_ACCOUNT"
         value = var.scc_push_service_account
       }
 
@@ -126,7 +126,7 @@ resource "google_cloud_run_v2_service" "notification" {
 
   project             = var.project_id
   location            = var.region
-  name                = "firekey-notification"
+  name                = "uumi-notification"
   description         = "Private durable multi-channel notification worker."
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -148,7 +148,7 @@ resource "google_cloud_run_v2_service" "notification" {
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-runtime"]
+        tags       = ["uumi-runtime"]
       }
     }
 
@@ -162,27 +162,27 @@ resource "google_cloud_run_v2_service" "notification" {
       }
 
       env {
-        name  = "FIREKEY_PROJECT_ID"
+        name  = "UUMI_PROJECT_ID"
         value = var.project_id
       }
       env {
-        name  = "FIREKEY_FIRESTORE_DATABASE"
+        name  = "UUMI_FIRESTORE_DATABASE"
         value = "(default)"
       }
       env {
-        name  = "FIREKEY_REGION"
+        name  = "UUMI_REGION"
         value = var.region
       }
       env {
-        name  = "FIREKEY_OIDC_AUDIENCE"
+        name  = "UUMI_OIDC_AUDIENCE"
         value = var.oidc_audience
       }
       env {
-        name  = "FIREKEY_TRUSTED_PUSH_SERVICE_ACCOUNT"
+        name  = "UUMI_TRUSTED_PUSH_SERVICE_ACCOUNT"
         value = var.scc_push_service_account
       }
       env {
-        name  = "FIREKEY_APP_URL"
+        name  = "UUMI_APP_URL"
         value = var.notification_app_url
       }
 
@@ -236,7 +236,7 @@ resource "google_cloud_run_v2_service" "ingestion" {
 
   project             = var.project_id
   location            = var.region
-  name                = "firekey-ingestion"
+  name                = "uumi-ingestion"
   description         = "Authenticated GitHub and Security Command Center incident intake."
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_ALL"
@@ -258,7 +258,7 @@ resource "google_cloud_run_v2_service" "ingestion" {
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-runtime"]
+        tags       = ["uumi-runtime"]
       }
     }
 
@@ -272,31 +272,31 @@ resource "google_cloud_run_v2_service" "ingestion" {
       }
 
       env {
-        name  = "FIREKEY_PROJECT_ID"
+        name  = "UUMI_PROJECT_ID"
         value = var.project_id
       }
       env {
-        name  = "FIREKEY_FIRESTORE_DATABASE"
+        name  = "UUMI_FIRESTORE_DATABASE"
         value = "(default)"
       }
       env {
-        name  = "FIREKEY_REGION"
+        name  = "UUMI_REGION"
         value = var.region
       }
       env {
-        name  = "FIREKEY_OIDC_AUDIENCE"
+        name  = "UUMI_OIDC_AUDIENCE"
         value = var.oidc_audience
       }
       env {
-        name  = "FIREKEY_SCC_PUSH_SERVICE_ACCOUNT"
+        name  = "UUMI_SCC_PUSH_SERVICE_ACCOUNT"
         value = var.scc_push_service_account
       }
       env {
-        name  = "FIREKEY_GITHUB_WEBHOOK_SECRET"
+        name  = "UUMI_GITHUB_WEBHOOK_SECRET"
         value = var.github_webhook_secret_version
       }
       env {
-        name  = "FIREKEY_TRUSTED_PUSH_SERVICE_ACCOUNTS"
+        name  = "UUMI_TRUSTED_PUSH_SERVICE_ACCOUNTS"
         value = jsonencode([var.scc_push_service_account])
       }
 
@@ -351,8 +351,8 @@ resource "google_cloud_run_v2_service_iam_member" "ingestion" {
 resource "google_artifact_registry_repository" "runtime" {
   project         = var.project_id
   location        = var.region
-  repository_id   = "firekey"
-  description     = "Immutable FireKey runtime images."
+  repository_id   = "uumi"
+  description     = "Immutable Uumi runtime images."
   format          = "DOCKER"
   deletion_policy = "PREVENT"
 
@@ -370,8 +370,8 @@ resource "google_cloud_run_v2_service" "api" {
 
   project             = var.project_id
   location            = var.region
-  name                = "firekey-api"
-  description         = "Private FireKey control-plane API."
+  name                = "uumi-api"
+  description         = "Private Uumi control-plane API."
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   custom_audiences    = [var.oidc_audience]
@@ -392,7 +392,7 @@ resource "google_cloud_run_v2_service" "api" {
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-runtime"]
+        tags       = ["uumi-runtime"]
       }
     }
 
@@ -406,122 +406,122 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
-        name  = "FIREKEY_PROJECT_ID"
+        name  = "UUMI_PROJECT_ID"
         value = var.project_id
       }
 
       env {
-        name  = "FIREKEY_FIRESTORE_DATABASE"
+        name  = "UUMI_FIRESTORE_DATABASE"
         value = "(default)"
       }
 
       env {
-        name  = "FIREKEY_REGION"
+        name  = "UUMI_REGION"
         value = var.region
       }
 
       env {
-        name  = "FIREKEY_OIDC_AUDIENCE"
+        name  = "UUMI_OIDC_AUDIENCE"
         value = var.oidc_audience
       }
 
       env {
-        name  = "FIREKEY_CAPABILITY_SECRET"
+        name  = "UUMI_CAPABILITY_SECRET"
         value = var.capability_secret_version
       }
 
       env {
-        name  = "FIREKEY_BROKER_URL"
+        name  = "UUMI_BROKER_URL"
         value = try(google_cloud_run_v2_service.broker["broker"].uri, "")
       }
 
       env {
-        name  = "FIREKEY_BROKER_SERVICE_ACCOUNT"
+        name  = "UUMI_BROKER_SERVICE_ACCOUNT"
         value = var.broker_service_account
       }
 
       env {
-        name  = "FIREKEY_BROWSER_GATEWAY_URL"
+        name  = "UUMI_BROWSER_GATEWAY_URL"
         value = var.browser_gateway_url
       }
 
       env {
-        name  = "FIREKEY_BROWSER_ZONE"
+        name  = "UUMI_BROWSER_ZONE"
         value = var.browser_zone
       }
 
       env {
-        name  = "FIREKEY_BROWSER_TEMPLATE"
+        name  = "UUMI_BROWSER_TEMPLATE"
         value = var.browser_template
       }
 
       env {
-        name  = "FIREKEY_BROWSER_WORKER_IMAGE"
+        name  = "UUMI_BROWSER_WORKER_IMAGE"
         value = coalesce(var.browser_image, "")
       }
 
       env {
-        name  = "FIREKEY_MODEL_ARMOR_TEMPLATE"
+        name  = "UUMI_MODEL_ARMOR_TEMPLATE"
         value = var.model_armor_template
       }
 
       env {
-        name  = "FIREKEY_CAPABILITY_PUBLIC_KEY"
+        name  = "UUMI_CAPABILITY_PUBLIC_KEY"
         value = var.capability_public_key
       }
 
       env {
-        name  = "FIREKEY_EVIDENCE_BUCKET"
+        name  = "UUMI_EVIDENCE_BUCKET"
         value = var.evidence_bucket
       }
 
       env {
-        name  = "FIREKEY_WALKTHROUGH_BUCKET"
+        name  = "UUMI_WALKTHROUGH_BUCKET"
         value = var.walkthrough_bucket
       }
 
       env {
-        name  = "FIREKEY_GITHUB_APP_SLUG"
+        name  = "UUMI_GITHUB_APP_SLUG"
         value = var.github_app_slug
       }
 
       env {
-        name  = "FIREKEY_GITHUB_CLIENT_ID"
+        name  = "UUMI_GITHUB_CLIENT_ID"
         value = var.github_client_id
       }
 
       env {
-        name  = "FIREKEY_GITHUB_CLIENT_SECRET"
+        name  = "UUMI_GITHUB_CLIENT_SECRET"
         value = var.github_client_secret_version
       }
 
       env {
-        name  = "FIREKEY_GITHUB_CALLBACK_URL"
+        name  = "UUMI_GITHUB_CALLBACK_URL"
         value = var.github_callback_url
       }
 
       env {
-        name  = "FIREKEY_GOOGLE_CLOUD_CLIENT_ID"
+        name  = "UUMI_GOOGLE_CLOUD_CLIENT_ID"
         value = var.google_cloud_client_id
       }
 
       env {
-        name  = "FIREKEY_GOOGLE_CLOUD_CLIENT_SECRET"
+        name  = "UUMI_GOOGLE_CLOUD_CLIENT_SECRET"
         value = var.google_cloud_client_secret_version
       }
 
       env {
-        name  = "FIREKEY_GOOGLE_CLOUD_CALLBACK_URL"
+        name  = "UUMI_GOOGLE_CLOUD_CALLBACK_URL"
         value = var.google_cloud_callback_url
       }
 
       env {
-        name  = "FIREKEY_NOTIFICATION_EMAIL_SECRET_VERSION"
+        name  = "UUMI_NOTIFICATION_EMAIL_SECRET_VERSION"
         value = var.notification_email_secret_version
       }
 
       env {
-        name  = "FIREKEY_NOTIFICATION_EMAIL_SENDER"
+        name  = "UUMI_NOTIFICATION_EMAIL_SENDER"
         value = var.notification_email_sender
       }
 
@@ -578,8 +578,8 @@ resource "google_cloud_run_v2_service" "publisher" {
 
   project             = var.project_id
   location            = var.region
-  name                = "firekey-publisher"
-  description         = "Private FireKey transactional outbox publisher."
+  name                = "uumi-publisher"
+  description         = "Private Uumi transactional outbox publisher."
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
@@ -599,7 +599,7 @@ resource "google_cloud_run_v2_service" "publisher" {
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-runtime"]
+        tags       = ["uumi-runtime"]
       }
     }
 
@@ -613,22 +613,22 @@ resource "google_cloud_run_v2_service" "publisher" {
       }
 
       env {
-        name  = "FIREKEY_PROJECT_ID"
+        name  = "UUMI_PROJECT_ID"
         value = var.project_id
       }
 
       env {
-        name  = "FIREKEY_FIRESTORE_DATABASE"
+        name  = "UUMI_FIRESTORE_DATABASE"
         value = "(default)"
       }
 
       env {
-        name  = "FIREKEY_REGION"
+        name  = "UUMI_REGION"
         value = var.region
       }
 
       env {
-        name  = "FIREKEY_EVENT_TOPIC"
+        name  = "UUMI_EVENT_TOPIC"
         value = var.event_topic
       }
 
@@ -685,7 +685,7 @@ resource "google_cloud_run_v2_service" "broker" {
 
   project             = var.project_id
   location            = var.region
-  name                = "firekey-broker"
+  name                = "uumi-broker"
   description         = "Private capability-scoped MCP Tool Broker."
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -706,7 +706,7 @@ resource "google_cloud_run_v2_service" "broker" {
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-runtime"]
+        tags       = ["uumi-runtime"]
       }
     }
 
@@ -720,19 +720,19 @@ resource "google_cloud_run_v2_service" "broker" {
       }
 
       env {
-        name  = "FIREKEY_PROJECT_ID"
+        name  = "UUMI_PROJECT_ID"
         value = var.project_id
       }
       env {
-        name  = "FIREKEY_REGION"
+        name  = "UUMI_REGION"
         value = var.region
       }
       env {
-        name  = "FIREKEY_EVIDENCE_BUCKET"
+        name  = "UUMI_EVIDENCE_BUCKET"
         value = var.evidence_bucket
       }
       env {
-        name  = "FIREKEY_CAPABILITY_PUBLIC_KEY"
+        name  = "UUMI_CAPABILITY_PUBLIC_KEY"
         value = var.capability_public_key
       }
 
@@ -784,7 +784,7 @@ resource "google_cloud_run_v2_service" "coordinator" {
 
   project             = var.project_id
   location            = var.region
-  name                = "firekey-coordinator"
+  name                = "uumi-coordinator"
   description         = "Private deterministic stage execution service."
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
@@ -806,7 +806,7 @@ resource "google_cloud_run_v2_service" "coordinator" {
       network_interfaces {
         network    = var.network
         subnetwork = var.subnetwork
-        tags       = ["firekey-runtime"]
+        tags       = ["uumi-runtime"]
       }
     }
 
@@ -820,43 +820,43 @@ resource "google_cloud_run_v2_service" "coordinator" {
       }
 
       env {
-        name  = "FIREKEY_PROJECT_ID"
+        name  = "UUMI_PROJECT_ID"
         value = var.project_id
       }
       env {
-        name  = "FIREKEY_REGION"
+        name  = "UUMI_REGION"
         value = var.region
       }
       env {
-        name  = "FIREKEY_ZONE"
+        name  = "UUMI_ZONE"
         value = var.browser_zone
       }
       env {
-        name  = "FIREKEY_EVIDENCE_BUCKET"
+        name  = "UUMI_EVIDENCE_BUCKET"
         value = var.evidence_bucket
       }
       env {
-        name  = "FIREKEY_CAPABILITY_SECRET"
+        name  = "UUMI_CAPABILITY_SECRET"
         value = var.capability_secret_version
       }
       env {
-        name  = "FIREKEY_BROWSER_TEMPLATE"
+        name  = "UUMI_BROWSER_TEMPLATE"
         value = var.browser_template
       }
       env {
-        name  = "FIREKEY_BROWSER_IMAGE"
+        name  = "UUMI_BROWSER_IMAGE"
         value = var.browser_image
       }
       env {
-        name  = "FIREKEY_MODEL_ARMOR_TEMPLATE"
+        name  = "UUMI_MODEL_ARMOR_TEMPLATE"
         value = var.model_armor_template
       }
       env {
-        name  = "FIREKEY_OIDC_AUDIENCE"
+        name  = "UUMI_OIDC_AUDIENCE"
         value = var.oidc_audience
       }
       env {
-        name  = "FIREKEY_BROKER_URL"
+        name  = "UUMI_BROKER_URL"
         value = try(google_cloud_run_v2_service.broker["broker"].uri, "")
       }
       resources {

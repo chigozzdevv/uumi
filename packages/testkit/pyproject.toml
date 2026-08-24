@@ -1,13 +1,13 @@
 [project]
-name = "firekey-testkit"
+name = "uumi-testkit"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["firekey-contracts", "firekey-policy", "firekey-server"]
+dependencies = ["uumi-contracts", "uumi-policy", "uumi-server"]
 
 [tool.uv.sources]
-firekey-contracts = { workspace = true }
-firekey-policy = { workspace = true }
-firekey-server = { workspace = true }
+uumi-contracts = { workspace = true }
+uumi-policy = { workspace = true }
+uumi-server = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

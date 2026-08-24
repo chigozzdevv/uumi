@@ -57,7 +57,7 @@ class GcsUploadConnector:
             json={
                 "name": object_name,
                 "contentType": content_type,
-                "metadata": {"firekey-crc32c": crc32c},
+                "metadata": {"uumi-crc32c": crc32c},
             },
         )
         location = response.headers.get("location")
@@ -88,7 +88,7 @@ class GcsUploadConnector:
         if value.get("crc32c") != crc32c:
             raise ConnectorError("upload-checksum-mismatch", "uploaded object checksum changed")
         metadata = value.get("metadata")
-        if not isinstance(metadata, dict) or metadata.get("firekey-crc32c") != crc32c:
+        if not isinstance(metadata, dict) or metadata.get("uumi-crc32c") != crc32c:
             raise ConnectorError("upload-metadata-mismatch", "uploaded object binding changed")
         generation = value.get("generation")
         if not isinstance(generation, str) or not generation:
@@ -149,8 +149,8 @@ class GcsUploadConnector:
                     "name": object_name,
                     "contentType": content_type,
                     "metadata": {
-                        "firekey-source-resource": canonical,
-                        "firekey-source-generation": source_generation,
+                        "uumi-source-resource": canonical,
+                        "uumi-source-generation": source_generation,
                     },
                 },
             )

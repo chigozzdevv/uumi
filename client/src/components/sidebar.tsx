@@ -12,7 +12,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react"
-import firekeyLogo from "../assets/firekey-logo.png"
+import uumiLogo from "../assets/uumi-logo.png"
 import { api } from "../lib/api"
 
 export type NavItem =
@@ -65,7 +65,7 @@ const groups: NavGroup[] = [
 function Brand() {
   return (
     <div className="flex h-10 items-center px-3">
-      <img src={firekeyLogo} alt="FireKey" className="h-auto w-[112px] object-contain object-left" />
+      <img src={uumiLogo} alt="Uumi" className="h-auto w-[112px] object-contain object-left" />
     </div>
   )
 }

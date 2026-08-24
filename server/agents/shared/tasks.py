@@ -14,7 +14,7 @@ class FirestoreTaskStore(TaskStore):
             self._client = client
         else:
             self._client = AsyncClient(
-                project=_environment("GOOGLE_CLOUD_PROJECT", "firekey-local"),
+                project=_environment("GOOGLE_CLOUD_PROJECT", "uumi-local"),
                 database=_environment("FIRESTORE_DATABASE", "(default)"),
             )
 
@@ -59,7 +59,7 @@ class FirestoreTaskStore(TaskStore):
 def _owner(context: ServerCallContext) -> str:
     organisation_id = context.tenant
     if not organisation_id:
-        raise ValueError("A2A task access requires the FireKey organisation tenant")
+        raise ValueError("A2A task access requires the Uumi organisation tenant")
     return organisation_id
 
 

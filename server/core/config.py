@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="FIREKEY_",
+        env_prefix="UUMI_",
         case_sensitive=False,
         extra="ignore",
     )

@@ -139,14 +139,14 @@ class GitHubOnboardingConnector:
             if isinstance(total, int) and total > 400:
                 raise ConnectorError(
                     "github-repositories-limit",
-                    "select at most 400 repositories for one FireKey installation",
+                    "select at most 400 repositories for one Uumi installation",
                 )
             values.extend(_repository(item) for item in repositories)
             if len(repositories) < 100 or (isinstance(total, int) and len(values) >= total):
                 return tuple(values)
         raise ConnectorError(
             "github-repositories-limit",
-            "select at most 400 repositories for one FireKey installation",
+            "select at most 400 repositories for one Uumi installation",
         )
 
     async def _secret_scanning(self, token: SecretValue, repository: dict[str, Any]) -> str:

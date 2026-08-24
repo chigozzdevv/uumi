@@ -185,8 +185,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await app.state.runtime.close()
 
 
-app = FastAPI(title="FireKey Stage Coordinator", docs_url=None, lifespan=lifespan)
-instrument(app, "firekey-coordinator")
+app = FastAPI(title="Uumi Stage Coordinator", docs_url=None, lifespan=lifespan)
+instrument(app, "uumi-coordinator")
 
 
 async def identity(

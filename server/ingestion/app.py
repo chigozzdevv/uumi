@@ -118,8 +118,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await runtime.close()
 
 
-app = FastAPI(title="FireKey Incident Ingestion", docs_url=None, lifespan=lifespan)
-instrument(app, "firekey-ingestion")
+app = FastAPI(title="Uumi Incident Ingestion", docs_url=None, lifespan=lifespan)
+instrument(app, "uumi-ingestion")
 
 
 @app.get("/health/live")
@@ -311,8 +311,8 @@ async def provider(
     organisation_id: Identifier,
     provider: Identifier,
     request: Request,
-    signature: Annotated[str, Header(alias="X-FireKey-Signature", min_length=71)],
-    timestamp: Annotated[str, Header(alias="X-FireKey-Timestamp", min_length=20, max_length=64)],
+    signature: Annotated[str, Header(alias="X-Uumi-Signature", min_length=71)],
+    timestamp: Annotated[str, Header(alias="X-Uumi-Timestamp", min_length=20, max_length=64)],
 ) -> IngestionResponse:
     runtime: Runtime = request.app.state.runtime
     body = await request.body()

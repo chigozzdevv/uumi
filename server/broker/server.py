@@ -118,7 +118,7 @@ async def lifespan(_: MCPServer[Any]) -> Any:
 
 
 server: MCPServer[BrokerRuntime] = MCPServer(
-    "FireKey Tool Broker",
+    "Uumi Tool Broker",
     description="Capability-scoped credential, secret-store, and runtime operations.",
     instructions=(
         "All calls are bound to credential inventory, pinned controls, connection boundaries, "
@@ -314,7 +314,7 @@ async def validate_google_cloud_connection(
 async def _execute(tool: str, call: BrokerCall, ctx: Context[BrokerRuntime, Any]) -> dict[str, Any]:
     started = monotonic()
     request = ToolRequest(tool=tool, **call.model_dump())
-    capability = _header(ctx, "x-firekey-capability")
+    capability = _header(ctx, "x-uumi-capability")
     result = await ctx.request_context.lifespan_context.service.execute(request, capability)
     record(
         "tool.execute",

@@ -9,7 +9,7 @@ variable "project_id" {
 }
 
 variable "bucket_name" {
-  description = "Globally unique bucket name for FireKey Terraform state."
+  description = "Globally unique bucket name for Uumi Terraform state."
   type        = string
 
   validation {

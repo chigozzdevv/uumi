@@ -476,18 +476,18 @@ class IncidentService:
         if event.source == "schedule":
             kind = NotificationKind.ROTATION_DUE
             title = "Scheduled credential rotation is due"
-            body = f"FireKey incident {incident.id} is ready for its scheduled rotation."
+            body = f"Uumi incident {incident.id} is ready for its scheduled rotation."
         elif incident.status is IncidentStatus.CORRELATING:
             kind = NotificationKind.INCIDENT_CONFIRMATION
             title = "Credential incident needs confirmation"
-            body = f"FireKey incident {incident.id} has ambiguous credential matches."
+            body = f"Uumi incident {incident.id} has ambiguous credential matches."
         elif incident.severity in {Severity.CRITICAL, Severity.HIGH} and incident.confidence in {
             Confidence.HIGH,
             Confidence.VERIFIED,
         }:
             kind = NotificationKind.INCIDENT
             title = "Credential incident detected"
-            body = f"FireKey incident {incident.id} requires review and containment."
+            body = f"Uumi incident {incident.id} requires review and containment."
         else:
             return
         await self._notifier.emit(

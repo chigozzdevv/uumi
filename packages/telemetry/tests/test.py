@@ -51,12 +51,12 @@ def test_redactor_protects_oauth_state_code_and_pkce_verifier() -> None:
 
 def test_telemetry_is_disabled_outside_managed_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("K_SERVICE", raising=False)
-    monkeypatch.delenv("FIREKEY_TELEMETRY_ENABLED", raising=False)
+    monkeypatch.delenv("UUMI_TELEMETRY_ENABLED", raising=False)
 
-    config = instrument(FastAPI(), "firekey-test")
+    config = instrument(FastAPI(), "uumi-test")
 
     assert config == TelemetryConfig(
-        service="firekey-test",
+        service="uumi-test",
         project_id="",
         region="",
         environment="production",

@@ -7,6 +7,7 @@
 .ruff_cache/
 .venv/
 .cache/
+.firebase/
 __pycache__/
 *.py[cod]
 *.egg-info/

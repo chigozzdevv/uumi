@@ -19,7 +19,7 @@ const dismissalReasons = [
   "False positive",
   "Duplicate incident",
   "Test credential",
-  "Credential is not managed by FireKey",
+  "Credential is not managed by Uumi",
 ]
 
 function severityVariant(severity: Incident["severity"]) {
@@ -138,7 +138,7 @@ export function IncidentsPage({ initialIncidentId = "", onNavigateRotation }: { 
           {selected.candidates.map((candidate) => {
             const item = credential(candidate.credential_id)
             const chosen = candidate.credential_id === selectedCandidateId
-            const content = <><Provider value={item?.provider ?? selected.resource.provider ?? "firekey"} label={false} /><span className="min-w-0 flex-1"><span className="text-[11px] font-semibold">{item?.display_name ?? "Credential"}</span><span className="mt-1 block text-[9px] leading-4 text-[var(--ink-muted)]">{candidate.reasons.join(" · ")}</span></span>{selected.candidates.length > 1 && <span className={`text-[9px] font-semibold ${chosen ? "text-[var(--ink)]" : "text-[var(--ink-muted)]"}`}>{chosen ? "Selected" : "Select"}</span>}</>
+            const content = <><Provider value={item?.provider ?? selected.resource.provider ?? "uumi"} label={false} /><span className="min-w-0 flex-1"><span className="text-[11px] font-semibold">{item?.display_name ?? "Credential"}</span><span className="mt-1 block text-[9px] leading-4 text-[var(--ink-muted)]">{candidate.reasons.join(" · ")}</span></span>{selected.candidates.length > 1 && <span className={`text-[9px] font-semibold ${chosen ? "text-[var(--ink)]" : "text-[var(--ink-muted)]"}`}>{chosen ? "Selected" : "Select"}</span>}</>
             return selected.candidates.length === 1
               ? <div key={candidate.credential_id} className="flex items-start gap-3 py-4">{content}</div>
               : <button key={candidate.credential_id} type="button" aria-pressed={chosen} onClick={() => setSelectedCandidateId(candidate.credential_id)} className="focus-ring flex w-full items-start gap-3 rounded-lg py-4 text-left">{content}</button>
