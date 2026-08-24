@@ -13,6 +13,26 @@ variable "publisher_member" {
   type        = string
 }
 
+variable "publisher_enabled" {
+  description = "Whether publisher delivery resources are part of this deployment."
+  type        = bool
+}
+
+variable "ingestion_enabled" {
+  description = "Whether ingestion sources and schedules are part of this deployment."
+  type        = bool
+}
+
+variable "notification_enabled" {
+  description = "Whether durable notification delivery resources are part of this deployment."
+  type        = bool
+}
+
+variable "auditlog_enabled" {
+  description = "Whether canonical audit delivery resources are part of this deployment."
+  type        = bool
+}
+
 variable "event_member" {
   description = "Event delivery workload IAM member."
   type        = string

@@ -188,109 +188,102 @@ locals {
   ])
 }
 
-check "complete_control_plane" {
-  assert {
-    condition = length(local.control_plane_images) == 0 || (
-      length(local.control_plane_images) == 2 &&
-      var.capability_secret_version != null
-    )
-    error_message = "Deploy the API and authenticated web gateway together with an immutable capability secret version."
-  }
-}
+# These lifecycle preconditions are hard deployment gates; check blocks only emit warnings.
+resource "terraform_data" "deployment" {
+  input = "uumi-deployment"
 
-check "complete_runtime" {
-  assert {
-    condition = length(local.automation_images) == 0 || (
-      length(local.automation_images) == 8 &&
-      length(local.control_plane_images) == 2 &&
-      var.notification_app_url != null &&
-      var.notification_email_secret_version != null &&
-      var.notification_email_sender != null &&
-      var.github_app_slug != null &&
-      var.github_client_id != null &&
-      var.github_client_secret_version != null &&
-      var.github_callback_url != null &&
-      var.github_webhook_secret_version != null &&
-      var.access_policy_id != null &&
-      var.operator_access_level != null &&
-      length(var.browser_allowed_domains) > 0 &&
-      length(var.runtime_connector_domains) > 0 &&
-      length(var.workflow_organisations) > 0 &&
-      length(var.gateway_users) > 0
-    )
-    error_message = "Deploy all eight automation images together with the control plane, GitHub App, email delivery, perimeter, browser egress, organisation grant, and IAP gateway configuration."
-  }
-}
+  lifecycle {
+    precondition {
+      condition = length(local.control_plane_images) == 0 || (
+        length(local.control_plane_images) == 2 &&
+        var.capability_secret_version != null
+      )
+      error_message = "Deploy the API and authenticated web gateway together with an immutable capability secret version."
+    }
 
-check "complete_google_cloud_onboarding" {
-  assert {
-    condition = alltrue([
-      var.google_cloud_client_id == null,
-      var.google_cloud_client_secret_version == null,
-      var.google_cloud_callback_url == null,
-      ]) || alltrue([
-      var.google_cloud_client_id != null,
-      var.google_cloud_client_secret_version != null,
-      var.google_cloud_callback_url != null,
-    ])
-    error_message = "Google Cloud onboarding requires the client ID, client secret version, and callback URL together."
-  }
-}
-
-check "notification_email_delivery" {
-  assert {
-    condition = (
-      (
-        var.notification_email_secret_version == null &&
-        var.notification_email_sender == null
-        ) || (
+    precondition {
+      condition = length(local.automation_images) == 0 || (
+        length(local.automation_images) == 8 &&
+        length(local.control_plane_images) == 2 &&
+        var.notification_app_url != null &&
         var.notification_email_secret_version != null &&
         var.notification_email_sender != null &&
-        anytrue([
-          for secret in values(var.notification_secrets) :
-          startswith(
-            coalesce(var.notification_email_secret_version, ""),
-            "projects/${secret.project_id}/secrets/${secret.secret_id}/versions/",
-          )
-        ])
+        var.github_app_slug != null &&
+        var.github_client_id != null &&
+        var.github_client_secret_version != null &&
+        var.github_callback_url != null &&
+        var.github_webhook_secret_version != null &&
+        var.access_policy_id != null &&
+        var.operator_access_level != null &&
+        length(var.browser_allowed_domains) > 0 &&
+        length(var.runtime_connector_domains) > 0 &&
+        length(var.workflow_organisations) > 0 &&
+        length(var.gateway_users) > 0
       )
-    )
-    error_message = "Email delivery requires a sender and a secret version covered by notification_secrets IAM."
-  }
-}
+      error_message = "Deploy all eight automation images together with the control plane, GitHub App, email delivery, perimeter, browser egress, organisation grant, and IAP gateway configuration."
+    }
 
-check "perimeter_access_policy" {
-  assert {
-    condition = (
-      var.access_policy_id == null ||
-      var.operator_access_level == null ||
-      startswith(var.operator_access_level, "accessPolicies/${var.access_policy_id}/")
-    )
-    error_message = "operator_access_level must belong to access_policy_id."
-  }
-}
+    precondition {
+      condition = alltrue([
+        var.google_cloud_client_id == null,
+        var.google_cloud_client_secret_version == null,
+        var.google_cloud_callback_url == null,
+        ]) || alltrue([
+        var.google_cloud_client_id != null,
+        var.google_cloud_client_secret_version != null,
+        var.google_cloud_callback_url != null,
+      ])
+      error_message = "Google Cloud onboarding requires the client ID, client secret version, and callback URL together."
+    }
 
-check "scc_tenants" {
-  assert {
-    condition     = length(setsubtract(toset(keys(var.scc_sources)), var.workflow_organisations)) == 0
-    error_message = "Every SCC source must map to an authorised Uumi organisation."
-  }
-}
+    precondition {
+      condition = (
+        (
+          var.notification_email_secret_version == null &&
+          var.notification_email_sender == null
+          ) || (
+          var.notification_email_secret_version != null &&
+          var.notification_email_sender != null &&
+          anytrue([
+            for secret in values(var.notification_secrets) :
+            startswith(
+              coalesce(var.notification_email_secret_version, ""),
+              "projects/${secret.project_id}/secrets/${secret.secret_id}/versions/",
+            )
+          ])
+        )
+      )
+      error_message = "Email delivery requires a sender and a secret version covered by notification_secrets IAM."
+    }
 
-check "ingestion_tenants" {
-  assert {
-    condition = (
-      length(setsubtract(var.secret_sources, var.workflow_organisations)) == 0 &&
-      length(setsubtract(
-        toset([for source in values(var.provider_sources) : source.organisation_id]),
-        var.workflow_organisations,
-      )) == 0 &&
-      length(setsubtract(
-        toset([for schedule in values(var.rotation_schedules) : schedule.organisation_id]),
-        var.workflow_organisations,
-      )) == 0
-    )
-    error_message = "Every ingestion source must map to an authorised Uumi organisation."
+    precondition {
+      condition = (
+        var.access_policy_id == null ||
+        var.operator_access_level == null ||
+        startswith(var.operator_access_level, "accessPolicies/${var.access_policy_id}/")
+      )
+      error_message = "operator_access_level must belong to access_policy_id."
+    }
+
+    precondition {
+      condition     = length(setsubtract(toset(keys(var.scc_sources)), var.workflow_organisations)) == 0
+      error_message = "Every SCC source must map to an authorised Uumi organisation."
+    }
+
+    precondition {
+      condition = (
+        length(setsubtract(var.secret_sources, var.workflow_organisations)) == 0 &&
+        length(setsubtract(
+          toset([for source in values(var.provider_sources) : source.organisation_id]),
+          var.workflow_organisations,
+        )) == 0 &&
+        length(setsubtract(
+          toset([for schedule in values(var.rotation_schedules) : schedule.organisation_id]),
+          var.workflow_organisations,
+        )) == 0
+      )
+      error_message = "Every ingestion source must map to an authorised Uumi organisation."
+    }
   }
 }
 
@@ -417,6 +410,10 @@ module "events" {
   event_member            = module.identity.members["uumi-events"]
   event_service_account   = module.identity.emails["uumi-events"]
   secretmanager_member    = module.storage.secretmanager_member
+  publisher_enabled       = var.publisher_image != null
+  ingestion_enabled       = var.ingestion_image != null
+  notification_enabled    = var.notification_image != null && var.notification_app_url != null
+  auditlog_enabled        = var.auditlog_image != null
   publisher_name          = module.runtime.publisher_name
   publisher_uri           = module.runtime.publisher_uri
   api_uri                 = module.runtime.api_uri
@@ -444,9 +441,15 @@ module "workflow" {
   service_account       = module.identity.emails["uumi-workflow"]
   event_service_account = module.identity.emails["uumi-events"]
   event_topic           = module.events.topic
-  api_url               = module.runtime.api_uri
-  coordinator_url       = module.runtime.coordinator_uri
-  oidc_audience         = var.oidc_audience
+  enabled = (
+    var.api_image != null &&
+    var.coordinator_image != null &&
+    var.browser_image != null &&
+    var.broker_image != null
+  )
+  api_url         = module.runtime.api_uri
+  coordinator_url = module.runtime.coordinator_uri
+  oidc_audience   = var.oidc_audience
 
   depends_on = [module.project, module.events, module.runtime]
 }

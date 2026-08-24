@@ -23,6 +23,11 @@ variable "event_topic" {
   type        = string
 }
 
+variable "enabled" {
+  description = "Whether the rotation workflow is part of this deployment."
+  type        = bool
+}
+
 variable "api_url" {
   description = "Private Uumi control API URL."
   type        = string

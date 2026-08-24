@@ -1,30 +1,26 @@
 locals {
-  publisher = var.publisher_name == null || var.publisher_uri == null ? {} : {
+  publisher = !var.publisher_enabled ? {} : {
     publisher = {
       name = var.publisher_name
       uri  = var.publisher_uri
     }
   }
-  scc       = var.ingestion_uri == null ? {} : var.scc_sources
-  secrets   = var.ingestion_uri == null ? toset([]) : var.secret_sources
-  schedules = var.ingestion_uri == null ? {} : var.rotation_schedules
-  detection = var.ingestion_uri == null ? toset([]) : var.detection_organisations
+  scc       = !var.ingestion_enabled ? {} : var.scc_sources
+  secrets   = !var.ingestion_enabled ? toset([]) : var.secret_sources
+  schedules = !var.ingestion_enabled ? {} : var.rotation_schedules
+  detection = !var.ingestion_enabled ? toset([]) : var.detection_organisations
   reapers = {
     for organisation_id in var.reaper_organisations : organisation_id => {
       api_uri         = var.api_uri
       service_account = var.reaper_service_account
     }
   }
-  notification = (
-    var.notification_name == null || var.notification_uri == null
-    ? {}
-    : { notification = { name = var.notification_name, uri = var.notification_uri } }
-  )
-  auditlog = (
-    var.auditlog_name == null || var.auditlog_uri == null
-    ? {}
-    : { auditlog = { name = var.auditlog_name, uri = var.auditlog_uri } }
-  )
+  notification = !var.notification_enabled ? {} : {
+    notification = { name = var.notification_name, uri = var.notification_uri }
+  }
+  auditlog = !var.auditlog_enabled ? {} : {
+    auditlog = { name = var.auditlog_name, uri = var.auditlog_uri }
+  }
   push = length(local.scc) + length(local.secrets) + length(local.notification) + length(local.auditlog) == 0 ? [] : ["enabled"]
 }
 

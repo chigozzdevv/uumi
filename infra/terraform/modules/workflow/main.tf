@@ -1,5 +1,5 @@
 locals {
-  enabled = var.api_url != null && var.coordinator_url != null ? { rotation = true } : {}
+  enabled = var.enabled ? { rotation = true } : {}
 }
 
 resource "google_workflows_workflow" "rotation" {
