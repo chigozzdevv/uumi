@@ -1,7 +1,20 @@
 import { ChevronDown, X } from "lucide-react"
-import type { ReactNode, SelectHTMLAttributes } from "react"
+import { useEffect, useState, type ReactNode, type SelectHTMLAttributes } from "react"
 import { PageHeader } from "./header"
 import { Button } from "./ui/button"
+
+function useTransientError(error?: string) {
+  const [visible, setVisible] = useState(error)
+
+  useEffect(() => {
+    setVisible(error)
+    if (!error) return
+    const timeout = window.setTimeout(() => setVisible(undefined), 5_000)
+    return () => window.clearTimeout(timeout)
+  }, [error])
+
+  return visible
+}
 
 export function SetupPage({
   eyebrow,
@@ -28,6 +41,8 @@ export function SetupPage({
   children: ReactNode
   error?: string
 }) {
+  const visibleError = useTransientError(error)
+
   return (
     <div className="page max-w-[960px]">
       <PageHeader eyebrow={eyebrow} title={title} description={description} onBack={onExit ?? onCancel} />
@@ -37,7 +52,7 @@ export function SetupPage({
           <span className="text-[10px] font-medium text-[var(--ink-muted)]">Step {current + 1} of {steps.length}</span>
         </div>
         <div className="mx-auto min-h-[360px] w-full max-w-[760px] px-6 py-7 sm:px-8">{children}</div>
-        {error && <div role="alert" className="mx-6 mb-5 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)] sm:mx-8">{error}</div>}
+        {visibleError && <div role="alert" className="mx-6 mb-5 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)] sm:mx-8">{visibleError}</div>}
         <footer className="flex items-center gap-3 bg-white px-6 py-4 sm:px-8">
           <div className="flex-1">{current > 0 && <Button variant="ghost" onClick={onBack}>Back</Button>}</div>
           <Button variant="secondary" onClick={onCancel}>Cancel</Button>
@@ -65,6 +80,8 @@ export function ConnectPage({
   children: ReactNode
   error?: string
 }) {
+  const visibleError = useTransientError(error)
+
   return <div className="page max-w-[960px]">
     <PageHeader
       eyebrow={eyebrow}
@@ -76,7 +93,7 @@ export function ConnectPage({
       <div className="flex min-h-[420px] items-center justify-center px-6 py-12">
         <div className="flex flex-col items-center gap-7">{children}{action}</div>
       </div>
-      {error && <div role="alert" className="mx-6 mb-6 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)] sm:mx-8">{error}</div>}
+      {visibleError && <div role="alert" className="mx-6 mb-6 rounded-xl border border-[#ebcfd3] bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)] sm:mx-8">{visibleError}</div>}
     </section>
   </div>
 }
