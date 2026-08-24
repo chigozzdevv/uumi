@@ -91,6 +91,12 @@ make infra TERRAFORM=terraform
 make images
 ```
 
+The deployed demo uses the Google Cloud runtimes configured by Terraform.
+When running the API process outside Cloud Run, copy `.env.example` to the ignored `.env` and
+load it into the process environment. Terraform-generated integration and worker configuration is
+kept in `values.tfvars` rather than duplicated in that local file. FireKey-owned secret values
+remain in Secret Manager.
+
 `make verify` runs formatting, lint, static typing, contracts, policy, state-machine, broker,
 browser, capture, dry-run, incident, connector, verifier, API, event, and publisher tests.
 `make infra` formats, initialises, and validates both Terraform roots. Container builds require a
