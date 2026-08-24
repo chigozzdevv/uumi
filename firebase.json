@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "usefirekey",
+    "site": "uumi",
     "public": "client/dist",
     "ignore": [
       "firebase.json",
