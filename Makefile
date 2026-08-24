@@ -1,4 +1,4 @@
-.PHONY: lock sync format lint type test client infra verify image images api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image notification-image auditlog-image
+.PHONY: lock sync format lint type test client infra verify image images api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image notification-image auditlog-image web-image
 
 UV_CACHE_DIR ?= .cache/uv
 UV_PYTHON_INSTALL_DIR ?= .cache/python
@@ -34,10 +34,13 @@ verify: lint type test client
 
 image: api-image
 
-images: api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image notification-image auditlog-image
+images: api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image notification-image auditlog-image web-image
 
 api-image:
 	docker build --file server/api/Dockerfile --tag uumi-api:local .
+
+web-image:
+	docker build --file server/web/Dockerfile --tag uumi-web:local .
 
 publisher-image:
 	docker build --file server/publisher/Dockerfile --tag uumi-publisher:local .

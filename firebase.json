@@ -9,6 +9,14 @@
     ],
     "rewrites": [
       {
+        "source": "/v1/**",
+        "run": {
+          "serviceId": "uumi-web",
+          "region": "us-east1",
+          "pinTag": true
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
