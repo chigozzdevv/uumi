@@ -25,13 +25,8 @@ pytestmark = pytest.mark.integration
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
 @pytest.mark.anyio
-async def test_outbox_delivers_ordered_events_once() -> None:
+async def test_outbox_delivers_ordered_events_once(firestore_client: AsyncClient) -> None:
     suffix = secrets.token_hex(6)
     project_id = "uumi-test"
     topic_id = f"events-{suffix}"
@@ -52,7 +47,7 @@ async def test_outbox_delivers_ordered_events_once() -> None:
 
     organisation_id = f"org_{suffix}"
     run_id = f"run_{suffix}"
-    firestore = AsyncClient(project=project_id)
+    firestore = firestore_client
     credential_id = f"cred_{suffix}"
     controls = make_control_version(organisation_id, credential_id=credential_id, now=NOW)
     await firestore.document(
@@ -122,4 +117,3 @@ async def test_outbox_delivers_ordered_events_once() -> None:
         transport.close()
         subscriber.close()
         topic_client.stop()
-        firestore.close()  # type: ignore[no-untyped-call]

@@ -20,20 +20,17 @@ pytestmark = pytest.mark.integration
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
 @pytest.mark.anyio
-async def test_transactions_persist_and_deduplicate_run_commands() -> None:
+async def test_transactions_persist_and_deduplicate_run_commands(
+    firestore_client: AsyncClient,
+) -> None:
     suffix = secrets.token_hex(6)
     organisation_id = f"org_{suffix}"
     credential_id = f"cred_{suffix}"
     run_id = f"run_{suffix}"
     create_id = f"cmd_create_{suffix}"
     start_id = f"cmd_start_{suffix}"
-    client = AsyncClient(project="uumi-test")
+    client = firestore_client
     controls = make_control_version(organisation_id, credential_id=credential_id, now=NOW)
     await client.document(
         FirestorePaths.control_version(organisation_id, credential_id, controls.id)
@@ -59,57 +56,56 @@ async def test_transactions_persist_and_deduplicate_run_commands() -> None:
         ),
     )
 
-    try:
-        created = await workflow.create(create)
-        duplicate = await workflow.create(create.model_copy(update={"id": f"cmd_retry_{suffix}"}))
-        start = StartRunCommand(
-            id=start_id,
-            organisation_id=organisation_id,
-            run_id=created.run.id,
-            actor_id="service_one",
-            expected_revision=created.run.revision,
-            owner_id="worker_one",
-            expires_at=NOW + timedelta(minutes=5),
-        )
-        started = await workflow.start(start)
-        repeated = await workflow.start(start)
+    created = await workflow.create(create)
+    duplicate = await workflow.create(create.model_copy(update={"id": f"cmd_retry_{suffix}"}))
+    start = StartRunCommand(
+        id=start_id,
+        organisation_id=organisation_id,
+        run_id=created.run.id,
+        actor_id="service_one",
+        expected_revision=created.run.revision,
+        owner_id="worker_one",
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    started = await workflow.start(start)
+    repeated = await workflow.start(start)
 
-        assert created.applied is True
-        assert duplicate.applied is False
-        assert duplicate.run.id == created.run.id
-        assert started.applied is True
-        assert repeated.applied is False
-        assert repeated.run.revision == 1
+    assert created.applied is True
+    assert duplicate.applied is False
+    assert duplicate.run.id == created.run.id
+    assert started.applied is True
+    assert repeated.applied is False
+    assert repeated.run.revision == 1
 
-        changed = start.model_copy(update={"owner_id": "worker_two"})
-        with pytest.raises(IdempotencyConflictError, match="another mutation"):
-            await workflow.start(changed)
+    changed = start.model_copy(update={"owner_id": "worker_two"})
+    with pytest.raises(IdempotencyConflictError, match="another mutation"):
+        await workflow.start(changed)
 
-        stored = await workflow.get(organisation_id, run_id)
-        step = await client.document(FirestorePaths.step(organisation_id, run_id, start_id)).get()
-        event = await client.document(FirestorePaths.outbox(organisation_id, start_id)).get()
+    stored = await workflow.get(organisation_id, run_id)
+    step = await client.document(FirestorePaths.step(organisation_id, run_id, start_id)).get()
+    event = await client.document(FirestorePaths.outbox(organisation_id, start_id)).get()
 
-        assert stored.revision == 1
-        assert step.exists
-        assert event.exists
-        event_data = event.to_dict()
-        assert event_data is not None
-        assert event_data["event"]["revision"] == 1
+    assert stored.revision == 1
+    assert step.exists
+    assert event.exists
+    event_data = event.to_dict()
+    assert event_data is not None
+    assert event_data["event"]["revision"] == 1
 
-        listed = await workflow.list_runs(organisation_id)
-        running = await repository.count_runs(organisation_id, frozenset({RunStatus.RUNNING}))
-        pending = await repository.count_runs(organisation_id, frozenset({RunStatus.PENDING}))
-        assert [stored.id for stored in listed] == [run_id]
-        assert running == 1
-        assert pending == 0
-    finally:
-        client.close()  # type: ignore[no-untyped-call]
+    listed = await workflow.list_runs(organisation_id)
+    running = await repository.count_runs(organisation_id, frozenset({RunStatus.RUNNING}))
+    pending = await repository.count_runs(organisation_id, frozenset({RunStatus.PENDING}))
+    assert [stored.id for stored in listed] == [run_id]
+    assert running == 1
+    assert pending == 0
 
 
 @pytest.mark.anyio
-async def test_invited_identity_discovers_and_joins_its_organisation() -> None:
+async def test_invited_identity_discovers_and_joins_its_organisation(
+    firestore_client: AsyncClient,
+) -> None:
     suffix = secrets.token_hex(6)
-    client = AsyncClient(project="uumi-test")
+    client = firestore_client
     repository = FirestoreAccountRepository(client, lambda: NOW)
     accounts = AccountService(repository, lambda: NOW)
     owner = AuthenticatedIdentity(
@@ -129,19 +125,16 @@ async def test_invited_identity_discovers_and_joins_its_organisation() -> None:
         connected_via="Email",
     )
 
-    try:
-        created = await accounts.create_organisation(owner, f"Organisation {suffix}")
-        await accounts.invite(
-            created.organisation.id,
-            owner,
-            invited.email or "",
-            MemberRole.OPERATOR,
-        )
+    created = await accounts.create_organisation(owner, f"Organisation {suffix}")
+    await accounts.invite(
+        created.organisation.id,
+        owner,
+        invited.email or "",
+        MemberRole.OPERATOR,
+    )
 
-        session = await accounts.session(invited)
+    session = await accounts.session(invited)
 
-        assert len(session.organisations) == 1
-        assert session.organisations[0].organisation.id == created.organisation.id
-        assert session.organisations[0].role is MemberRole.OPERATOR
-    finally:
-        client.close()  # type: ignore[no-untyped-call]
+    assert len(session.organisations) == 1
+    assert session.organisations[0].organisation.id == created.organisation.id
+    assert session.organisations[0].role is MemberRole.OPERATOR
