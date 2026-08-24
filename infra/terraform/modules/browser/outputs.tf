@@ -15,7 +15,7 @@ output "runtime_subnetwork" {
 
 output "template" {
   description = "One-run browser instance template resource name."
-  value       = google_compute_instance_template.browser.self_link
+  value       = "projects/${var.project_id}/global/instanceTemplates/${google_compute_instance_template.browser.name}"
 }
 
 output "egress_gateway" {

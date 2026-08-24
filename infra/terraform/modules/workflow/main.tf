@@ -39,12 +39,11 @@ resource "google_project_iam_member" "workflow_invoker" {
 resource "google_eventarc_trigger" "rotation" {
   for_each = google_workflows_workflow.rotation
 
-  project                 = var.project_id
-  location                = var.region
-  name                    = "uumi-run-events"
-  service_account         = var.event_service_account
-  deletion_policy         = "PREVENT"
-  event_data_content_type = "application/json"
+  project         = var.project_id
+  location        = var.region
+  name            = "uumi-run-events"
+  service_account = var.event_service_account
+  deletion_policy = "PREVENT"
 
   matching_criteria {
     attribute = "type"

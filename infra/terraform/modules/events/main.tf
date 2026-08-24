@@ -619,7 +619,7 @@ resource "google_eventarc_trigger" "outbox" {
   name                    = "uumi-outbox-created"
   service_account         = var.event_service_account
   deletion_policy         = "PREVENT"
-  event_data_content_type = "application/json"
+  event_data_content_type = "application/protobuf"
 
   matching_criteria {
     attribute = "type"
@@ -661,7 +661,7 @@ resource "google_eventarc_trigger" "notification" {
   name                    = "uumi-notification-created"
   service_account         = var.event_service_account
   deletion_policy         = "PREVENT"
-  event_data_content_type = "application/json"
+  event_data_content_type = "application/protobuf"
 
   matching_criteria {
     attribute = "type"
@@ -700,7 +700,7 @@ resource "google_eventarc_trigger" "audit" {
   name                    = "uumi-audit-created"
   service_account         = var.event_service_account
   deletion_policy         = "PREVENT"
-  event_data_content_type = "application/json"
+  event_data_content_type = "application/protobuf"
 
   matching_criteria {
     attribute = "type"

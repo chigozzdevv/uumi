@@ -5,6 +5,22 @@ module "project" {
   enable_gateway = var.enable_gateway
 }
 
+resource "google_org_policy_policy" "public_iam" {
+  name            = "projects/${var.project_id}/policies/iam.allowedPolicyMemberDomains"
+  parent          = "projects/${var.project_id}"
+  deletion_policy = "PREVENT"
+
+  spec {
+    inherit_from_parent = false
+
+    rules {
+      allow_all = "TRUE"
+    }
+  }
+
+  depends_on = [module.project]
+}
+
 module "identityplatform" {
   source = "../../modules/identityplatform"
 

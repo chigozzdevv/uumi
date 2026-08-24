@@ -17,7 +17,7 @@ locals {
     "storage.googleapis.com",
     "telemetry.googleapis.com",
     "videointelligence.googleapis.com",
-    "workflowexecutions.googleapis.com",
+    # Google VPC Service Controls supports Workflows but not the separate executions API.
     "workflows.googleapis.com",
   ])
 }
