@@ -5,17 +5,33 @@ from typing import Protocol
 
 from contracts import (
     AccountProfile,
+    AccountSession,
     MemberRole,
     MemberStatus,
+    Organisation,
+    OrganisationMembership,
     TeamInvitation,
     TeamMember,
 )
 
 from core.auth import AuthenticatedIdentity, PrincipalGrant, Role
 from core.errors import ResourceConflictError, ResourceNotFoundError
+from core.ids import new_id
 
 
 class AccountRepository(Protocol):
+    async def session(
+        self,
+        identity: AuthenticatedIdentity,
+    ) -> tuple[OrganisationMembership, ...]: ...
+
+    async def create_organisation(
+        self,
+        organisation: Organisation,
+        identity: AuthenticatedIdentity,
+        created_at: datetime,
+    ) -> OrganisationMembership: ...
+
     async def get(
         self,
         organisation_id: str,
@@ -71,6 +87,32 @@ class AccountService:
     ) -> None:
         self._repository = repository
         self._clock = clock
+
+    async def session(self, identity: AuthenticatedIdentity) -> AccountSession:
+        return AccountSession(organisations=await self._repository.session(identity))
+
+    async def create_organisation(
+        self,
+        identity: AuthenticatedIdentity,
+        name: str,
+    ) -> OrganisationMembership:
+        value = name.strip()
+        if not value:
+            raise ResourceConflictError("organisation name cannot be empty")
+        if identity.email is None or not identity.email_verified:
+            raise ResourceConflictError("verify your email before creating an organisation")
+        now = self._clock()
+        organisation = Organisation(
+            id=new_id("org"),
+            name=value,
+            created_at=now,
+            updated_at=now,
+        )
+        return await self._repository.create_organisation(
+            organisation,
+            identity,
+            now,
+        )
 
     async def profile(
         self,

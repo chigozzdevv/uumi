@@ -3,6 +3,23 @@ export type Identifier = string
 export type MemberRole = "viewer" | "operator" | "administrator"
 export type MemberStatus = "pending" | "active" | "disabled"
 
+export interface Organisation {
+  id: Identifier
+  name: string
+  created_at: string
+  updated_at: string
+  revision: number
+}
+
+export interface OrganisationMembership {
+  organisation: Organisation
+  role: MemberRole
+}
+
+export interface AccountSession {
+  organisations: OrganisationMembership[]
+}
+
 export interface AccountProfile {
   id: Identifier
   organisation_id: Identifier

@@ -17,6 +17,23 @@ class MemberStatus(StrEnum):
     DISABLED = "disabled"
 
 
+class Organisation(Contract):
+    id: Identifier
+    name: str = Field(min_length=1, max_length=120)
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    revision: int = Field(default=0, ge=0)
+
+
+class OrganisationMembership(Contract):
+    organisation: Organisation
+    role: MemberRole
+
+
+class AccountSession(Contract):
+    organisations: tuple[OrganisationMembership, ...]
+
+
 class AccountProfile(Contract):
     id: Identifier
     organisation_id: Identifier

@@ -103,7 +103,7 @@ class StubVerifier:
 
 
 GCIP_CLAIMS = {
-    "iss": "https://securetoken.google.com/firekey-project",
+    "iss": "https://securetoken.google.com/uumi-project",
     "sub": "gcip-user-one",
     "email": "chigozie@acme.example",
     "email_verified": True,
@@ -113,7 +113,7 @@ GCIP_CLAIMS = {
 
 GCIP_IDENTITY = AuthenticatedIdentity(
     subject="gcip-user-one",
-    issuer="https://securetoken.google.com/firekey-project",
+    issuer="https://securetoken.google.com/uumi-project",
     email="chigozie@acme.example",
     email_verified=True,
     display_name="Chigozie Okafor",
@@ -123,7 +123,7 @@ GCIP_IDENTITY = AuthenticatedIdentity(
 
 @pytest.mark.anyio
 async def test_identity_platform_token_maps_to_identity() -> None:
-    verifier = StubFirebase("firekey-project", GCIP_CLAIMS)
+    verifier = StubFirebase("uumi-project", GCIP_CLAIMS)
 
     identity = await verifier.verify("user-token")
 
@@ -132,9 +132,20 @@ async def test_identity_platform_token_maps_to_identity() -> None:
 
 
 @pytest.mark.anyio
+async def test_identity_platform_password_token_maps_to_email_identity() -> None:
+    claims = {
+        **GCIP_CLAIMS,
+        "firebase": {"sign_in_provider": "password"},
+    }
+    identity = await StubFirebase("uumi-project", claims).verify("user-token")
+
+    assert identity.connected_via == "Email"
+
+
+@pytest.mark.anyio
 async def test_identity_platform_rejects_foreign_project_issuer() -> None:
     claims = {**GCIP_CLAIMS, "iss": "https://securetoken.google.com/other-project"}
-    verifier = StubFirebase("firekey-project", claims)
+    verifier = StubFirebase("uumi-project", claims)
 
     with pytest.raises(AuthenticationError, match="issuer is invalid"):
         await verifier.verify("user-token")
@@ -142,7 +153,7 @@ async def test_identity_platform_rejects_foreign_project_issuer() -> None:
 
 @pytest.mark.anyio
 async def test_identity_platform_rejects_invalid_signature() -> None:
-    verifier = StubFirebase("firekey-project")
+    verifier = StubFirebase("uumi-project")
 
     with pytest.raises(AuthenticationError, match="identity platform token is invalid"):
         await verifier.verify("forged-token")

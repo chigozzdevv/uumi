@@ -14,13 +14,11 @@ import { Button } from "../components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import { ConnectPage, Field, FormGrid, ResourceSelect, SelectControl, SetupPage, SuccessPage, formControl } from "../components/workspace"
 import type { Connection, ConnectionRole, HttpProviderApi, Playbook } from "../types"
-import { api, type CreateConnectionInput, type GitHubDiscoveryResponse, type GitHubOnboardingResponse, type GoogleCloudOnboardingResponse, type GoogleCloudProject } from "../lib/api"
+import { activeOrganisationId, api, type CreateConnectionInput, type GitHubDiscoveryResponse, type GitHubOnboardingResponse, type GoogleCloudOnboardingResponse, type GoogleCloudProject } from "../lib/api"
 import { parseProviderAdapter } from "../lib/adapter"
 import { connectionCallbackIntegration } from "../lib/callback"
 import { connectionAction, connectionStatus, formatDate, titleCase } from "../lib/format"
 import { PlaybookSetup } from "./playbooks"
-
-const organisationRegion = "us-central1"
 
 function identifier(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`
@@ -235,9 +233,9 @@ function CustomApiSetup({ onClose, onBack, onChanged, onCreated, connections, pl
     const timestamp = new Date().toISOString()
     const platform = slug(provider)
     const result = await create.mutateAsync({ connection: {
-      id: identifier("conn"), organisation_id: "org_acme", platform, display_name: `${provider.trim()} API`, roles: ["provider"], interface: "api", authorization: "api-key", authorization_reference: authorizationReference,
+      id: identifier("conn"), organisation_id: activeOrganisationId(), platform, display_name: `${provider.trim()} API`, roles: ["provider"], interface: "api", authorization: "api-key", authorization_reference: authorizationReference,
       capabilities: providerCapabilities, allowed_resources: [`${platform}:credentials:*`], http: adapter, playbook_id: null, playbook_version_id: null, status: "setup-required", authenticated_at: null, authorization_expires_at: null, last_validated_at: null,
-      region: organisationRegion, created_at: timestamp, updated_at: timestamp, revision: 0,
+      region: "global", created_at: timestamp, updated_at: timestamp, revision: 0,
     } })
     await onChanged()
     if (onCreated) await onCreated(result)
@@ -271,7 +269,7 @@ function GoogleCloudSetup({ onClose, onBack, onChanged, onCreated }: Omit<Connec
   const begin = useMutation({
     mutationFn: () => api.beginGoogleCloudOnboarding(),
     onSuccess: (value) => {
-      sessionStorage.setItem("firekey.google-cloud", JSON.stringify(value))
+      sessionStorage.setItem("uumi.google-cloud", JSON.stringify(value))
       window.location.assign(value.authorization_url)
     },
   })
@@ -290,7 +288,7 @@ function GoogleCloudSetup({ onClose, onBack, onChanged, onCreated }: Omit<Connec
     const code = parameters.get("code")
     const state = parameters.get("state")
     if (!parameters.has("google_cloud") || !code || !state) return
-    const raw = sessionStorage.getItem("firekey.google-cloud")
+    const raw = sessionStorage.getItem("uumi.google-cloud")
     if (!raw) return
     try {
       const saved = JSON.parse(raw) as GoogleCloudOnboardingResponse
@@ -298,12 +296,12 @@ function GoogleCloudSetup({ onClose, onBack, onChanged, onCreated }: Omit<Connec
         onSuccess: (value) => {
           setProjects(value.projects)
           setSessionId(value.session.id)
-          sessionStorage.removeItem("firekey.google-cloud")
+          sessionStorage.removeItem("uumi.google-cloud")
           window.history.replaceState({}, "", window.location.pathname)
         },
       })
     } catch {
-      sessionStorage.removeItem("firekey.google-cloud")
+      sessionStorage.removeItem("uumi.google-cloud")
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -349,9 +347,9 @@ function ComputerUseSetup({ onClose, onBack, onChanged, onCreated, playbooks }: 
     if (!chosenPlaybook || !definition) return
     const timestamp = new Date().toISOString()
     const result = await create.mutateAsync({ connection: {
-      id: identifier("conn"), organisation_id: "org_acme", platform: chosenPlaybook.platform, display_name: chosenPlaybook.name, roles: ["provider"], interface: "browser", authorization: "browser-session", authorization_reference: null,
+      id: identifier("conn"), organisation_id: activeOrganisationId(), platform: chosenPlaybook.platform, display_name: chosenPlaybook.name, roles: ["provider"], interface: "browser", authorization: "browser-session", authorization_reference: null,
       capabilities: ["browser.authenticate", "browser.execute", "browser.secureCapture"], allowed_resources: definition.allowed_domains, http: null, playbook_id: null, playbook_version_id: null, status: "setup-required", authenticated_at: null, authorization_expires_at: null, last_validated_at: null,
-      region: organisationRegion, created_at: timestamp, updated_at: timestamp, revision: 0,
+      region: "global", created_at: timestamp, updated_at: timestamp, revision: 0,
     }, playbook_id: chosenPlaybook.id, playbook_version_id: playbookVersion })
     await onChanged()
     setCreated(result)
@@ -390,7 +388,7 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
   const begin = useMutation({
     mutationFn: () => api.beginGitHubOnboarding(),
     onSuccess: (value) => {
-      sessionStorage.setItem("firekey.github", JSON.stringify(value))
+      sessionStorage.setItem("uumi.github", JSON.stringify(value))
       window.location.assign(value.installation_url)
     },
   })
@@ -406,7 +404,7 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
     const timestamp = new Date().toISOString()
     return api.createConnection({ connection: {
       id: `conn_github_${completed.installation.installation_id}`,
-      organisation_id: "org_acme",
+      organisation_id: activeOrganisationId(),
       platform: "github",
       display_name: `GitHub · ${completed.installation.account_login}`,
       roles: ["incident"],
@@ -431,9 +429,9 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
 
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search)
-    const callback = parameters.has("github") || parameters.has("installation_id") || (parameters.has("code") && sessionStorage.getItem("firekey.github"))
+    const callback = parameters.has("github") || parameters.has("installation_id") || (parameters.has("code") && sessionStorage.getItem("uumi.github"))
     if (!callback) return
-    const raw = sessionStorage.getItem("firekey.github")
+    const raw = sessionStorage.getItem("uumi.github")
     if (!raw) {
       setCallbackError("GitHub connection session is unavailable")
       return
@@ -449,7 +447,7 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
       }
       if (!code) {
         const continued = { ...saved, installation_id: installationId }
-        sessionStorage.setItem("firekey.github", JSON.stringify(continued))
+        sessionStorage.setItem("uumi.github", JSON.stringify(continued))
         window.location.assign(saved.authorization_url)
         return
       }
@@ -459,11 +457,11 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
       }
       discover.mutate({ saved, code, state, installationId }, { onSuccess: (value) => {
         setDiscovery(value)
-        sessionStorage.removeItem("firekey.github")
+        sessionStorage.removeItem("uumi.github")
         window.history.replaceState({}, "", window.location.pathname)
       } })
     } catch {
-      sessionStorage.removeItem("firekey.github")
+      sessionStorage.removeItem("uumi.github")
       setCallbackError("GitHub connection session is invalid")
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -476,7 +474,7 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
   }
 
   if (!discovery) {
-    const returning = Boolean(sessionStorage.getItem("firekey.github") && connectionCallbackIntegration() === "github")
+    const returning = Boolean(sessionStorage.getItem("uumi.github") && connectionCallbackIntegration() === "github")
     return <ConnectPage eyebrow="Inventory / Connections" title="GitHub" onBack={onBack} onClose={onClose} error={callbackError || begin.error?.message || discover.error?.message} action={<Button onClick={() => begin.mutate()} disabled={begin.isPending || discover.isPending || returning}>{begin.isPending || discover.isPending || returning ? "Connecting…" : "Connect"}</Button>}><IntegrationMark kind="github" /></ConnectPage>
   }
 

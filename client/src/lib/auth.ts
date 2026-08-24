@@ -1,8 +1,12 @@
 import { getApp, getApps, initializeApp } from "firebase/app"
 import {
+  createUserWithEmailAndPassword,
   GoogleAuthProvider,
   getAuth,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
   type Auth,
@@ -19,6 +23,13 @@ const firebaseConfig = {
 export const authenticationConfigured = Object.values(firebaseConfig).every(Boolean)
 
 let auth: Auth | null = null
+
+export class EmailVerificationRequiredError extends Error {
+  constructor() {
+    super("Verify your email before signing in")
+    this.name = "EmailVerificationRequiredError"
+  }
+}
 
 function configuredAuth(): Auth {
   if (!authenticationConfigured) {
@@ -43,6 +54,26 @@ export async function signInWithGoogle(): Promise<void> {
   const provider = new GoogleAuthProvider()
   provider.setCustomParameters({ prompt: "select_account" })
   await signInWithPopup(configuredAuth(), provider)
+}
+
+export async function signInWithEmail(email: string, password: string): Promise<void> {
+  const configured = configuredAuth()
+  const credential = await signInWithEmailAndPassword(configured, email.trim(), password)
+  if (!credential.user.emailVerified) {
+    await signOut(configured)
+    throw new EmailVerificationRequiredError()
+  }
+}
+
+export async function createEmailAccount(email: string, password: string): Promise<void> {
+  const configured = configuredAuth()
+  const credential = await createUserWithEmailAndPassword(configured, email.trim(), password)
+  await sendEmailVerification(credential.user)
+  await signOut(configured)
+}
+
+export async function resetEmailPassword(email: string): Promise<void> {
+  await sendPasswordResetEmail(configuredAuth(), email.trim())
 }
 
 export async function identityToken(forceRefresh = false): Promise<string> {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { api, type ImportCredentialInput } from "../lib/api"
+import { activeOrganisationId, api, type ImportCredentialInput } from "../lib/api"
 import type { Connection, Environment, InventoryGraph, Playbook } from "../types"
 import { ControlsFields, ControlsSummary } from "./controls"
 import { buildControlPreferences, controlsAreValid, defaultControls, type ControlValues } from "../lib/controls"
@@ -163,7 +163,7 @@ export function CredentialSetup({
     const input: ImportCredentialInput = {
       credential: {
         id: credentialId,
-        organisation_id: "org_acme",
+        organisation_id: activeOrganisationId(),
         connection_id: connection.id,
         secret_store_connection_id: secretStoreId,
         secret_resource: secretResource,
@@ -182,7 +182,7 @@ export function CredentialSetup({
       },
       generation: {
         id: generationId,
-        organisation_id: "org_acme",
+        organisation_id: activeOrganisationId(),
         credential_id: credentialId,
         provider_id: providerId,
         fingerprint: null,

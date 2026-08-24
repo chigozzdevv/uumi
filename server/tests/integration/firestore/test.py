@@ -3,7 +3,9 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from contracts import CreateRunCommand, RunStatus, StartRunCommand, Trigger
+from contracts import CreateRunCommand, MemberRole, RunStatus, StartRunCommand, Trigger
+from core.account import AccountService, FirestoreAccountRepository
+from core.auth import AuthenticatedIdentity
 from core.errors import IdempotencyConflictError
 from core.storage import FirestoreRunRepository
 from core.storage.paths import FirestorePaths
@@ -31,7 +33,7 @@ async def test_transactions_persist_and_deduplicate_run_commands() -> None:
     run_id = f"run_{suffix}"
     create_id = f"cmd_create_{suffix}"
     start_id = f"cmd_start_{suffix}"
-    client = AsyncClient(project="firekey-test")
+    client = AsyncClient(project="uumi-test")
     controls = make_control_version(organisation_id, credential_id=credential_id, now=NOW)
     await client.document(
         FirestorePaths.control_version(organisation_id, credential_id, controls.id)
@@ -100,5 +102,46 @@ async def test_transactions_persist_and_deduplicate_run_commands() -> None:
         assert [stored.id for stored in listed] == [run_id]
         assert running == 1
         assert pending == 0
+    finally:
+        client.close()  # type: ignore[no-untyped-call]
+
+
+@pytest.mark.anyio
+async def test_invited_identity_discovers_and_joins_its_organisation() -> None:
+    suffix = secrets.token_hex(6)
+    client = AsyncClient(project="uumi-test")
+    repository = FirestoreAccountRepository(client, lambda: NOW)
+    accounts = AccountService(repository, lambda: NOW)
+    owner = AuthenticatedIdentity(
+        subject=f"owner-{suffix}",
+        issuer="https://securetoken.google.com/uumi-test",
+        email=f"owner-{suffix}@uumi.test",
+        email_verified=True,
+        display_name="Owner",
+        connected_via="Google",
+    )
+    invited = AuthenticatedIdentity(
+        subject=f"invited-{suffix}",
+        issuer=owner.issuer,
+        email=f"invited-{suffix}@uumi.test",
+        email_verified=True,
+        display_name="Invited Member",
+        connected_via="Email",
+    )
+
+    try:
+        created = await accounts.create_organisation(owner, f"Organisation {suffix}")
+        await accounts.invite(
+            created.organisation.id,
+            owner,
+            invited.email or "",
+            MemberRole.OPERATOR,
+        )
+
+        session = await accounts.session(invited)
+
+        assert len(session.organisations) == 1
+        assert session.organisations[0].organisation.id == created.organisation.id
+        assert session.organisations[0].role is MemberRole.OPERATOR
     finally:
         client.close()  # type: ignore[no-untyped-call]

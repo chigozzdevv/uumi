@@ -1,5 +1,6 @@
 import { ArrowLeft, Check, ChevronDown } from "lucide-react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useOrganisation } from "../lib/useorganisation"
 
 type PageHeaderProps = {
   section?: string
@@ -12,6 +13,7 @@ type PageHeaderProps = {
 }
 
 export function PageHeader({ section, eyebrow, title, titlePrefix, description, actions, onBack }: PageHeaderProps) {
+  const { active, memberships, select } = useOrganisation()
   const [organisationsOpen, setOrganisationsOpen] = useState(false)
   const organisationMenu = useRef<HTMLDivElement>(null)
   const parts = section?.split(" · ") ?? []
@@ -38,16 +40,19 @@ export function PageHeader({ section, eyebrow, title, titlePrefix, description, 
             aria-haspopup="menu"
             onClick={() => setOrganisationsOpen((open) => !open)}
           >
-            <span>Acme Corporation</span>
+            <span>{active.organisation.name}</span>
             <ChevronDown className={`size-3 transition-transform ${organisationsOpen ? "rotate-180" : ""}`} />
           </button>
           {organisationsOpen && (
             <div className="absolute left-0 top-9 z-40 w-56 rounded-xl border border-[var(--border)] bg-white p-2 shadow-[0_16px_45px_rgba(25,27,30,0.12)]" role="menu">
               <div className="px-3 pb-2 pt-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]">Organization</div>
-              <button className="focus-ring flex w-full items-center justify-between rounded-lg bg-[var(--surface-soft)] px-3 py-2.5 text-left text-[11px] font-semibold text-[var(--ink)]" role="menuitem" onClick={() => setOrganisationsOpen(false)}>
-                Acme Corporation
-                <Check className="size-3.5 text-[var(--green)]" />
-              </button>
+              {memberships.map((membership) => {
+                const selected = membership.organisation.id === active.organisation.id
+                return <button key={membership.organisation.id} className={`focus-ring flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-[11px] font-semibold text-[var(--ink)] ${selected ? "bg-[var(--surface-soft)]" : "hover:bg-[var(--surface-soft)]"}`} role="menuitem" onClick={() => { setOrganisationsOpen(false); select(membership.organisation.id) }}>
+                  {membership.organisation.name}
+                  {selected && <Check className="size-3.5 text-[var(--green)]" />}
+                </button>
+              })}
             </div>
           )}
           </div>

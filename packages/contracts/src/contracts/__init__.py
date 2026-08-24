@@ -1,7 +1,10 @@
 from contracts.account import (
     AccountProfile,
+    AccountSession,
     MemberRole,
     MemberStatus,
+    Organisation,
+    OrganisationMembership,
     TeamInvitation,
     TeamMember,
 )
@@ -185,6 +188,7 @@ from contracts.walkthrough import (
 
 __all__ = [
     "AccountProfile",
+    "AccountSession",
     "AgentDecisionSummary",
     "AgentKind",
     "AgentMemory",
@@ -284,6 +288,8 @@ __all__ = [
     "NotificationState",
     "NotificationTopic",
     "OperationStep",
+    "Organisation",
+    "OrganisationMembership",
     "OutboxEvent",
     "OverviewSummary",
     "PageCheckpoint",

@@ -1,5 +1,6 @@
 import type {
   AccountProfile,
+  AccountSession,
   Approval,
   ApprovalEvidenceSnapshot,
   AuditEvent,
@@ -12,6 +13,7 @@ import type {
   ManagedCredential,
   EmailNotificationEndpoint,
   NotificationTopic,
+  OrganisationMembership,
   OverviewSummary,
   Playbook,
   ProviderCredentialMetadata,
@@ -23,8 +25,19 @@ import type {
 } from "../types";
 import { identityToken, signOutIdentity } from "./auth"
 
-const ORG_ID = "org_acme"
-const ROOT = `/v1/organisations/${ORG_ID}`
+let organisationId = ""
+let ROOT = ""
+
+export function setActiveOrganisationId(value: Identifier) {
+  if (!/^[a-z][a-z0-9_-]{2,127}$/.test(value)) throw new Error("Organisation ID is invalid")
+  organisationId = value
+  ROOT = `/v1/organisations/${value}`
+}
+
+export function activeOrganisationId(): Identifier {
+  if (!organisationId) throw new Error("Select an organisation first")
+  return organisationId
+}
 
 export interface ImportCredentialInput {
   credential: ManagedCredential
@@ -307,7 +320,7 @@ class ApiClient {
     if (!response.ok) {
       const problem = (await response.json().catch(() => null)) as { code?: string; message?: string } | null
       throw new ApiError(
-        problem?.message ?? `FireKey API request failed (${response.status})`,
+        problem?.message ?? `Uumi API request failed (${response.status})`,
         response.status,
         problem?.code ?? "request-failed",
       )
@@ -322,12 +335,23 @@ class ApiClient {
     if (!response.ok) {
       const problem = (await response.json().catch(() => null)) as { code?: string; message?: string } | null
       throw new ApiError(
-        problem?.message ?? `FireKey API request failed (${response.status})`,
+        problem?.message ?? `Uumi API request failed (${response.status})`,
         response.status,
         problem?.code ?? "request-failed",
       )
     }
     return response.blob()
+  }
+
+  async getSession(): Promise<AccountSession> {
+    return this.request("/v1/session")
+  }
+
+  async createOrganisation(name: string): Promise<OrganisationMembership> {
+    return this.request("/v1/organisations", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    })
   }
 
   async getOverview(): Promise<OverviewSummary> {

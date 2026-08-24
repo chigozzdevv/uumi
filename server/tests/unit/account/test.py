@@ -5,7 +5,13 @@ import httpx
 import pytest
 from api.app import create_app
 from api.deps import ApiServices
-from contracts import MemberRole, MemberStatus, TeamInvitation
+from contracts import (
+    MemberRole,
+    MemberStatus,
+    Organisation,
+    OrganisationMembership,
+    TeamInvitation,
+)
 from core.account import AccountService
 from core.auth import AccessControl, AuthenticatedIdentity, PrincipalGrant, Role
 from core.errors import ResourceConflictError, ResourceNotFoundError
@@ -15,7 +21,7 @@ from testkit import MemoryRunRepository
 NOW = datetime(2026, 8, 23, 12, tzinfo=UTC)
 IDENTITY = AuthenticatedIdentity(
     subject="user-one",
-    issuer="https://securetoken.google.com/firekey-project",
+    issuer="https://securetoken.google.com/uumi-project",
     email="owner@acme.example",
     email_verified=True,
     display_name="Original Owner",
@@ -31,6 +37,14 @@ def anyio_backend() -> str:
 
 class Accounts:
     def __init__(self) -> None:
+        self.organisations = {
+            "org_one": Organisation(
+                id="org_one",
+                name="Acme",
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        }
         self.principals = {
             IDENTITY.document_id: PrincipalGrant(
                 subject=IDENTITY.subject,
@@ -52,6 +66,69 @@ class Accounts:
             ),
         }
         self.invitations: dict[str, TeamInvitation] = {}
+
+    async def session(
+        self,
+        identity: AuthenticatedIdentity,
+    ) -> tuple[OrganisationMembership, ...]:
+        grant = self.principals.get(identity.document_id)
+        if grant is None and identity.email_verified and identity.email:
+            invitation = next(
+                (
+                    value
+                    for value in self.invitations.values()
+                    if value.email == identity.email.strip().lower()
+                    and value.accepted_at is None
+                    and value.revoked_at is None
+                    and value.expires_at > NOW
+                ),
+                None,
+            )
+            if invitation:
+                grant = PrincipalGrant(
+                    subject=identity.subject,
+                    roles=frozenset({Role(invitation.role.value)}),
+                    email=identity.email,
+                    display_name=identity.display_name,
+                    connected_via=identity.connected_via,
+                    created_at=NOW,
+                    updated_at=NOW,
+                )
+                self.principals[identity.document_id] = grant
+        if grant is None:
+            return ()
+        role = next(
+            Role(value)
+            for value in ("administrator", "operator", "viewer")
+            if Role(value) in grant.roles
+        )
+        return (
+            OrganisationMembership(
+                organisation=self.organisations["org_one"],
+                role=MemberRole(role.value),
+            ),
+        )
+
+    async def create_organisation(
+        self,
+        organisation: Organisation,
+        identity: AuthenticatedIdentity,
+        created_at: datetime,
+    ) -> OrganisationMembership:
+        self.organisations[organisation.id] = organisation
+        self.principals[identity.document_id] = PrincipalGrant(
+            subject=identity.subject,
+            roles=frozenset({Role.ADMINISTRATOR}),
+            email=identity.email,
+            display_name=identity.display_name,
+            connected_via=identity.connected_via,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        return OrganisationMembership(
+            organisation=organisation,
+            role=MemberRole.ADMINISTRATOR,
+        )
 
     async def get(
         self,
@@ -177,6 +254,40 @@ async def test_invitation_is_pending_until_the_verified_email_signs_in() -> None
     assert any(member.id == invited.id for member in team)
 
 
+async def test_invited_account_joins_without_creating_an_organisation() -> None:
+    repository = Accounts()
+    repository.principals.pop(_document_id("user-two"))
+    service = AccountService(repository, lambda: NOW)
+    await service.invite(
+        "org_one",
+        IDENTITY,
+        "invited@acme.example",
+        MemberRole.OPERATOR,
+    )
+    invited_identity = AuthenticatedIdentity(
+        subject="invited-user",
+        issuer=IDENTITY.issuer,
+        email="invited@acme.example",
+        email_verified=True,
+        display_name="Invited User",
+        connected_via="Email",
+    )
+
+    session = await service.session(invited_identity)
+
+    assert session.organisations[0].organisation.id == "org_one"
+    assert session.organisations[0].role is MemberRole.OPERATOR
+
+
+async def test_first_account_can_create_its_organisation() -> None:
+    service = AccountService(Accounts(), lambda: NOW)
+
+    membership = await service.create_organisation(IDENTITY, "  Uumi Labs  ")
+
+    assert membership.organisation.name == "Uumi Labs"
+    assert membership.role is MemberRole.ADMINISTRATOR
+
+
 async def test_administrator_can_change_or_disable_another_member() -> None:
     repository = Accounts()
     service = AccountService(repository, lambda: NOW)
@@ -227,7 +338,7 @@ async def test_settings_api_exposes_profile_and_team_mutations() -> None:
         )
     )
     transport = httpx.ASGITransport(app=application)
-    async with httpx.AsyncClient(transport=transport, base_url="https://firekey.test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="https://uumi.test") as client:
         headers = {"Authorization": "Bearer valid-token"}
         profile = await client.get(
             "/v1/organisations/org_one/settings/profile",
@@ -242,12 +353,15 @@ async def test_settings_api_exposes_profile_and_team_mutations() -> None:
             "/v1/organisations/org_one/settings/team",
             headers=headers,
         )
+        session = await client.get("/v1/session", headers=headers)
 
     assert profile.status_code == 200
     assert profile.json()["connected_via"] == "Google"
     assert invited.status_code == 201
     assert invited.json()["status"] == "pending"
     assert any(member["email"] == "new.member@acme.example" for member in team.json())
+    assert session.status_code == 200
+    assert session.json()["organisations"][0]["organisation"]["name"] == "Acme"
 
 
 def _member_id(subject: str) -> str:

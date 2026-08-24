@@ -2,10 +2,11 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from contracts import TeamInvitation
+from contracts import MemberRole, Organisation, OrganisationMembership, TeamInvitation
 from google.cloud.firestore_v1 import AsyncClient
 from google.cloud.firestore_v1.async_transaction import AsyncTransaction, async_transactional
 from google.cloud.firestore_v1.base_document import DocumentSnapshot
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from core.account.service import invitation_id
 from core.auth import AuthenticatedIdentity, PrincipalGrant, Role
@@ -18,6 +19,82 @@ class FirestoreAccountRepository:
     def __init__(self, client: AsyncClient, clock: Callable[[], datetime]) -> None:
         self._client = client
         self._clock = clock
+
+    async def session(
+        self,
+        identity: AuthenticatedIdentity,
+    ) -> tuple[OrganisationMembership, ...]:
+        if identity.email is not None and identity.email_verified:
+            email = identity.email.strip().lower()
+            async for invitation_snapshot in (
+                self._client.collection_group("team-invitations")
+                .where(filter=FieldFilter("email", "==", email))
+                .limit(200)
+                .stream()
+            ):
+                await self.get(_organisation_id(invitation_snapshot), identity)
+
+        memberships: list[OrganisationMembership] = []
+        async for principal_snapshot in (
+            self._client.collection_group("principals")
+            .where(filter=FieldFilter("subject", "==", identity.subject))
+            .limit(200)
+            .stream()
+        ):
+            grant = _grant(principal_snapshot, identity)
+            if not grant.enabled or Role.AUTOMATION in grant.roles:
+                continue
+            organisation_id = _organisation_id(principal_snapshot)
+            organisation_snapshot = await self._client.document(
+                FirestorePaths.organisation(organisation_id)
+            ).get()
+            if not organisation_snapshot.exists:
+                raise StorageIntegrityError(
+                    f"organisation {organisation_id} has no membership record"
+                )
+            memberships.append(
+                OrganisationMembership(
+                    organisation=Organisation.model_validate(_data(organisation_snapshot)),
+                    role=_human_role(grant),
+                )
+            )
+        return tuple(
+            sorted(
+                memberships,
+                key=lambda item: (item.organisation.name.casefold(), item.organisation.id),
+            )
+        )
+
+    async def create_organisation(
+        self,
+        organisation: Organisation,
+        identity: AuthenticatedIdentity,
+        created_at: datetime,
+    ) -> OrganisationMembership:
+        organisation_reference = self._client.document(FirestorePaths.organisation(organisation.id))
+        principal_reference = self._client.document(
+            FirestorePaths.principal(organisation.id, identity.document_id)
+        )
+        grant = PrincipalGrant(
+            subject=identity.subject,
+            roles=frozenset({Role.ADMINISTRATOR}),
+            email=identity.email.strip().lower() if identity.email else None,
+            display_name=identity.display_name,
+            connected_via=identity.connected_via,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> OrganisationMembership:
+            transaction.create(organisation_reference, encode(organisation))
+            transaction.create(principal_reference, encode(grant))
+            return OrganisationMembership(
+                organisation=organisation,
+                role=MemberRole.ADMINISTRATOR,
+            )
+
+        return await apply(self._client.transaction(max_attempts=5))
 
     async def get(
         self,
@@ -270,6 +347,22 @@ def _grant(snapshot: DocumentSnapshot, identity: AuthenticatedIdentity) -> Princ
     if grant.subject != identity.subject:
         raise StorageIntegrityError("principal subject does not match its document path")
     return grant
+
+
+def _organisation_id(snapshot: DocumentSnapshot) -> str:
+    parts = snapshot.reference.path.split("/")
+    if len(parts) < 4 or parts[0] != "organisations":
+        raise StorageIntegrityError(
+            f"document {snapshot.reference.path} is outside an organisation"
+        )
+    return str(parts[1])
+
+
+def _human_role(grant: PrincipalGrant) -> MemberRole:
+    for role in (Role.ADMINISTRATOR, Role.OPERATOR, Role.VIEWER):
+        if role in grant.roles:
+            return MemberRole(role.value)
+    raise StorageIntegrityError("organisation membership has no human role")
 
 
 def _data(snapshot: DocumentSnapshot) -> dict[str, Any]:

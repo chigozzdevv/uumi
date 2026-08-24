@@ -13,6 +13,9 @@ import { AuditsPage } from "./pages/audits"
 import { SettingsPage } from "./pages/settings"
 import { BrowserSetupPage } from "./pages/browsersetup"
 import { signOutIdentity } from "./lib/auth"
+import { OrganisationProvider } from "./lib/organisation"
+import { clearOrganisation } from "./lib/organisationstate"
+import type { OrganisationMembership } from "./types"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,7 +27,13 @@ const queryClient = new QueryClient({
   },
 })
 
-export function App() {
+export function App({
+  activeOrganisation,
+  memberships,
+}: {
+  activeOrganisation: OrganisationMembership
+  memberships: OrganisationMembership[]
+}) {
   const [currentNav, setCurrentNav] = useState<NavItem>(() => connectionCallbackIntegration() ? "connections" : "overview")
   const [activeRunId, setActiveRunId] = useState<string>("")
   const [activeIncidentId, setActiveIncidentId] = useState("")
@@ -79,13 +88,14 @@ export function App() {
     try {
       await signOutIdentity()
     } finally {
+      clearOrganisation()
       queryClient.clear()
       window.location.assign("/sign-in")
     }
   }
 
   if (window.location.pathname === "/browser/setup") {
-    return <QueryClientProvider client={queryClient}><BrowserSetupPage /></QueryClientProvider>
+    return <OrganisationProvider active={activeOrganisation} memberships={memberships}><QueryClientProvider client={queryClient}><BrowserSetupPage /></QueryClientProvider></OrganisationProvider>
   }
   const renderContent = () => {
     switch (currentNav) {
@@ -113,11 +123,13 @@ export function App() {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <Shell currentNav={currentNav} onNavigate={handleNavigate} onLogout={() => { void handleLogout() }}>
-        {renderContent()}
-      </Shell>
-    </QueryClientProvider>
+    <OrganisationProvider active={activeOrganisation} memberships={memberships}>
+      <QueryClientProvider client={queryClient}>
+        <Shell currentNav={currentNav} onNavigate={handleNavigate} onLogout={() => { void handleLogout() }}>
+          {renderContent()}
+        </Shell>
+      </QueryClientProvider>
+    </OrganisationProvider>
   )
 }
 
