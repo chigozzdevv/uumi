@@ -12,12 +12,13 @@ from broker import CapabilitySigner
 from browser.access import BrowserAccessService
 from browser.auth import BrowserAuthBroker
 from browser.compute import BrowserVm, BrowserVmManager
-from browser.driver import AuthenticationRequiredError, BrowserDriver, metadata_url
+from browser.driver import AuthenticationRequiredError, BrowserDriver
 from browser.gateway import BrowserSessionGateway
 from browser.model import ComputerUseClient
 from browser.secret import BrowserSecretAccessService, associated_data
 from browser.service import BrowserService
 from browser.setup import BrowserSetupService
+from browser.url import metadata_url
 from browser.worker import ComputerUseWorker
 from connectors.base import SecretValue
 from connectors.base.errors import ConnectorError

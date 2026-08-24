@@ -15,7 +15,7 @@ from contracts import (
 )
 from core.errors import ResourceConflictError
 
-from browser.driver import metadata_url
+from browser.url import metadata_url
 
 
 class BrowserRepository(Protocol):

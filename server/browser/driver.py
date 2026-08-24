@@ -1,6 +1,6 @@
 import fnmatch
 from collections.abc import Iterable
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 from contracts import (
     BrowserAction,
@@ -15,6 +15,8 @@ from contracts import (
 )
 from core.errors import ResourceConflictError
 from playwright.async_api import Locator, Page, Request, Route
+
+from browser.url import metadata_url
 
 
 class AuthenticationRequiredError(RuntimeError):
@@ -271,11 +273,6 @@ def _bounded_integer(value: str | None, minimum: int, maximum: int) -> int:
     if not minimum <= result <= maximum:
         raise ResourceConflictError("browser action integer is outside its safe range")
     return result
-
-
-def metadata_url(url: str) -> str:
-    parsed = urlparse(url)
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", "", "", ""))
 
 
 _KEYS = frozenset(
