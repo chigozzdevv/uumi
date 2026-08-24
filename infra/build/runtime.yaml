@@ -1,0 +1,49 @@
+steps:
+  - id: api
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/api/Dockerfile, --tag, "${_REGISTRY}/api:${_TAG}", .]
+  - id: web
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/web/Dockerfile, --tag, "${_REGISTRY}/web:${_TAG}", .]
+  - id: publisher
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/publisher/Dockerfile, --tag, "${_REGISTRY}/publisher:${_TAG}", .]
+  - id: ingestion
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/ingestion/Dockerfile, --tag, "${_REGISTRY}/ingestion:${_TAG}", .]
+  - id: broker
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/broker/Dockerfile, --tag, "${_REGISTRY}/broker:${_TAG}", .]
+  - id: coordinator
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/coordinator/Dockerfile, --tag, "${_REGISTRY}/coordinator:${_TAG}", .]
+  - id: browser
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/browser/worker.Dockerfile, --tag, "${_REGISTRY}/browser:${_TAG}", .]
+  - id: gateway
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/browser/Dockerfile, --tag, "${_REGISTRY}/gateway:${_TAG}", .]
+  - id: notification
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/notification/Dockerfile, --tag, "${_REGISTRY}/notification:${_TAG}", .]
+  - id: auditlog
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/auditlog/Dockerfile, --tag, "${_REGISTRY}/auditlog:${_TAG}", .]
+images:
+  - "${_REGISTRY}/api:${_TAG}"
+  - "${_REGISTRY}/web:${_TAG}"
+  - "${_REGISTRY}/publisher:${_TAG}"
+  - "${_REGISTRY}/ingestion:${_TAG}"
+  - "${_REGISTRY}/broker:${_TAG}"
+  - "${_REGISTRY}/coordinator:${_TAG}"
+  - "${_REGISTRY}/browser:${_TAG}"
+  - "${_REGISTRY}/gateway:${_TAG}"
+  - "${_REGISTRY}/notification:${_TAG}"
+  - "${_REGISTRY}/auditlog:${_TAG}"
+options:
+  dynamicSubstitutions: true
+  logging: CLOUD_LOGGING_ONLY
+timeout: 3600s
+substitutions:
+  _REGISTRY: us-east1-docker.pkg.dev/${PROJECT_ID}/uumi
+  _TAG: manual
