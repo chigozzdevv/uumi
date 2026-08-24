@@ -310,7 +310,7 @@ class ApiClient {
     if (response.status === 401 && !forceRefresh) return this.authenticatedFetch(path, options, true)
     if (response.status === 401) {
       await signOutIdentity().catch(() => undefined)
-      window.location.assign("/sign-in")
+      window.location.assign("/auth")
     }
     return response
   }

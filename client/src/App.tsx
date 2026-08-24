@@ -90,7 +90,7 @@ export function App({
     } finally {
       clearOrganisation()
       queryClient.clear()
-      window.location.assign("/sign-in")
+      window.location.assign("/auth")
     }
   }
 

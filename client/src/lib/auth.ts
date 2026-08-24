@@ -68,12 +68,12 @@ export async function signInWithEmail(email: string, password: string): Promise<
 export async function createEmailAccount(email: string, password: string): Promise<void> {
   const configured = configuredAuth()
   const credential = await createUserWithEmailAndPassword(configured, email.trim(), password)
-  await sendEmailVerification(credential.user)
+  await sendEmailVerification(credential.user, { url: window.location.origin + "/auth" })
   await signOut(configured)
 }
 
 export async function resetEmailPassword(email: string): Promise<void> {
-  await sendPasswordResetEmail(configuredAuth(), email.trim())
+  await sendPasswordResetEmail(configuredAuth(), email.trim(), { url: window.location.origin + "/auth" })
 }
 
 export async function identityToken(forceRefresh = false): Promise<string> {

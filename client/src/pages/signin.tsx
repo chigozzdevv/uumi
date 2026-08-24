@@ -46,7 +46,7 @@ export function SignInPage() {
     try {
       if (mode === "sign-in") {
         await signInWithEmail(email, password)
-        window.history.replaceState({}, "", "/")
+        window.location.replace("/dashboard")
       } else if (mode === "create") {
         await createEmailAccount(email, password)
         changeMode("email-sent")
@@ -66,7 +66,7 @@ export function SignInPage() {
     setSubmitting(true)
     try {
       await signInWithGoogle()
-      window.history.replaceState({}, "", "/")
+      window.location.replace("/dashboard")
     } catch (reason) {
       const code = typeof reason === "object" && reason !== null && "code" in reason ? String(reason.code) : ""
       if (code !== "auth/popup-closed-by-user" && code !== "auth/cancelled-popup-request") setError(message(reason))
