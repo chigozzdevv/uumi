@@ -12,6 +12,7 @@ import {
   signInWithEmail,
   signInWithGoogle,
 } from "../lib/auth"
+import { dashboardLocation } from "../lib/callback"
 
 type Mode = "sign-in" | "create" | "reset" | "email-sent"
 
@@ -46,7 +47,7 @@ export function SignInPage() {
     try {
       if (mode === "sign-in") {
         await signInWithEmail(email, password)
-        window.location.replace("/dashboard")
+        window.location.replace(dashboardLocation())
       } else if (mode === "create") {
         await createEmailAccount(email, password)
         changeMode("email-sent")
@@ -66,7 +67,7 @@ export function SignInPage() {
     setSubmitting(true)
     try {
       await signInWithGoogle()
-      window.location.replace("/dashboard")
+      window.location.replace(dashboardLocation())
     } catch (reason) {
       const code = typeof reason === "object" && reason !== null && "code" in reason ? String(reason.code) : ""
       if (code !== "auth/popup-closed-by-user" && code !== "auth/cancelled-popup-request") setError(message(reason))

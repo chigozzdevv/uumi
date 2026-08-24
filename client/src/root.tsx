@@ -9,6 +9,7 @@ import { Button } from "./components/ui/button"
 import { OrganisationSetupPage } from "./pages/organisation"
 import { SignInPage } from "./pages/signin"
 import { LandingPage } from "./pages/landing"
+import { connectionCallbackIntegration, dashboardLocation } from "./lib/callback"
 
 const Dashboard = lazy(() => import("./App.tsx"))
 
@@ -50,16 +51,20 @@ export function AuthenticationBoundary() {
   }, [identity])
 
   if (loading) return <LoadingScreen />
+  if (window.location.pathname === "/" && connectionCallbackIntegration()) {
+    window.location.replace(dashboardLocation())
+    return <LoadingScreen />
+  }
   if (window.location.pathname === "/") return <LandingPage authenticated={Boolean(identity)} />
   if (window.location.pathname === "/auth") {
     if (identity) {
-      window.location.replace("/dashboard")
+      window.location.replace(dashboardLocation())
       return <LoadingScreen />
     }
     return <SignInPage />
   }
   if (!identity) {
-    window.location.replace("/auth")
+    window.location.replace(`/auth${window.location.search}`)
     return <LoadingScreen />
   }
   if (sessionError) return <main className="grid min-h-screen place-items-center bg-[var(--workspace)] px-6"><div className="text-center"><p className="text-[12px] text-[var(--red)]">{sessionError}</p><Button className="mt-4" onClick={() => window.location.reload()}>Try again</Button></div></main>

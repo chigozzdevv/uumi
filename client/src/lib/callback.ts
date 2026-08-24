@@ -7,3 +7,7 @@ export function connectionCallbackIntegration(): IntegrationKind | null {
   if (parameters.has("code") && sessionStorage.getItem("uumi.github")) return "github"
   return null
 }
+
+export function dashboardLocation(): string {
+  return connectionCallbackIntegration() ? `/dashboard${window.location.search}` : "/dashboard"
+}

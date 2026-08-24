@@ -32,6 +32,16 @@ function roleLabel(connection: Connection) {
   return connection.roles.map(titleCase).join(", ")
 }
 
+function disconnectImpact(connection: Connection) {
+  if (connection.platform === "github") return "Removing this connection will disable GitHub security monitoring for exposed credentials."
+  if (connection.interface === "browser") return `Removing this connection will stop Uumi from rotating credentials through ${connection.display_name} with Computer Use.`
+  if (connection.roles.includes("provider")) return `Removing this connection will stop Uumi from creating, testing, and revoking credentials through ${connection.display_name}.`
+  if (connection.roles.includes("secret-store")) return `Removing this connection will stop Uumi from securely storing and retrieving replacement credentials through ${connection.display_name}.`
+  if (connection.roles.includes("runtime")) return `Removing this connection will stop Uumi from deploying and verifying credential rotations through ${connection.display_name}.`
+  if (connection.roles.includes("telemetry")) return `Removing this connection will stop Uumi from verifying service health through ${connection.display_name}.`
+  return "Removing this connection will disable the Uumi operations that depend on it."
+}
+
 export function ConnectionsPage({ initialConnectionId = "" }: { initialConnectionId?: string }) {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState("")
@@ -130,7 +140,7 @@ export function ConnectionsPage({ initialConnectionId = "" }: { initialConnectio
       {tab === "access" && (currentSelected.interface === "browser" ? <div className="max-w-[620px] space-y-5"><DetailList><Detail label="Playbook version">{currentSelected.playbook_version_id ?? "Not attached"}</Detail><Detail label="Session expires">{currentSelected.authorization_expires_at ? formatDate(currentSelected.authorization_expires_at, true) : "Authentication required"}</Detail></DetailList>{!currentSelected.playbook_version_id && <div className="space-y-3"><ResourceSelect label="Playbook" value={selectedPlaybookVersion} onChange={setSelectedPlaybookVersion} addLabel="Add playbook" onAdd={() => setCreatingPlaybook(true)}><option value="">Select playbook</option>{browserPlaybooks.map((item) => <option key={item.id} value={item.active_version_id!}>{item.name}</option>)}</ResourceSelect><Button onClick={() => { const playbook = browserPlaybooks.find((item) => item.active_version_id === selectedPlaybookVersion); if (playbook) attach.mutate({ connection: currentSelected, playbook }) }} disabled={!selectedPlaybookVersion || attach.isPending}>Attach playbook</Button></div>}</div> : <DetailList><Detail label="Allowed resources">{currentSelected.allowed_resources.join(", ")}</Detail><Detail label="Capabilities">{currentSelected.capabilities.length}</Detail><Detail label="Last validated">{currentSelected.last_validated_at ? formatDate(currentSelected.last_validated_at, true) : "Never"}</Detail></DetailList>)}
     </DetailCard>
     {(attach.error || open.error) && <div role="alert" className="mt-5 rounded-xl bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{(attach.error ?? open.error)?.message}</div>}
-    <ManageResourceModal isOpen={editing} onClose={() => setEditing(false)} title="Edit connection" resourceLabel="connection" onSave={() => updateConnection.mutate()} onDelete={() => archiveConnection.mutate()} dependencies={[
+    <ManageResourceModal isOpen={editing} onClose={() => setEditing(false)} title="Edit connection" resourceLabel="connection" onSave={() => updateConnection.mutate()} onDelete={() => archiveConnection.mutate()} deleteTitle="Disconnect connection?" deleteDescription={disconnectImpact(currentSelected)} deleteTriggerLabel="Disconnect" deleteActionLabel="Disconnect" deletingActionLabel="Disconnecting…" dependencies={[
       { label: "Credentials", items: graph.data!.credentials.filter((credential) => currentSelected.id === credential.connection_id || currentSelected.id === credential.secret_store_connection_id).map((credential) => credential.display_name) },
       { label: "Services", items: graph.data!.services.filter((service) => currentSelected.id === service.runtime_connection_id || service.telemetry_connection_ids.includes(currentSelected.id)).map((service) => service.display_name) },
     ]} saveDisabled={!editName.trim() || editName.trim() === currentSelected.display_name} saving={updateConnection.isPending} deleting={archiveConnection.isPending} error={(updateConnection.error ?? archiveConnection.error)?.message}>

@@ -78,6 +78,11 @@ export function ManageResourceModal({
   saving = false,
   deleting = false,
   error,
+  deleteTitle,
+  deleteDescription,
+  deleteTriggerLabel = "Delete",
+  deleteActionLabel = "Delete",
+  deletingActionLabel = "Deleting…",
 }: {
   isOpen: boolean
   onClose: () => void
@@ -91,6 +96,11 @@ export function ManageResourceModal({
   saving?: boolean
   deleting?: boolean
   error?: string
+  deleteTitle?: string
+  deleteDescription?: string
+  deleteTriggerLabel?: string
+  deleteActionLabel?: string
+  deletingActionLabel?: string
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const activeDependencies = dependencies.filter((dependency) => dependency.items.length > 0)
@@ -108,11 +118,12 @@ export function ManageResourceModal({
     <Modal
       isOpen={isOpen}
       onClose={close}
-      title={confirmingDelete ? `Delete ${resourceLabel}?` : title}
+      title={confirmingDelete ? deleteTitle ?? `Delete ${resourceLabel}?` : title}
+      description={confirmingDelete ? deleteDescription : undefined}
       cancelLabel={confirmingDelete ? "Back" : "Cancel"}
-      footerStart={!confirmingDelete && onDelete ? <Button variant="ghost" onClick={() => setConfirmingDelete(true)}>Delete</Button> : undefined}
+      footerStart={!confirmingDelete && onDelete ? <Button variant="ghost" onClick={() => setConfirmingDelete(true)}>{deleteTriggerLabel}</Button> : undefined}
       actions={confirmingDelete
-        ? <Button variant="danger" onClick={onDelete} disabled={deleting}>{deleting ? "Deleting…" : "Delete"}</Button>
+        ? <Button variant="danger" onClick={onDelete} disabled={deleting}>{deleting ? deletingActionLabel : deleteActionLabel}</Button>
         : <Button onClick={onSave} disabled={saveDisabled || saving}>{saving ? "Saving…" : "Save changes"}</Button>}
     >
       {!confirmingDelete && children}
