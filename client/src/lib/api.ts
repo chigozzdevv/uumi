@@ -21,6 +21,7 @@ import type {
   TeamMember,
   MemberRole,
 } from "../types";
+import { identityToken, signOutIdentity } from "./auth"
 
 const ORG_ID = "org_acme"
 const ROOT = `/v1/organisations/${ORG_ID}`
@@ -283,15 +284,26 @@ export class ApiError extends Error {
 }
 
 class ApiClient {
-  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+  private async authenticatedFetch(path: string, options?: RequestInit, forceRefresh = false): Promise<Response> {
+    const token = await identityToken(forceRefresh)
+    const headers = new Headers(options?.headers)
+    headers.set("Authorization", `Bearer ${token}`)
+    if (options?.body) headers.set("Content-Type", "application/json")
+
     const response = await fetch(`${import.meta.env.VITE_API_URL ?? ""}${path}`, {
-      credentials: "include",
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-      },
+      headers,
     })
+    if (response.status === 401 && !forceRefresh) return this.authenticatedFetch(path, options, true)
+    if (response.status === 401) {
+      await signOutIdentity().catch(() => undefined)
+      window.location.assign("/sign-in")
+    }
+    return response
+  }
+
+  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+    const response = await this.authenticatedFetch(path, options)
     if (!response.ok) {
       const problem = (await response.json().catch(() => null)) as { code?: string; message?: string } | null
       throw new ApiError(
@@ -304,8 +316,7 @@ class ApiClient {
   }
 
   private async requestBlob(path: string): Promise<Blob> {
-    const response = await fetch(`${import.meta.env.VITE_API_URL ?? ""}${path}`, {
-      credentials: "include",
+    const response = await this.authenticatedFetch(path, {
       headers: { Accept: "image/png" },
     })
     if (!response.ok) {
@@ -317,14 +328,6 @@ class ApiClient {
       )
     }
     return response.blob()
-  }
-
-  async logout(): Promise<void> {
-    const response = await fetch(`${import.meta.env.VITE_API_URL ?? ""}/v1/auth/logout`, {
-      method: "POST",
-      credentials: "include",
-    })
-    if (!response.ok) throw new ApiError("Could not end this session", response.status, "logout-failed")
   }
 
   async getOverview(): Promise<OverviewSummary> {

@@ -1,4 +1,4 @@
-.PHONY: lock sync format lint type test infra verify image images api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image notification-image auditlog-image
+.PHONY: lock sync format lint type test client infra verify image images api-image publisher-image ingestion-image broker-image coordinator-image browser-image gateway-image notification-image auditlog-image
 
 UV_CACHE_DIR ?= .cache/uv
 UV_PYTHON_INSTALL_DIR ?= .cache/python
@@ -11,6 +11,7 @@ lock:
 
 sync:
 	$(UV_ENV) uv sync --all-packages --all-extras --locked
+	npm --prefix client ci
 
 format:
 	$(UV_ENV) uv run ruff format .
@@ -26,7 +27,10 @@ type:
 test:
 	$(UV_ENV) uv run pytest
 
-verify: lint type test
+client:
+	npm --prefix client run check
+
+verify: lint type test client
 
 image: api-image
 

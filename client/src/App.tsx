@@ -12,8 +12,7 @@ import { connectionCallbackIntegration } from "./lib/callback"
 import { AuditsPage } from "./pages/audits"
 import { SettingsPage } from "./pages/settings"
 import { BrowserSetupPage } from "./pages/browsersetup"
-import { Button } from "./components/ui/button"
-import { api } from "./lib/api"
+import { signOutIdentity } from "./lib/auth"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -78,18 +77,16 @@ export function App() {
 
   const handleLogout = async () => {
     try {
-      await api.logout()
+      await signOutIdentity()
     } finally {
       queryClient.clear()
-      window.location.assign("/signed-out")
+      window.location.assign("/sign-in")
     }
   }
 
   if (window.location.pathname === "/browser/setup") {
     return <QueryClientProvider client={queryClient}><BrowserSetupPage /></QueryClientProvider>
   }
-  if (window.location.pathname === "/signed-out") return <SignedOutPage />
-
   const renderContent = () => {
     switch (currentNav) {
       case "overview":
@@ -122,11 +119,6 @@ export function App() {
       </Shell>
     </QueryClientProvider>
   )
-}
-
-function SignedOutPage() {
-  const signIn = import.meta.env.VITE_SIGN_IN_URL ?? "/"
-  return <main className="grid min-h-screen place-items-center bg-[var(--workspace)] px-6"><div className="text-center"><h1 className="text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">Signed out</h1><Button className="mt-6" onClick={() => window.location.assign(signIn)}>Sign in</Button></div></main>
 }
 
 export default App

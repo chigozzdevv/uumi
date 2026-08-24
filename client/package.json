@@ -4,15 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
-    "client": "vite",
-    "mock": "node mock/server.mjs",
+    "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --check scripts/dev.mjs && node --check mock/server.mjs && node mock/test.mjs && node mock/http.test.mjs",
-    "test:http": "node mock/http.test.mjs",
     "preview": "vite preview",
-    "check": "npm run lint && npm run test && npm run build"
+    "check": "npm run lint && npm run build"
   },
   "dependencies": {
     "@iconify-icons/logos": "^1.2.37",
@@ -21,6 +17,7 @@
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-table": "^9.1.2",
     "clsx": "^2.1.1",
+    "firebase": "^12.18.0",
     "lucide-react": "^1.31.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
