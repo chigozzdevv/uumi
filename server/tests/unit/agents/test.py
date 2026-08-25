@@ -400,7 +400,11 @@ class RuntimeContinuity:
 async def test_agent_runtime_surfaces_safe_connector_error_code() -> None:
     class FailingGoogle:
         async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
-            raise ConnectorError("google-api-404", "upstream details must not escape")
+            raise ConnectorError(
+                "google-api-404",
+                "upstream details must not escape",
+                safe_detail="invalid-argument.field-message.messageId",
+            )
 
     runtime = AgentRuntimeService(
         RuntimeFleet(),  # type: ignore[arg-type]
@@ -424,7 +428,9 @@ async def test_agent_runtime_surfaces_safe_connector_error_code() -> None:
     )
 
     assert result.succeeded is False
-    assert result.error == "google-api-404: agent execution failed"
+    assert result.error == (
+        "google-api-404.invalid-argument.field-message.messageId: agent execution failed"
+    )
     assert "upstream details" not in result.error
 
 

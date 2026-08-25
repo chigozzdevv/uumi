@@ -78,12 +78,17 @@ class AgentRuntimeService:
             )
         except Exception as error:
             code = error.code if isinstance(error, ConnectorError) else type(error).__name__
+            detail = (
+                f".{error.safe_detail}"
+                if isinstance(error, ConnectorError) and error.safe_detail
+                else ""
+            )
             result = AgentResult(
                 task_id=task.id,
                 agent=task.agent,
                 skill=task.skill,
                 succeeded=False,
-                error=f"{code}: agent execution failed",
+                error=f"{code}{detail}: agent execution failed",
                 completed_at=self._clock(),
             )
         record(

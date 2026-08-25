@@ -1,8 +1,15 @@
 class ConnectorError(Exception):
-    def __init__(self, code: str, message: str, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        retryable: bool = False,
+        safe_detail: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
+        self.safe_detail = safe_detail
 
 
 class AmbiguousMutationError(ConnectorError):

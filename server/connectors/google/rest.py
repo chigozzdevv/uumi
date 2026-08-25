@@ -105,6 +105,7 @@ class GoogleRestClient:
                 f"google-api-{response.status_code}",
                 f"Google API returned HTTP {response.status_code}",
                 retryable=retryable,
+                safe_detail=_safe_error_detail(response),
             )
         return response
 
@@ -283,3 +284,41 @@ def _target_principal(reference: str) -> str:
             "workload identity service account is invalid",
         )
     return principal
+
+
+def _safe_error_detail(response: httpx.Response) -> str | None:
+    try:
+        payload = response.json()
+    except (ValueError, jsonlib.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    values: list[str] = []
+    status = error.get("status")
+    if isinstance(status, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", status):
+        values.append(status.lower().replace("_", "-"))
+    details = error.get("details")
+    if isinstance(details, list):
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            kind = detail.get("@type")
+            if kind == "type.googleapis.com/google.rpc.ErrorInfo":
+                reason = detail.get("reason")
+                if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", reason):
+                    values.append(reason.lower().replace("_", "-"))
+            elif kind == "type.googleapis.com/google.rpc.BadRequest":
+                violations = detail.get("fieldViolations")
+                if isinstance(violations, list):
+                    for violation in violations:
+                        field = violation.get("field") if isinstance(violation, dict) else None
+                        if isinstance(field, str) and re.fullmatch(
+                            r"[A-Za-z0-9_.\[\]-]{1,128}", field
+                        ):
+                            values.append(f"field-{field}")
+                            break
+    unique = list(dict.fromkeys(values))
+    return ".".join(unique[:3]) or None

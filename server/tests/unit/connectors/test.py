@@ -902,6 +902,48 @@ async def test_google_stream_parses_server_sent_json_events() -> None:
     await google.close()
 
 
+@pytest.mark.anyio
+async def test_google_error_retains_only_machine_readable_safe_detail() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "status": "INVALID_ARGUMENT",
+                    "message": "credential material must not escape",
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                            "reason": "INVALID_PARAMS",
+                            "metadata": {"secret": "must-not-escape"},
+                        },
+                        {
+                            "@type": "type.googleapis.com/google.rpc.BadRequest",
+                            "fieldViolations": [
+                                {
+                                    "field": "message.messageId",
+                                    "description": "must-not-escape",
+                                }
+                            ],
+                        },
+                    ],
+                }
+            },
+        )
+
+    google = _google(handler)
+    with pytest.raises(ConnectorError) as captured:
+        await google.request("POST", "https://aiplatform.googleapis.com/message:send")
+
+    assert captured.value.code == "google-api-400"
+    assert captured.value.safe_detail == (
+        "invalid-argument.invalid-params.field-message.messageId"
+    )
+    assert "must-not-escape" not in str(captured.value)
+    await google.close()
+
+
 def _google(handler: Any) -> GoogleRestClient:
     return GoogleRestClient(
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
