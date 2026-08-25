@@ -14,17 +14,7 @@ import {
 } from "lucide-react"
 import uumiLogo from "../assets/uumi-logo.png"
 import { api } from "../lib/api"
-
-export type NavItem =
-  | "overview"
-  | "credentials"
-  | "incidents"
-  | "rotations"
-  | "approvals"
-  | "playbooks"
-  | "connections"
-  | "audits"
-  | "settings"
+import type { NavItem } from "../lib/navigation"
 
 interface NavEntry {
   id: NavItem

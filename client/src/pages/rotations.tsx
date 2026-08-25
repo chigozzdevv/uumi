@@ -222,7 +222,7 @@ function RunStatus({ run }: { run: RotationRun }) {
   </Badge>
 }
 
-export function RotationsPage({ activeRunId, onNavigateApproval, onNavigateControls, onNavigateConnection }: { activeRunId?: string; onNavigateApproval: () => void; onNavigateControls: (credentialId: string, controlVersionId: string) => void; onNavigateConnection: (connectionId: string) => void }) {
+export function RotationsPage({ activeRunId, onSelectRotation, onNavigateApproval, onNavigateControls, onNavigateConnection }: { activeRunId?: string; onSelectRotation: (runId: string) => void; onNavigateApproval: () => void; onNavigateControls: (credentialId: string, controlVersionId: string) => void; onNavigateConnection: (connectionId: string) => void }) {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState("all")
@@ -244,6 +244,7 @@ export function RotationsPage({ activeRunId, onNavigateApproval, onNavigateContr
   }, onSuccess: async (run) => {
     await queryClient.invalidateQueries({ queryKey: ["rotations"] })
     setSelectedId(run.id)
+    onSelectRotation(run.id)
     setCreating(false)
   } })
 
@@ -289,7 +290,7 @@ export function RotationsPage({ activeRunId, onNavigateApproval, onNavigateContr
     const secretStoreName = (connections.data!.find((item) => item.id === credential?.secret_store_connection_id)?.display_name ?? "configured secret store").split("·")[0].trim()
     const stageIndex = stages.findIndex((stage) => stage.id === selected.stage)
     return <div className="page">
-      <PageHeader eyebrow="Operations / Rotations" title={credential?.display_name ?? "Rotation"} titlePrefix={<Provider value={credential?.provider ?? "uumi"} label={false} />} onBack={() => setSelectedId("")} actions={selected.status === "paused" && selected.stage === "approval" ? <Button onClick={onNavigateApproval}>Review approval <Clock3 className="size-3.5" /></Button> : undefined} />
+      <PageHeader eyebrow="Operations / Rotations" title={credential?.display_name ?? "Rotation"} titlePrefix={<Provider value={credential?.provider ?? "uumi"} label={false} />} onBack={() => { setSelectedId(""); onSelectRotation("") }} actions={selected.status === "paused" && selected.stage === "approval" ? <Button onClick={onNavigateApproval}>Review approval <Clock3 className="size-3.5" /></Button> : undefined} />
       <DetailCard>
         <div>
           <div className="space-y-1" aria-label={`Rotation is at ${titleCase(selected.stage)}`}>
@@ -351,12 +352,12 @@ export function RotationsPage({ activeRunId, onNavigateApproval, onNavigateContr
         const credential = graph.data!.credentials.find((item) => item.id === run.credential_id)
         const needsApproval = run.status === "paused" && run.stage === "approval"
         return <TableRow key={run.id}>
-          <TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left font-medium hover:underline" onClick={() => setSelectedId(run.id)}><Provider value={credential?.provider ?? "uumi"} label={false} />{credential?.display_name ?? "Credential"}</button></TableCell>
+          <TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left font-medium hover:underline" onClick={() => { setSelectedId(run.id); onSelectRotation(run.id) }}><Provider value={credential?.provider ?? "uumi"} label={false} />{credential?.display_name ?? "Credential"}</button></TableCell>
           <TableCell>{titleCase(run.stage)}</TableCell>
           <TableCell><RunStatus run={run} /></TableCell>
           <TableCell className="text-[var(--ink-soft)]">{triggerName(run.trigger.source)}</TableCell>
           <TableCell className="text-[10px] text-[var(--ink-soft)]">{formatDate(run.updated_at)}</TableCell>
-          <TableCell className="pr-0"><div className="flex justify-end"><Button className="pr-1" variant="ghost" size="sm" onClick={() => { if (needsApproval) onNavigateApproval(); else setSelectedId(run.id) }}>{needsApproval ? "Review approval" : "View details"} <ChevronRight className="size-3.5" /></Button></div></TableCell>
+          <TableCell className="pr-0"><div className="flex justify-end"><Button className="pr-1" variant="ghost" size="sm" onClick={() => { if (needsApproval) onNavigateApproval(); else { setSelectedId(run.id); onSelectRotation(run.id) } }}>{needsApproval ? "Review approval" : "View details"} <ChevronRight className="size-3.5" /></Button></div></TableCell>
         </TableRow>
       })}</TableBody>
     </Table>

@@ -12,6 +12,13 @@ import { LandingPage } from "./pages/landing"
 import { connectionCallbackIntegration, dashboardLocation } from "./lib/callback"
 
 const Dashboard = lazy(() => import("./App.tsx"))
+const dashboardReturnKey = "uumi.dashboard-return"
+
+function dashboardReturnLocation() {
+  const location = sessionStorage.getItem(dashboardReturnKey)
+  sessionStorage.removeItem(dashboardReturnKey)
+  return location?.startsWith("/dashboard") ? location : null
+}
 
 function LoadingScreen() {
   return <main className="grid min-h-screen place-items-center bg-[var(--workspace)]"><img className="h-auto w-[132px]" src={uumiLogo} alt="Uumi" /></main>
@@ -58,12 +65,16 @@ export function AuthenticationBoundary() {
   if (window.location.pathname === "/") return <LandingPage authenticated={Boolean(identity)} />
   if (window.location.pathname === "/auth") {
     if (identity) {
-      window.location.replace(dashboardLocation())
+      const returnLocation = dashboardReturnLocation()
+      window.location.replace(connectionCallbackIntegration() ? dashboardLocation() : returnLocation ?? dashboardLocation())
       return <LoadingScreen />
     }
     return <SignInPage />
   }
   if (!identity) {
+    if (window.location.pathname.startsWith("/dashboard")) {
+      sessionStorage.setItem(dashboardReturnKey, `${window.location.pathname}${window.location.search}`)
+    }
     window.location.replace(`/auth${window.location.search}`)
     return <LoadingScreen />
   }

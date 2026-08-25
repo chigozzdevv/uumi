@@ -34,7 +34,7 @@ function statusVariant(status: Incident["status"]) {
   return "active" as const
 }
 
-export function IncidentsPage({ initialIncidentId = "", onNavigateRotation }: { initialIncidentId?: string; onNavigateRotation: (runId: string) => void }) {
+export function IncidentsPage({ initialIncidentId = "", onSelectIncident, onNavigateRotation }: { initialIncidentId?: string; onSelectIncident: (incidentId: string) => void; onNavigateRotation: (runId: string) => void }) {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("open")
@@ -101,6 +101,7 @@ export function IncidentsPage({ initialIncidentId = "", onNavigateRotation }: { 
       queryClient.setQueryData<Incident[]>(["incidents"], (current) => current?.map((item) => item.id === incident.id ? incident : item))
       setDismissing(false)
       setSelectedId("")
+      onSelectIncident("")
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["incidents"] }),
         queryClient.invalidateQueries({ queryKey: ["overview"] }),
@@ -110,6 +111,7 @@ export function IncidentsPage({ initialIncidentId = "", onNavigateRotation }: { 
 
   const openIncident = (incident: Incident) => {
     setSelectedId(incident.id)
+    onSelectIncident(incident.id)
     setSelectedCandidateId(incident.credential_id ?? (incident.candidates.length === 1 ? incident.candidates[0].credential_id : ""))
     resolve.reset()
     dismiss.reset()
@@ -130,7 +132,7 @@ export function IncidentsPage({ initialIncidentId = "", onNavigateRotation }: { 
         : undefined
 
     return <div className="page">
-      <PageHeader eyebrow="Operations / Incidents" title={titleCase(selected.source)} onBack={() => setSelectedId("")} actions={actions} />
+      <PageHeader eyebrow="Operations / Incidents" title={titleCase(selected.source)} onBack={() => { setSelectedId(""); onSelectIncident("") }} actions={actions} />
       {(resolve.error || dismiss.error) && <div role="alert" className="mb-5 text-[10px] text-[var(--red)]">{(resolve.error ?? dismiss.error)?.message}</div>}
       <DetailCard>
         <DetailList>{selected.credential_id && <Detail label="Credential">{credential(selected.credential_id)?.display_name ?? "Credential"}</Detail>}<Detail label="Reference">{selected.source_event_id}</Detail>{selected.resource.repository && <Detail label="Repository">{selected.resource.repository}</Detail>}{selected.resource.project && <Detail label="Project">{selected.resource.project}</Detail>}{selected.resource.service && <Detail label="Service">{selected.resource.service}</Detail>}<Detail label="Observed">{formatDate(selected.created_at, true)}</Detail></DetailList>

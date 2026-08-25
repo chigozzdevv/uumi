@@ -3,12 +3,12 @@ import { ArrowUpRight, Check, ChevronRight, ChevronUp } from "lucide-react"
 import { useState } from "react"
 import { PageHeader } from "../components/header"
 import { Provider } from "../components/provider"
-import type { NavItem } from "../components/sidebar"
 import { Failure, Loading } from "../components/state"
 import { Button } from "../components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import { api } from "../lib/api"
 import { titleCase } from "../lib/format"
+import type { NavItem } from "../lib/navigation"
 import type { RotationRun } from "../types"
 
 function failureTask(run: RotationRun) {

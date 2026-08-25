@@ -9,5 +9,5 @@ export function connectionCallbackIntegration(): IntegrationKind | null {
 }
 
 export function dashboardLocation(): string {
-  return connectionCallbackIntegration() ? `/dashboard${window.location.search}` : "/dashboard"
+  return connectionCallbackIntegration() ? `/dashboard/connections${window.location.search}` : "/dashboard"
 }

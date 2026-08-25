@@ -35,7 +35,14 @@ function sameControls(left: ControlValues, right: ControlValues) {
     && left.exposureSources.every((source) => right.exposureSources.some((item) => item.connection_id === source.connection_id && item.resource === source.resource))
 }
 
-export function CredentialsPage({ initialCredentialId, initialControlVersionId, onNavigate, onNavigateRotation }: { initialCredentialId?: string; initialControlVersionId?: string; onNavigate: (target: CredentialTarget) => void; onNavigateRotation: (runId: string) => void }) {
+export function CredentialsPage({ initialCredentialId, initialControlVersionId, initialTab, onSelectCredential, onNavigate, onNavigateRotation }: {
+  initialCredentialId?: string
+  initialControlVersionId?: string
+  initialTab?: string
+  onSelectCredential: (credentialId: string, tab?: string, controlVersionId?: string) => void
+  onNavigate: (target: CredentialTarget) => void
+  onNavigateRotation: (runId: string) => void
+}) {
   const queryClient = useQueryClient()
   const handledInitialCredential = useRef("")
   const [search, setSearch] = useState("")
@@ -67,15 +74,16 @@ export function CredentialsPage({ initialCredentialId, initialControlVersionId, 
 
   useEffect(() => {
     if (!initialCredentialId || !graph.data) return
-    const target = `${initialCredentialId}:${initialControlVersionId ?? "current"}`
+    const requestedTab = initialTab ?? (initialControlVersionId ? "controls" : "overview")
+    const target = `${initialCredentialId}:${requestedTab}:${initialControlVersionId ?? "current"}`
     if (handledInitialCredential.current === target) return
     const credential = graph.data.credentials.find((item) => item.id === initialCredentialId)
     if (!credential) return
     handledInitialCredential.current = target
     setSelected(credential)
-    setTab("controls")
-    setViewControlVersionId(initialControlVersionId ?? credential.control_version)
-  }, [graph.data, initialControlVersionId, initialCredentialId])
+    setTab(requestedTab)
+    setViewControlVersionId(requestedTab === "controls" ? initialControlVersionId ?? credential.control_version : null)
+  }, [graph.data, initialControlVersionId, initialCredentialId, initialTab])
   const createCredential = useMutation({
     mutationFn: api.importCredential.bind(api),
     onSuccess: async () => {
@@ -117,6 +125,7 @@ export function CredentialsPage({ initialCredentialId, initialControlVersionId, 
       queryClient.removeQueries({ queryKey: ["credentials", currentSelected!.id] })
       setConfirmingDelete(false)
       setSelected(null)
+      onSelectCredential("")
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["graph"] }),
         queryClient.invalidateQueries({ queryKey: ["overview"] }),
@@ -165,7 +174,12 @@ export function CredentialsPage({ initialCredentialId, initialControlVersionId, 
     const action = actionFor(item)
     if (action.runId) onNavigateRotation(action.runId)
     else if (action.target) onNavigate(action.target)
-    else { setSelected(item); setViewControlVersionId(null); setTab("overview") }
+    else {
+      setSelected(item)
+      setViewControlVersionId(null)
+      setTab("overview")
+      onSelectCredential(item.id)
+    }
   }
 
   const selectedServices = currentSelected ? graph.data!.services.filter((service) => currentSelected.consumer_ids.includes(service.id)) : []
@@ -183,8 +197,8 @@ export function CredentialsPage({ initialCredentialId, initialControlVersionId, 
 
   if (currentSelected) return (
     <div className="page">
-      <PageHeader eyebrow="Inventory / Credentials" title={currentSelected.display_name} titlePrefix={<Provider value={currentSelected.provider} label={false} />} onBack={() => { setSelected(null); setViewControlVersionId(null) }} actions={<>{(selectedAction?.target || selectedAction?.runId) && <Button onClick={() => performAction(currentSelected)}>{selectedAction.label}<ArrowUpRight className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => { setEditName(currentSelected.display_name); setEditControls(controlsFromDefinition(currentControlVersion.data?.definition)); saveCredential.reset(); setEditing(true) }} disabled={!currentControlVersion.data}>Edit</Button><Button variant="ghost" onClick={() => { deleteCredential.reset(); setConfirmingDelete(true) }}>Delete</Button></>} />
-      <DetailTabs items={[{ id: "overview", label: "Overview" }, { id: "consumers", label: "Consumers" }, { id: "controls", label: "Controls" }]} value={tab} onChange={setTab} />
+      <PageHeader eyebrow="Inventory / Credentials" title={currentSelected.display_name} titlePrefix={<Provider value={currentSelected.provider} label={false} />} onBack={() => { setSelected(null); setViewControlVersionId(null); onSelectCredential("") }} actions={<>{(selectedAction?.target || selectedAction?.runId) && <Button onClick={() => performAction(currentSelected)}>{selectedAction.label}<ArrowUpRight className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => { setEditName(currentSelected.display_name); setEditControls(controlsFromDefinition(currentControlVersion.data?.definition)); saveCredential.reset(); setEditing(true) }} disabled={!currentControlVersion.data}>Edit</Button><Button variant="ghost" onClick={() => { deleteCredential.reset(); setConfirmingDelete(true) }}>Delete</Button></>} />
+      <DetailTabs items={[{ id: "overview", label: "Overview" }, { id: "consumers", label: "Consumers" }, { id: "controls", label: "Controls" }]} value={tab} onChange={(nextTab) => { setTab(nextTab); onSelectCredential(currentSelected.id, nextTab, nextTab === "controls" ? viewControlVersionId ?? undefined : undefined) }} />
       <DetailCard>
         {tab === "overview" && <DetailList><Detail label="Type">{titleCase(currentSelected.kind)}</Detail><Detail label="Scopes">{currentSelected.scopes.join(", ") || "None"}</Detail><Detail label="Provider ID">{currentSelected.provider_id ?? "Not recorded"}</Detail><Detail label="Consumers">{currentSelected.consumer_ids.length}</Detail><Detail label="Secret reference"><span className="mono-code break-all">{currentSelected.secret_reference}</span></Detail><Detail label="Updated">{formatDate(currentSelected.updated_at, true)}</Detail></DetailList>}
         {tab === "consumers" && <div className="divide-y divide-[var(--border-soft)]">{selectedServices.map((service) => <div key={service.id} className="grid gap-2 py-4 sm:grid-cols-[1fr_1.5fr]"><div className="text-[11px] font-semibold">{service.display_name}</div><div className="text-[10px] text-[var(--ink-soft)]"><div>{service.runtime_resource}</div><div className="mt-1 text-[var(--ink-muted)]">{environments.data!.find((item) => item.id === service.environment_id)?.display_name}</div></div></div>)}</div>}
@@ -252,7 +266,7 @@ export function CredentialsPage({ initialCredentialId, initialControlVersionId, 
               const service = graph.data!.services.find((entry) => entry.id === item.consumer_ids[0])
               return (
                 <TableRow key={item.id}>
-                  <TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left" onClick={() => { setSelected(item); setViewControlVersionId(null); setTab("overview") }}><Provider value={item.provider} label={false} /><div><div className="font-medium hover:underline">{item.display_name}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{titleCase(item.kind)}</div></div></button></TableCell>
+                  <TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left" onClick={() => { setSelected(item); setViewControlVersionId(null); setTab("overview"); onSelectCredential(item.id) }}><Provider value={item.provider} label={false} /><div><div className="font-medium hover:underline">{item.display_name}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{titleCase(item.kind)}</div></div></button></TableCell>
                   <TableCell><div>{service?.display_name ?? "Unmapped"}</div><div className="mt-1 text-[9px] text-[var(--ink-muted)]">{item.consumer_ids.length} binding{item.consumer_ids.length === 1 ? "" : "s"}</div></TableCell>
                   <TableCell><Badge variant={status.variant} className="gap-1.5">{status.moving && <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />}{status.label}</Badge></TableCell>
                   <TableCell className="text-[10px] text-[var(--ink-soft)]">{formatDate(item.updated_at)}</TableCell>

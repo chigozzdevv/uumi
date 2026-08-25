@@ -42,7 +42,7 @@ function disconnectImpact(connection: Connection) {
   return "Removing this connection will disable the Uumi operations that depend on it."
 }
 
-export function ConnectionsPage({ initialConnectionId = "" }: { initialConnectionId?: string }) {
+export function ConnectionsPage({ initialConnectionId = "", onSelectConnection }: { initialConnectionId?: string; onSelectConnection: (connectionId: string) => void }) {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState("")
   const [role, setRole] = useState("all")
@@ -86,6 +86,7 @@ export function ConnectionsPage({ initialConnectionId = "" }: { initialConnectio
       queryClient.removeQueries({ queryKey: ["connections", currentSelected!.id] })
       setEditing(false)
       setSelected(null)
+      onSelectConnection("")
       await queryClient.invalidateQueries({ queryKey: ["connections"] })
     },
   })
@@ -133,7 +134,7 @@ export function ConnectionsPage({ initialConnectionId = "" }: { initialConnectio
   }} />
 
   if (currentSelected) return <div className="page">
-    <PageHeader eyebrow="Inventory / Connections" title={currentSelected.display_name} onBack={() => setSelected(null)} actions={<>{currentSelected.interface === "browser" && currentSelected.playbook_version_id && <Button onClick={() => openBrowser(currentSelected)} disabled={open.isPending}>Open browser <ExternalLink className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => { setEditName(currentSelected.display_name); updateConnection.reset(); archiveConnection.reset(); setEditing(true) }}>Edit</Button></>} />
+    <PageHeader eyebrow="Inventory / Connections" title={currentSelected.display_name} onBack={() => { setSelected(null); onSelectConnection("") }} actions={<>{currentSelected.interface === "browser" && currentSelected.playbook_version_id && <Button onClick={() => openBrowser(currentSelected)} disabled={open.isPending}>Open browser <ExternalLink className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => { setEditName(currentSelected.display_name); updateConnection.reset(); archiveConnection.reset(); setEditing(true) }}>Edit</Button></>} />
     <DetailTabs items={[{ id: "overview", label: "Overview" }, { id: "access", label: currentSelected.interface === "browser" ? "Browser access" : "Access" }]} value={tab} onChange={setTab} />
     <DetailCard>
       {tab === "overview" && <DetailList><Detail label="Platform"><Provider value={currentSelected.platform} /></Detail><Detail label="Roles">{roleLabel(currentSelected)}</Detail><Detail label="Interface">{titleCase(currentSelected.interface)}</Detail><Detail label="Authorization">{titleCase(currentSelected.authorization)}</Detail><Detail label="Status"><Badge variant={connectionStatus(currentSelected.status).variant}>{connectionStatus(currentSelected.status).label}</Badge></Detail><Detail label="Updated">{formatDate(currentSelected.updated_at, true)}</Detail></DetailList>}
@@ -153,7 +154,7 @@ export function ConnectionsPage({ initialConnectionId = "" }: { initialConnectio
     <Toolbar value={search} onChange={setSearch} placeholder="Search connections or platforms" onClear={() => { setSearch(""); setRole("all") }} filters={[{ label: "Role", value: role, defaultValue: "all", onChange: (event) => setRole(event.target.value), children: <><option value="all">All roles</option>{[...new Set(connections.data!.flatMap((item) => item.roles))].map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}</> }]} />
     <Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Platform</TableHead><TableHead>Role</TableHead><TableHead>Interface</TableHead><TableHead>Status</TableHead><TableHead className="pr-0 text-right">Action</TableHead></TableRow></TableHeader><TableBody>{rows.map((connection) => {
       const status = connectionStatus(connection.status)
-      const openDetails = () => { setSelected(connection); setTab("overview") }
+      const openDetails = () => { setSelected(connection); setTab("overview"); onSelectConnection(connection.id) }
       return <TableRow key={connection.id}><TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left font-medium hover:underline" onClick={openDetails}><Marker icon={PlugZap} />{connection.display_name}</button></TableCell><TableCell><Provider value={connection.platform} /></TableCell><TableCell className="text-[var(--ink-soft)]">{roleLabel(connection)}</TableCell><TableCell>{titleCase(connection.interface)}</TableCell><TableCell><Badge variant={status.variant}>{status.label}</Badge></TableCell><TableCell className="pr-0"><div className="flex justify-end"><Button className="pr-1" variant="ghost" size="sm" onClick={openDetails}>{connectionAction(connection.status)} <ChevronRight className="size-3.5" /></Button></div></TableCell></TableRow>
     })}</TableBody></Table>
   </div>

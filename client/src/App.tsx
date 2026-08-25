@@ -1,6 +1,6 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { Shell, type NavItem } from "./components/sidebar"
+import { Shell } from "./components/sidebar"
 import { OverviewPage } from "./pages/overview"
 import { CredentialsPage } from "./pages/credentials"
 import { PlaybooksPage } from "./pages/playbooks"
@@ -15,6 +15,7 @@ import { BrowserSetupPage } from "./pages/browsersetup"
 import { signOutIdentity } from "./lib/auth"
 import { OrganisationProvider } from "./lib/organisation"
 import { clearOrganisation } from "./lib/organisationstate"
+import { dashboardPath, dashboardRoute, type DashboardRoute, type NavItem } from "./lib/navigation"
 import type { OrganisationMembership } from "./types"
 
 const queryClient = new QueryClient({
@@ -34,54 +35,51 @@ export function App({
   activeOrganisation: OrganisationMembership
   memberships: OrganisationMembership[]
 }) {
-  const [currentNav, setCurrentNav] = useState<NavItem>(() => connectionCallbackIntegration() ? "connections" : "overview")
-  const [activeRunId, setActiveRunId] = useState<string>("")
-  const [activeIncidentId, setActiveIncidentId] = useState("")
-  const [activeApprovalId, setActiveApprovalId] = useState("")
-  const [activeCredential, setActiveCredential] = useState<{ id: string; controlVersionId: string } | null>(null)
-  const [activeConnectionId, setActiveConnectionId] = useState("")
+  const currentRoute = () => connectionCallbackIntegration()
+    ? { section: "connections" as const }
+    : dashboardRoute()
+  const [route, setRoute] = useState<DashboardRoute>(currentRoute)
+  const currentNav = route.section
+
+  useEffect(() => {
+    if (connectionCallbackIntegration() && window.location.pathname !== "/dashboard/connections") {
+      window.history.replaceState({}, "", `/dashboard/connections${window.location.search}`)
+    }
+    const restoreRoute = () => setRoute(currentRoute())
+    window.addEventListener("popstate", restoreRoute)
+    return () => window.removeEventListener("popstate", restoreRoute)
+  }, [])
+
+  const navigate = (next: DashboardRoute, replace = false) => {
+    const location = dashboardPath(next)
+    if (`${window.location.pathname}${window.location.search}` !== location) {
+      window.history[replace ? "replaceState" : "pushState"]({}, "", location)
+    }
+    setRoute(next)
+  }
 
   const handleNavigate = (target: NavItem) => {
-    setActiveRunId("")
-    setActiveIncidentId("")
-    setActiveApprovalId("")
-    setActiveCredential(null)
-    setActiveConnectionId("")
-    setCurrentNav(target)
+    navigate({ section: target })
   }
 
   const handleNavigateRotation = (runId: string) => {
-    setActiveRunId(runId)
-    setActiveIncidentId("")
-    setActiveApprovalId("")
-    setCurrentNav("rotations")
+    navigate({ section: "rotations", resourceId: runId })
   }
 
   const handleNavigateIncident = (incidentId: string) => {
-    setActiveRunId("")
-    setActiveIncidentId(incidentId)
-    setActiveApprovalId("")
-    setCurrentNav("incidents")
+    navigate({ section: "incidents", resourceId: incidentId })
   }
 
   const handleNavigateApproval = (approvalId: string) => {
-    setActiveRunId("")
-    setActiveIncidentId("")
-    setActiveApprovalId(approvalId)
-    setCurrentNav("approvals")
+    navigate({ section: "approvals", resourceId: approvalId })
   }
 
   const handleNavigateControls = (credentialId: string, controlVersionId: string) => {
-    setActiveRunId("")
-    setActiveCredential({ id: credentialId, controlVersionId })
-    setCurrentNav("credentials")
+    navigate({ section: "credentials", resourceId: credentialId, tab: "controls", controlVersionId })
   }
 
   const handleNavigateConnection = (connectionId: string) => {
-    setActiveRunId("")
-    setActiveCredential(null)
-    setActiveConnectionId(connectionId)
-    setCurrentNav("connections")
+    navigate({ section: "connections", resourceId: connectionId })
   }
 
   const handleLogout = async () => {
@@ -102,17 +100,17 @@ export function App({
       case "overview":
         return <OverviewPage onNavigate={handleNavigate} onNavigateRotation={handleNavigateRotation} onNavigateIncident={handleNavigateIncident} onNavigateApproval={handleNavigateApproval} />
       case "credentials":
-        return <CredentialsPage initialCredentialId={activeCredential?.id} initialControlVersionId={activeCredential?.controlVersionId} onNavigate={handleNavigate} onNavigateRotation={handleNavigateRotation} />
+        return <CredentialsPage key={dashboardPath(route)} initialCredentialId={route.resourceId} initialControlVersionId={route.controlVersionId} initialTab={route.tab} onSelectCredential={(credentialId, tab = "overview", controlVersionId) => navigate({ section: "credentials", resourceId: credentialId || undefined, tab, controlVersionId })} onNavigate={handleNavigate} onNavigateRotation={handleNavigateRotation} />
       case "playbooks":
         return <PlaybooksPage />
       case "incidents":
-        return <IncidentsPage initialIncidentId={activeIncidentId} onNavigateRotation={handleNavigateRotation} />
+        return <IncidentsPage key={dashboardPath(route)} initialIncidentId={route.resourceId} onSelectIncident={(incidentId) => navigate({ section: "incidents", resourceId: incidentId || undefined })} onNavigateRotation={handleNavigateRotation} />
       case "rotations":
-        return <RotationsPage activeRunId={activeRunId} onNavigateApproval={() => setCurrentNav("approvals")} onNavigateControls={handleNavigateControls} onNavigateConnection={handleNavigateConnection} />
+        return <RotationsPage key={dashboardPath(route)} activeRunId={route.resourceId} onSelectRotation={(runId) => navigate({ section: "rotations", resourceId: runId || undefined })} onNavigateApproval={() => navigate({ section: "approvals" })} onNavigateControls={handleNavigateControls} onNavigateConnection={handleNavigateConnection} />
       case "approvals":
-        return <ApprovalsPage initialApprovalId={activeApprovalId} onNavigateRotation={handleNavigateRotation} />
+        return <ApprovalsPage key={dashboardPath(route)} initialApprovalId={route.resourceId} onSelectApproval={(approvalId) => navigate({ section: "approvals", resourceId: approvalId || undefined })} onNavigateRotation={handleNavigateRotation} />
       case "connections":
-        return <ConnectionsPage initialConnectionId={activeConnectionId} />
+        return <ConnectionsPage key={dashboardPath(route)} initialConnectionId={route.resourceId} onSelectConnection={(connectionId) => navigate({ section: "connections", resourceId: connectionId || undefined })} />
       case "audits":
         return <AuditsPage />
       case "settings":
