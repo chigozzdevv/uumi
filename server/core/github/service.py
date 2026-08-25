@@ -112,7 +112,7 @@ class GitHubOnboardingService:
         state: str,
         verifier: str,
         code: str,
-        installation_id: int,
+        installation_id: int | None,
     ) -> tuple[
         GitHubOnboardingSession,
         GitHubInstallation,
@@ -147,6 +147,7 @@ class GitHubOnboardingService:
             )
         except ConnectorAuthenticationError as error:
             raise ResourceConflictError(str(error)) from None
+        resolved_installation_id = metadata["installation_id"]
         permissions = metadata["permissions"]
         events = metadata["events"]
         if permissions.get("secret_scanning_alerts") not in {"read", "write"}:
@@ -155,7 +156,7 @@ class GitHubOnboardingService:
             raise ResourceConflictError(
                 "GitHub App is not subscribed to secret scanning alert events"
             )
-        receipt = await self._repository.receipt(installation_id)
+        receipt = await self._repository.receipt(resolved_installation_id)
         now = self._clock()
         repositories = tuple(
             GitHubRepositoryCandidate(
@@ -173,7 +174,7 @@ class GitHubOnboardingService:
             item.secret_scanning is GitHubSecretScanningStatus.ENABLED for item in repositories
         )
         installation = GitHubInstallation(
-            installation_id=installation_id,
+            installation_id=resolved_installation_id,
             organisation_id=organisation_id,
             account_id=metadata["account_id"],
             account_login=metadata["account_login"],

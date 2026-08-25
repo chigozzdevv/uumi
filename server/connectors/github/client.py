@@ -11,12 +11,14 @@ from connectors.secrets import SecretManagerConnector
 class GitHubOnboardingConnector:
     def __init__(
         self,
+        app_slug: str,
         client_id: str,
         client_secret_reference: str,
         redirect_uri: str,
         secrets: SecretManagerConnector,
         client: httpx.AsyncClient | None = None,
     ) -> None:
+        self._app_slug = app_slug
         self._client_id = client_id
         self._client_secret_reference = client_secret_reference
         self._redirect_uri = redirect_uri
@@ -27,10 +29,12 @@ class GitHubOnboardingConnector:
         self,
         code: str,
         verifier: str,
-        installation_id: int,
+        installation_id: int | None,
     ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
         token = await self._exchange(code, verifier)
         try:
+            if installation_id is None:
+                installation_id = await self._existing_installation(token)
             installation = await self._installation(token, installation_id)
             repositories = await self._repositories(token, installation_id)
             semaphore = asyncio.Semaphore(10)
@@ -84,8 +88,44 @@ class GitHubOnboardingConnector:
             }
             raise ConnectorAuthenticationError(
                 messages.get(reason, "GitHub OAuth returned no user access token")
+                if isinstance(reason, str)
+                else "GitHub OAuth returned no user access token"
             )
         return SecretValue(token.encode())
+
+    async def _existing_installation(self, token: SecretValue) -> int:
+        matches: list[int] = []
+        for page in range(1, 5):
+            response = await self._request(
+                token,
+                "/user/installations",
+                params={"per_page": "100", "page": str(page)},
+            )
+            installations = response.get("installations")
+            if not isinstance(installations, list) or not all(
+                isinstance(item, dict) for item in installations
+            ):
+                raise ConnectorError(
+                    "github-installations-invalid", "GitHub returned invalid installations"
+                )
+            matches.extend(
+                item["id"]
+                for item in installations
+                if item.get("app_slug") == self._app_slug
+                and isinstance(item.get("id"), int)
+                and item.get("suspended_at") is None
+            )
+            if len(installations) < 100:
+                break
+        if not matches:
+            raise ConnectorAuthenticationError(
+                "Uumi Security is not installed on an accessible GitHub account"
+            )
+        if len(matches) != 1:
+            raise ConnectorAuthenticationError(
+                "Multiple Uumi Security installations are accessible; use GitHub to select one"
+            )
+        return matches[0]
 
     async def _installation(self, token: SecretValue, installation_id: int) -> dict[str, Any]:
         response = await self._request(token, f"/user/installations/{installation_id}")

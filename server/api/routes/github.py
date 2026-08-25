@@ -30,7 +30,7 @@ class DiscoverGitHubRequest(Contract):
     state: str = Field(min_length=32, max_length=256)
     pkce_verifier: str = Field(min_length=43, max_length=128)
     code: str = Field(min_length=8, max_length=512)
-    installation_id: int = Field(gt=0)
+    installation_id: int | None = Field(default=None, gt=0)
 
 
 class DiscoverGitHubResponse(Contract):

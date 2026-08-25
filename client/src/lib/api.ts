@@ -461,7 +461,7 @@ class ApiClient {
 
   async discoverGitHubOnboarding(
     sessionId: Identifier,
-    input: { state: string; pkce_verifier: string; code: string; installation_id: number },
+    input: { state: string; pkce_verifier: string; code: string; installation_id?: number },
   ): Promise<GitHubDiscoveryResponse> {
     return this.request(`${ROOT}/github/onboarding/${sessionId}/discover`, {
       method: "POST",

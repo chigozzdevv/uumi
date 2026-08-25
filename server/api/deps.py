@@ -190,6 +190,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         github = GitHubOnboardingService(
             FirestoreGitHubRepository(client),
             GitHubOnboardingConnector(
+                configured.github_app_slug,
                 configured.github_client_id,
                 configured.github_client_secret,
                 configured.github_callback_url,

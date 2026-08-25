@@ -397,14 +397,14 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
   const [discovery, setDiscovery] = useState<GitHubDiscoveryResponse | null>(null)
   const [callbackError, setCallbackError] = useState("")
   const begin = useMutation({
-    mutationFn: () => api.beginGitHubOnboarding(),
-    onSuccess: (value) => {
+    mutationFn: (destination: "existing" | "install") => api.beginGitHubOnboarding().then((value) => ({ destination, value })),
+    onSuccess: ({ destination, value }) => {
       sessionStorage.setItem("uumi.github", JSON.stringify(value))
-      window.location.assign(value.installation_url)
+      window.location.assign(destination === "existing" ? value.authorization_url : value.installation_url)
     },
   })
   const discover = useMutation({
-    mutationFn: ({ saved, code, state, installationId }: { saved: SavedGitHubOnboarding; code: string; state: string; installationId: number }) => api.discoverGitHubOnboarding(saved.session.id, { state, pkce_verifier: saved.pkce_verifier, code, installation_id: installationId }),
+    mutationFn: ({ saved, code, state, installationId }: { saved: SavedGitHubOnboarding; code: string; state: string; installationId?: number }) => api.discoverGitHubOnboarding(saved.session.id, { state, pkce_verifier: saved.pkce_verifier, code, installation_id: installationId }),
   })
   const complete = useMutation({ mutationFn: async () => {
     if (!discovery) throw new Error("GitHub repositories are unavailable")
@@ -449,14 +449,19 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
     }
     try {
       const saved = JSON.parse(raw) as SavedGitHubOnboarding
-      const installationId = Number(parameters.get("installation_id") ?? saved.installation_id)
+      const rawInstallationId = parameters.get("installation_id") ?? saved.installation_id
+      const installationId = rawInstallationId === null || rawInstallationId === undefined ? undefined : Number(rawInstallationId)
       const code = parameters.get("code")
       const state = parameters.get("state")
-      if (!Number.isInteger(installationId) || installationId <= 0) {
+      if (installationId !== undefined && (!Number.isInteger(installationId) || installationId <= 0)) {
         setCallbackError("GitHub did not return an installation")
         return
       }
       if (!code) {
+        if (installationId === undefined) {
+          setCallbackError("GitHub authorization is incomplete")
+          return
+        }
         const continued = { ...saved, installation_id: installationId }
         sessionStorage.setItem("uumi.github", JSON.stringify(continued))
         window.location.assign(saved.authorization_url)
@@ -486,7 +491,8 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
 
   if (!discovery) {
     const returning = Boolean(sessionStorage.getItem("uumi.github") && connectionCallbackIntegration() === "github")
-    return <ConnectPage eyebrow="Inventory / Connections" title="GitHub" onBack={onBack} onClose={onClose} error={callbackError || begin.error?.message || discover.error?.message} action={<Button onClick={() => begin.mutate()} disabled={begin.isPending || discover.isPending || returning}>{begin.isPending || discover.isPending || returning ? "Connecting…" : "Connect"}</Button>}><IntegrationMark kind="github" /></ConnectPage>
+    const busy = begin.isPending || discover.isPending || returning
+    return <ConnectPage eyebrow="Inventory / Connections" title="GitHub" onBack={onBack} onClose={onClose} error={callbackError || begin.error?.message || discover.error?.message} action={<div className="flex flex-col items-center gap-2 sm:flex-row"><Button onClick={() => begin.mutate("existing")} disabled={busy}>{busy ? "Connecting…" : "Use existing installation"}</Button><Button variant="secondary" onClick={() => begin.mutate("install")} disabled={busy}>Install GitHub App</Button></div>}><div className="flex max-w-[360px] flex-col items-center gap-4 text-center"><IntegrationMark kind="github" /><p className="text-[10px] leading-5 text-[var(--ink-muted)]">Connect an existing Uumi Security installation or install it on another GitHub account.</p></div></ConnectPage>
   }
 
   return <SetupPage eyebrow="Inventory / Connections" title="GitHub" steps={["Repositories", "Review"]} current={step} onBack={() => setStep(0)} onExit={onBack} onCancel={onClose} error={complete.error?.message} primary={step === 0 ? <Button onClick={() => setStep(1)}>Continue</Button> : <Button onClick={submit} disabled={complete.isPending}>{complete.isPending ? "Connecting…" : "Connect"}</Button>}>

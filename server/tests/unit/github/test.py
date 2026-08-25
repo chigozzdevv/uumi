@@ -144,6 +144,7 @@ async def test_connector_uses_user_access_to_verify_installation_without_persist
     )
     github = httpx.AsyncClient(transport=httpx.MockTransport(github_handler))
     connector = GitHubOnboardingConnector(
+        "uumi-app",
         "client-one",
         "projects/project-one/secrets/github-oauth/versions/1",
         "https://app.uumi.example/github/callback",
@@ -181,6 +182,7 @@ async def test_connector_surfaces_safe_github_oauth_errors() -> None:
     )
     github = httpx.AsyncClient(transport=httpx.MockTransport(github_handler))
     connector = GitHubOnboardingConnector(
+        "uumi-app",
         "client-one",
         "projects/project-one/secrets/github-oauth/versions/1",
         "https://app.uumi.example/github/callback",
@@ -190,6 +192,122 @@ async def test_connector_surfaces_safe_github_oauth_errors() -> None:
 
     with pytest.raises(ConnectorAuthenticationError, match="client credentials were rejected"):
         await connector.verify("code-one", "verifier-one", 123)
+
+    await github.aclose()
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_connector_discovers_an_existing_app_installation() -> None:
+    def github_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "github.com":
+            return httpx.Response(200, json={"access_token": "temporary-user-token"})
+        if request.url.path == "/user/installations":
+            assert request.url.params["per_page"] == "100"
+            return httpx.Response(
+                200,
+                json={
+                    "installations": [
+                        {"id": 999, "app_slug": "another-app", "suspended_at": None},
+                        {"id": 123, "app_slug": "uumi-app", "suspended_at": None},
+                        {"id": 456, "app_slug": "uumi-app", "suspended_at": "2026-08-01"},
+                    ]
+                },
+            )
+        if request.url.path == "/user/installations/123":
+            return httpx.Response(
+                200,
+                json={
+                    "id": 123,
+                    "account": {"id": 44, "login": "customer", "type": "Organization"},
+                    "repository_selection": "selected",
+                    "permissions": {"secret_scanning_alerts": "read"},
+                    "events": ["secret_scanning_alert"],
+                },
+            )
+        if request.url.path == "/user/installations/123/repositories":
+            return httpx.Response(
+                200,
+                json={
+                    "repositories": [
+                        {
+                            "id": 456,
+                            "full_name": "customer/api",
+                            "private": True,
+                            "default_branch": "main",
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/repos/customer/api/secret-scanning/alerts":
+            return httpx.Response(200, json=[])
+        raise AssertionError(request.url)
+
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"oauth-client-secret").decode()}},
+        )
+
+    google = GoogleRestClient(
+        credentials=Credentials(token="google-token"),  # type: ignore[no-untyped-call]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
+    )
+    github = httpx.AsyncClient(transport=httpx.MockTransport(github_handler))
+    connector = GitHubOnboardingConnector(
+        "uumi-app",
+        "client-one",
+        "projects/project-one/secrets/github-oauth/versions/1",
+        "https://app.uumi.example/github/callback",
+        SecretManagerConnector(google),
+        github,
+    )
+
+    installation, repositories = await connector.verify("code-one", "verifier-one", None)
+
+    assert installation["installation_id"] == 123
+    assert repositories[0]["full_name"] == "customer/api"
+    await github.aclose()
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_connector_rejects_ambiguous_existing_installations() -> None:
+    def github_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "github.com":
+            return httpx.Response(200, json={"access_token": "temporary-user-token"})
+        return httpx.Response(
+            200,
+            json={
+                "installations": [
+                    {"id": 123, "app_slug": "uumi-app", "suspended_at": None},
+                    {"id": 456, "app_slug": "uumi-app", "suspended_at": None},
+                ]
+            },
+        )
+
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"oauth-client-secret").decode()}},
+        )
+
+    google = GoogleRestClient(
+        credentials=Credentials(token="google-token"),  # type: ignore[no-untyped-call]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
+    )
+    github = httpx.AsyncClient(transport=httpx.MockTransport(github_handler))
+    connector = GitHubOnboardingConnector(
+        "uumi-app",
+        "client-one",
+        "projects/project-one/secrets/github-oauth/versions/1",
+        "https://app.uumi.example/github/callback",
+        SecretManagerConnector(google),
+        github,
+    )
+
+    with pytest.raises(ConnectorAuthenticationError, match="Multiple Uumi Security"):
+        await connector.verify("code-one", "verifier-one", None)
 
     await github.aclose()
     await google.close()
@@ -252,7 +370,7 @@ def test_public_leak_event_is_an_exposure_trigger() -> None:
 
 class Connector:
     async def verify(
-        self, code: str, verifier: str, installation_id: int
+        self, code: str, verifier: str, installation_id: int | None
     ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
         assert code == "oauth-code"
         assert verifier
