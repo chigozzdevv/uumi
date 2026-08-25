@@ -102,15 +102,25 @@ async def test_connector_uses_user_access_to_verify_installation_without_persist
             oauth_bodies.append(request.content.decode())
             return httpx.Response(200, json={"access_token": "temporary-user-token"})
         assert request.headers["Authorization"] == "Bearer temporary-user-token"
-        if request.url.path == "/user/installations/123":
+        if request.url.path == "/user/installations":
             return httpx.Response(
                 200,
                 json={
-                    "id": 123,
-                    "account": {"id": 44, "login": "customer", "type": "Organization"},
-                    "repository_selection": "selected",
-                    "permissions": {"secret_scanning_alerts": "read"},
-                    "events": ["secret_scanning_alert"],
+                    "installations": [
+                        {
+                            "id": 123,
+                            "app_slug": "uumi-app",
+                            "suspended_at": None,
+                            "account": {
+                                "id": 44,
+                                "login": "customer",
+                                "type": "Organization",
+                            },
+                            "repository_selection": "selected",
+                            "permissions": {"secret_scanning_alerts": "read"},
+                            "events": ["secret_scanning_alert"],
+                        }
+                    ]
                 },
             )
         if request.url.path == "/user/installations/123/repositories":
@@ -209,20 +219,21 @@ async def test_connector_discovers_an_existing_app_installation() -> None:
                 json={
                     "installations": [
                         {"id": 999, "app_slug": "another-app", "suspended_at": None},
-                        {"id": 123, "app_slug": "uumi-app", "suspended_at": None},
+                        {
+                            "id": 123,
+                            "app_slug": "uumi-app",
+                            "suspended_at": None,
+                            "account": {
+                                "id": 44,
+                                "login": "customer",
+                                "type": "Organization",
+                            },
+                            "repository_selection": "selected",
+                            "permissions": {"secret_scanning_alerts": "read"},
+                            "events": ["secret_scanning_alert"],
+                        },
                         {"id": 456, "app_slug": "uumi-app", "suspended_at": "2026-08-01"},
                     ]
-                },
-            )
-        if request.url.path == "/user/installations/123":
-            return httpx.Response(
-                200,
-                json={
-                    "id": 123,
-                    "account": {"id": 44, "login": "customer", "type": "Organization"},
-                    "repository_selection": "selected",
-                    "permissions": {"secret_scanning_alerts": "read"},
-                    "events": ["secret_scanning_alert"],
                 },
             )
         if request.url.path == "/user/installations/123/repositories":

@@ -452,8 +452,10 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
     const parameters = new URLSearchParams(window.location.search)
     const callback = parameters.has("github") || parameters.has("installation_id") || (parameters.has("code") && sessionStorage.getItem("uumi.github"))
     if (!callback) return
+    const clearCallback = () => window.history.replaceState({}, "", window.location.pathname)
     const raw = sessionStorage.getItem("uumi.github")
     if (!raw) {
+      clearCallback()
       setCallbackError("GitHub connection session is unavailable")
       return
     }
@@ -464,38 +466,45 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
       const code = parameters.get("code")
       const state = parameters.get("state")
       if (installationId !== undefined && (!Number.isInteger(installationId) || installationId <= 0)) {
+        sessionStorage.removeItem("uumi.github")
+        clearCallback()
         setCallbackError("GitHub did not return an installation")
         return
       }
       if (!code) {
         if (installationId === undefined) {
+          sessionStorage.removeItem("uumi.github")
+          clearCallback()
           setCallbackError("GitHub authorization is incomplete")
           return
         }
         const continued = { ...saved, installation_id: installationId }
         sessionStorage.setItem("uumi.github", JSON.stringify(continued))
+        clearCallback()
         window.location.assign(saved.authorization_url)
         return
       }
       if (!state) {
+        sessionStorage.removeItem("uumi.github")
+        clearCallback()
         setCallbackError("GitHub authorization is incomplete")
         return
       }
+      sessionStorage.removeItem("uumi.github")
+      clearCallback()
       discover.mutate({ saved, code, state, installationId }, {
         onSuccess: (value) => {
           setDiscovery(value)
-          sessionStorage.removeItem("uumi.github")
-          window.history.replaceState({}, "", window.location.pathname)
         },
         onError: (error) => {
           if (error instanceof ApiError && error.code === "setup-required") {
-            sessionStorage.removeItem("uumi.github")
             install.mutate()
           }
         },
       })
     } catch {
       sessionStorage.removeItem("uumi.github")
+      clearCallback()
       setCallbackError("GitHub connection session is invalid")
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
