@@ -4,12 +4,12 @@ import pytest
 from google.cloud.firestore_v1 import AsyncClient
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def anyio_backend() -> str:
     return "asyncio"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 async def firestore_client() -> AsyncGenerator[AsyncClient, None]:
     client = AsyncClient(project="uumi-test")
     try:
