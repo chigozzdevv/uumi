@@ -15,7 +15,7 @@ from agents.deploy import (
 from agents.fleet import _SKILLS, AgentFleetService
 from agents.redact import redact
 from agents.runtime import AgentRuntimeService, _a2a_endpoint, _a2a_output, _prompt
-from agents.shared.app import _required_environment
+from agents.shared.app import _bind_request_tenant, _required_environment, managed_app
 from connectors.base.errors import ConnectorError
 from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
 from vertexai import types
@@ -338,10 +338,10 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     assert message["role"] == "1"
     assert message["metadata"] == {"uumi_organisation_id": "org_acme"}
     assert "do-not-send" not in message["content"][0]["text"]
-    assert google.headers == {"A2A-Version": "1.0"}
+    assert google.headers == {"A2A-Version": "0.3"}
 
 
-def test_a2a_endpoint_uses_the_tenant_scoped_http_json_v1_route() -> None:
+def test_a2a_endpoint_uses_the_agent_runtime_compatibility_route() -> None:
     value = registration().model_copy(
         update={
             "identity": (
@@ -353,10 +353,135 @@ def test_a2a_endpoint_uses_the_tenant_scoped_http_json_v1_route() -> None:
             "region": "us-east1",
         }
     )
-    assert _a2a_endpoint(value, "org_acme") == (
+    assert _a2a_endpoint(value) == (
         "https://us-east1-aiplatform.googleapis.com/v1beta1/projects/256626005636/locations/"
-        "us-east1/reasoningEngines/123/a2a/v1/org_acme/message:send"
+        "us-east1/reasoningEngines/123/a2a/v1/message:send"
     )
+
+
+def test_a2a_request_binds_and_rejects_mismatched_tenants() -> None:
+    from a2a.server.context import ServerCallContext
+    from a2a.types import SendMessageRequest
+    from a2a.utils.errors import InvalidParamsError
+    from google.protobuf.json_format import ParseDict  # type: ignore[import-untyped]
+
+    request = ParseDict(
+        {
+            "message": {
+                "messageId": "message_one",
+                "role": "ROLE_USER",
+                "parts": [{"text": "Plan a rotation"}],
+                "metadata": {"uumi_organisation_id": "org_acme"},
+            }
+        },
+        SendMessageRequest(),
+    )
+    context = ServerCallContext()
+
+    assert _bind_request_tenant(request, context) == "org_acme"
+    assert context.tenant == "org_acme"
+
+    context.tenant = "org_other"
+    with pytest.raises(InvalidParamsError, match="does not match"):
+        _bind_request_tenant(request, context)
+
+
+def test_managed_agent_enables_runtime_v03_compatibility() -> None:
+    from google.adk.agents import LlmAgent
+    from google.adk.apps import App
+
+    value = managed_app(
+        App(
+            name="test_app",
+            root_agent=LlmAgent(
+                name="test_agent",
+                description="Test agent",
+                model="gemini-2.5-flash",
+            ),
+        ),
+        {"test_skill"},
+    )
+
+    assert [item.protocol_version for item in value.agent_card.supported_interfaces] == [
+        "1.0",
+        "0.3",
+    ]
+    assert value._tmpl_attrs["extended_agent_card"] is value.agent_card
+
+
+def test_managed_agent_accepts_the_deployed_runtime_http_contract() -> None:
+    from a2a.server.agent_execution import AgentExecutor, RequestContext
+    from a2a.server.context import ServerCallContext
+    from a2a.server.events import EventQueue
+    from a2a.server.tasks import TaskStore
+    from a2a.types import ListTasksRequest, ListTasksResponse, Task, TaskState
+    from google.adk.agents import LlmAgent
+    from google.adk.apps import App
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    owners: list[str] = []
+
+    class Executor(AgentExecutor):
+        async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+            task = Task(id=context.task_id, context_id=context.context_id)
+            task.status.state = TaskState.TASK_STATE_COMPLETED
+            await event_queue.enqueue_event(task)
+
+        async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+            del context, event_queue
+
+    class Store(TaskStore):
+        async def save(self, task: Task, context: ServerCallContext) -> None:
+            del task
+            owners.append(context.tenant)
+
+        async def get(self, task_id: str, context: ServerCallContext) -> Task | None:
+            del task_id, context
+            return None
+
+        async def list(
+            self, params: ListTasksRequest, context: ServerCallContext
+        ) -> ListTasksResponse:
+            del params, context
+            return ListTasksResponse()
+
+        async def delete(self, task_id: str, context: ServerCallContext) -> None:
+            del task_id, context
+
+    value = managed_app(
+        App(
+            name="contract_app",
+            root_agent=LlmAgent(
+                name="contract_agent",
+                description="Contract agent",
+                model="gemini-2.5-flash",
+            ),
+        ),
+        {"contract_test"},
+    )
+    value._tmpl_attrs["agent_executor_builder"] = Executor
+    value._tmpl_attrs["agent_executor_kwargs"] = {}
+    value._tmpl_attrs["task_store_builder"] = Store
+    value._tmpl_attrs["task_store_kwargs"] = {}
+    value.set_up()
+
+    response = TestClient(Starlette(routes=value.rest_routes)).post(
+        "/a2a/v1/message:send",
+        headers={"A2A-Version": "0.3"},
+        json={
+            "message": {
+                "messageId": "message_one",
+                "role": "1",
+                "content": [{"text": "Plan a rotation"}],
+                "metadata": {"uumi_organisation_id": "org_acme"},
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert owners == ["org_acme"]
 
 
 class RuntimeGoogle:
@@ -366,7 +491,7 @@ class RuntimeGoogle:
 
     async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
         assert method == "POST"
-        assert url.endswith("/a2a/v1/org_acme/message:send")
+        assert url.endswith("/a2a/v1/message:send")
         body = kwargs.get("json")
         assert isinstance(body, dict)
         self.body = body
