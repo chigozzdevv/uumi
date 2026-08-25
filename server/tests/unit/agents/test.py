@@ -429,8 +429,43 @@ async def test_agent_runtime_surfaces_safe_connector_error_code() -> None:
 
     assert result.succeeded is False
     assert result.error == (
-        "google-api-404.invalid-argument.field-message.messageId: agent execution failed"
+        "google-api-404.a2a-send.invalid-argument.field-message.messageId: "
+        "agent execution failed"
     )
+    assert "upstream details" not in result.error
+
+
+@pytest.mark.anyio
+async def test_agent_runtime_surfaces_safe_memory_stage() -> None:
+    class FailingContinuity(RuntimeContinuity):
+        async def retrieve(
+            self, registration: AgentRegistration, query: str, count: int
+        ) -> tuple[dict[str, object], ...]:
+            raise ConnectorError("google-api-404", "upstream details must not escape")
+
+    runtime = AgentRuntimeService(
+        RuntimeFleet(),  # type: ignore[arg-type]
+        FailingContinuity(),  # type: ignore[arg-type]
+        RuntimeGoogle(),  # type: ignore[arg-type]
+        "project-one",
+        lambda: NOW,
+    )
+    from contracts import AgentTask
+
+    result = await runtime.execute(
+        AgentTask(
+            id="task_one",
+            organisation_id="org_acme",
+            run_id="run_one",
+            agent=AgentKind.PLANNER,
+            skill="plan_rotation",
+            objective="Plan a safe rotation",
+            requested_at=NOW,
+        )
+    )
+
+    assert result.succeeded is False
+    assert result.error == "google-api-404.memory-retrieve: agent execution failed"
     assert "upstream details" not in result.error
 
 

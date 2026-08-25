@@ -34,32 +34,43 @@ class AgentRuntimeService:
         started = monotonic()
         try:
             registration = await self._fleet.resolve(task.organisation_id, task.agent, task.skill)
-            session = await self._continuity.create_session(
-                registration,
-                f"session_{task.id}",
-                task.run_id,
-                f"{task.skill}: {task.objective[:160]}",
-            )
-            memories = await self._continuity.retrieve(registration, task.objective, count=5)
-            response = await self._google.request(
-                "POST",
-                _a2a_endpoint(
-                    registration.region,
-                    registration.deployment,
-                    task.organisation_id,
-                ),
-                headers={"A2A-Version": "1.0"},
-                json={
-                    "message": {
-                        "messageId": task.id,
-                        "contextId": session.remote_session.rsplit("/", 1)[-1],
-                        "role": "ROLE_USER",
-                        "parts": [{"text": _prompt(task, memories)}],
-                        "metadata": {"uumi_organisation_id": task.organisation_id},
+            try:
+                session = await self._continuity.create_session(
+                    registration,
+                    f"session_{task.id}",
+                    task.run_id,
+                    f"{task.skill}: {task.objective[:160]}",
+                )
+            except ConnectorError as error:
+                raise _stage_error(error, "session-create") from error
+            try:
+                memories = await self._continuity.retrieve(
+                    registration, task.objective, count=5
+                )
+            except ConnectorError as error:
+                raise _stage_error(error, "memory-retrieve") from error
+            try:
+                response = await self._google.request(
+                    "POST",
+                    _a2a_endpoint(
+                        registration.region,
+                        registration.deployment,
+                        task.organisation_id,
+                    ),
+                    headers={"A2A-Version": "1.0"},
+                    json={
+                        "message": {
+                            "messageId": task.id,
+                            "contextId": session.remote_session.rsplit("/", 1)[-1],
+                            "role": "ROLE_USER",
+                            "parts": [{"text": _prompt(task, memories)}],
+                            "metadata": {"uumi_organisation_id": task.organisation_id},
+                        },
+                        "tenant": task.organisation_id,
                     },
-                    "tenant": task.organisation_id,
-                },
-            )
+                )
+            except ConnectorError as error:
+                raise _stage_error(error, "a2a-send") from error
             event = redact(_event(response))
             if not isinstance(event, dict):
                 raise ValueError("agent response redaction changed its object shape")
@@ -99,6 +110,16 @@ class AgentRuntimeService:
             skill=task.skill,
         )
         return result
+
+
+def _stage_error(error: ConnectorError, stage: str) -> ConnectorError:
+    detail = stage if error.safe_detail is None else f"{stage}.{error.safe_detail}"
+    return ConnectorError(
+        error.code,
+        "Managed agent stage failed",
+        retryable=error.retryable,
+        safe_detail=detail,
+    )
 
 
 def _prompt(task: AgentTask, memories: tuple[dict[str, Any], ...] = ()) -> str:
