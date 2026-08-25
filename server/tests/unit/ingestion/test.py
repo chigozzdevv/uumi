@@ -10,11 +10,17 @@ import pytest
 from connectors.base import SecretValue
 from contracts import (
     Confidence,
+    Connection,
+    ConnectionAuthorization,
+    ConnectionInterface,
+    ConnectionRole,
+    ConnectionStatus,
     ConsumerBinding,
     ConsumerService,
     ControlDefinition,
     ControlPreferences,
     ControlVersion,
+    GitHubInstallation,
     Incident,
     IncidentStatus,
     ManagedCredential,
@@ -190,6 +196,111 @@ async def test_repository_selection_change_invalidates_github_routing() -> None:
     assert response.accepted
     assert github_store.invalidated is not None
     assert github_store.invalidated[0] == 123
+
+
+@pytest.mark.anyio
+async def test_signed_installation_delivery_promotes_existing_github_connection() -> None:
+    body = json.dumps({"action": "created", "installation": {"id": 123}}).encode()
+    secret = b"webhook-secret"
+    signature = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+    connection = Connection(
+        id="conn_github_123",
+        organisation_id="org_one",
+        platform="github",
+        display_name="GitHub · customer",
+        roles=frozenset({ConnectionRole.INCIDENT}),
+        interface=ConnectionInterface.API,
+        authorization=ConnectionAuthorization.OAUTH,
+        authorization_reference="oauth://github/installation/123",
+        capabilities=frozenset(
+            {"incident.verifyWebhook", "incident.readFinding", "repository.resolveContext"}
+        ),
+        allowed_resources=("customer/api",),
+        status=ConnectionStatus.SETUP_REQUIRED,
+        authenticated_at=NOW,
+        region="global",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    class Secrets:
+        async def access(self, reference: str) -> SecretValue:
+            return SecretValue(secret)
+
+    class GitHub:
+        async def record_receipt(self, receipt: object) -> GitHubInstallation:
+            return GitHubInstallation(
+                installation_id=123,
+                organisation_id="org_one",
+                account_id=44,
+                account_login="customer",
+                account_type="Organization",
+                repository_selection="selected",
+                permissions={"secret_scanning_alerts": "read"},
+                events=("secret_scanning_alert",),
+                webhook_verified_at=NOW,
+                repositories_ready=True,
+                ready=True,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+
+    class Connections:
+        def __init__(self) -> None:
+            self.value = connection
+
+        async def connections(self, organisation_id: str) -> tuple[Connection, ...]:
+            assert organisation_id == "org_one"
+            return (self.value,)
+
+        async def replace_connection(
+            self, value: Connection, expected_revision: int
+        ) -> Connection:
+            assert expected_revision == 0
+            self.value = value
+            return value
+
+    inventory = Connections()
+    runtime = SimpleNamespace(
+        settings=SimpleNamespace(
+            max_body_bytes=1024,
+            github_webhook_secret="projects/project-one/secrets/github/versions/1",
+        ),
+        secrets=Secrets(),
+        github=GitHub(),
+        inventory=inventory,
+    )
+    request_app = FastAPI()
+    request_app.state.runtime = runtime
+    delivered = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    response = await github(
+        Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/v1/github",
+                "headers": [],
+                "app": request_app,
+            },
+            receive,
+        ),
+        signature,
+        "delivery-one",
+        "installation",
+    )
+
+    assert response.accepted
+    assert inventory.value.status is ConnectionStatus.READY
+    assert inventory.value.last_validated_at == NOW
+    assert inventory.value.revision == 1
 
 
 @pytest.mark.anyio

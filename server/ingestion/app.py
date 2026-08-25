@@ -17,6 +17,7 @@ from contracts import (
     ConnectionRole,
     ConnectionStatus,
     Contract,
+    GitHubInstallation,
     GitHubWebhookReceipt,
     Identifier,
     Incident,
@@ -24,7 +25,7 @@ from contracts import (
 )
 from core.audit import AuditWriter
 from core.auth import AuthenticatedIdentity, GoogleTokenVerifier
-from core.errors import AuthenticationError
+from core.errors import AuthenticationError, StorageIntegrityError
 from core.github import FirestoreGitHubRepository
 from core.incident import IncidentService
 from core.notification import NotificationService
@@ -158,7 +159,7 @@ async def github(
             raise ValueError("GitHub webhook installation metadata is incomplete")
         if event_type == "installation":
             if action in {"created", "new_permissions_accepted", "unsuspend"}:
-                await runtime.github.record_receipt(
+                installation_state = await runtime.github.record_receipt(
                     GitHubWebhookReceipt(
                         installation_id=installation_id,
                         delivery_id=delivery_id,
@@ -167,6 +168,8 @@ async def github(
                         received_at=_now(),
                     )
                 )
+                if installation_state is not None:
+                    await _reconcile_github_connection(runtime, installation_state)
             elif action in {"deleted", "suspend"}:
                 await runtime.github.deactivate(
                     installation_id, _now(), deleted=action == "deleted"
@@ -229,6 +232,39 @@ async def github(
         incident=result.incident,
         applied=result.applied,
     )
+
+
+async def _reconcile_github_connection(
+    runtime: Runtime, installation: GitHubInstallation
+) -> None:
+    reference = f"oauth://github/installation/{installation.installation_id}"
+    matches = tuple(
+        connection
+        for connection in await runtime.inventory.connections(installation.organisation_id)
+        if connection.archived_at is None
+        and connection.platform == "github"
+        and ConnectionRole.INCIDENT in connection.roles
+        and connection.authorization_reference == reference
+    )
+    if not matches:
+        return
+    if len(matches) != 1:
+        raise StorageIntegrityError(
+            "GitHub installation resolves to more than one active connection"
+        )
+    current = matches[0]
+    desired = ConnectionStatus.READY if installation.ready else ConnectionStatus.SETUP_REQUIRED
+    if current.status is desired:
+        return
+    changed = current.model_copy(
+        update={
+            "status": desired,
+            "last_validated_at": installation.webhook_verified_at if installation.ready else None,
+            "updated_at": installation.updated_at,
+            "revision": current.revision + 1,
+        }
+    )
+    await runtime.inventory.replace_connection(changed, current.revision)
 
 
 @app.post("/v1/scc/{organisation_id}", response_model=IngestionResponse)

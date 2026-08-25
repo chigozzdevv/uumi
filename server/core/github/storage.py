@@ -229,7 +229,9 @@ class FirestoreGitHubRepository:
             values.append(GitHubRepository.model_validate(_data(snapshot)))
         return tuple(sorted(values, key=lambda value: value.full_name))
 
-    async def record_receipt(self, receipt: GitHubWebhookReceipt) -> None:
+    async def record_receipt(
+        self, receipt: GitHubWebhookReceipt
+    ) -> GitHubInstallation | None:
         reference = self._client.document(
             FirestorePaths.github_webhook_receipt(receipt.installation_id)
         )
@@ -238,11 +240,11 @@ class FirestoreGitHubRepository:
         )
 
         @async_transactional
-        async def apply(transaction: AsyncTransaction) -> None:
+        async def apply(transaction: AsyncTransaction) -> GitHubInstallation | None:
             index_snapshot = await index_ref.get(transaction=transaction)
             if not index_snapshot.exists:
                 transaction.set(reference, encode(receipt))
-                return
+                return None
             index = GitHubInstallationIndex.model_validate(_data(index_snapshot))
             installation_ref = self._client.document(
                 FirestorePaths.github_installation(index.organisation_id, receipt.installation_id)
@@ -250,23 +252,19 @@ class FirestoreGitHubRepository:
             installation_snapshot = await installation_ref.get(transaction=transaction)
             if not installation_snapshot.exists:
                 transaction.set(reference, encode(receipt))
-                return
+                return None
             installation = GitHubInstallation.model_validate(_data(installation_snapshot))
             active = index.active or (receipt.action == "unsuspend" and not index.deleted)
-            transaction.set(reference, encode(receipt))
-            transaction.set(
-                installation_ref,
-                encode(
-                    installation.model_copy(
-                        update={
-                            "webhook_verified_at": receipt.received_at,
-                            "active": active,
-                            "ready": active and installation.repositories_ready,
-                            "updated_at": receipt.received_at,
-                        }
-                    )
-                ),
+            changed = installation.model_copy(
+                update={
+                    "webhook_verified_at": receipt.received_at,
+                    "active": active,
+                    "ready": active and installation.repositories_ready,
+                    "updated_at": receipt.received_at,
+                }
             )
+            transaction.set(reference, encode(receipt))
+            transaction.set(installation_ref, encode(changed))
             transaction.set(
                 index_ref,
                 encode(
@@ -278,8 +276,9 @@ class FirestoreGitHubRepository:
                     )
                 ),
             )
+            return changed
 
-        await apply(self._client.transaction(max_attempts=5))
+        return await apply(self._client.transaction(max_attempts=5))
 
     async def deactivate(
         self, installation_id: int, occurred_at: datetime, deleted: bool = False
