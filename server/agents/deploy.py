@@ -1,8 +1,13 @@
 import argparse
 import json
 import os
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from shutil import copytree, ignore_patterns
+from tempfile import TemporaryDirectory
 from typing import Any, cast
 
 import google.auth
@@ -20,6 +25,19 @@ from agents.storage import AgentRepository
 
 _ROOT = Path(__file__).resolve().parents[2]
 _CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+_MANAGED_AGENT_IDENTITY = re.compile(
+    r"^agents\.global\.(?:org|project)-\d+\.system\.id\.goog/"
+    r"resources/aiplatform/projects/\d+/locations/[a-z0-9-]+/reasoningEngines/\d+$"
+)
+_AGENT_SOURCE_PACKAGES = (
+    (_ROOT / "server" / "agents", "agents"),
+    (_ROOT / "server" / "browser", "browser"),
+    (_ROOT / "server" / "connectors", "connectors"),
+    (_ROOT / "server" / "core", "core"),
+    (_ROOT / "packages" / "contracts" / "src" / "contracts", "contracts"),
+    (_ROOT / "packages" / "policy" / "src" / "policy", "policy"),
+    (_ROOT / "packages" / "telemetry" / "src" / "telemetry", "telemetry"),
+)
 
 
 async def deploy(
@@ -102,6 +120,7 @@ async def _deploy_fleet(
             registrations.append(current)
             await _grant_callers(
                 google,
+                project_id,
                 region,
                 current.deployment,
                 caller_role,
@@ -110,26 +129,39 @@ async def _deploy_fleet(
             continue
         module = __import__(f"agents.{kind.value}.agent", fromlist=["agent_app"])
         app = module.agent_app
-        remote = client.agent_engines.create(
-            agent=app,
-            config=_deployment_config(
-                project_id,
-                kind,
-                version,
-                staging_bucket,
-                kms_key,
-                ingress_gateway,
-                egress_gateway,
-            ),
+        remote = _matching_deployment(
+            client,
+            kind,
+            version,
+            kms_key,
+            ingress_gateway,
+            egress_gateway,
         )
+        if remote is None:
+            with _staged_agent_source() as source_packages:
+                remote = client.agent_engines.create(
+                    agent=app,
+                    config=_deployment_config(
+                        project_id,
+                        kind,
+                        version,
+                        staging_bucket,
+                        kms_key,
+                        ingress_gateway,
+                        egress_gateway,
+                        source_packages,
+                    ),
+                )
         resource = remote.api_resource
         if resource is None or not resource.name:
             raise RuntimeError(f"Agent Runtime returned no resource for {kind.value}")
+        deployment = _canonical_deployment(resource.name, project_id, region)
         identity = _effective_identity(resource)
         await _grant_callers(
             google,
+            project_id,
             region,
-            resource.name,
+            deployment,
             caller_role,
             approved_callers,
         )
@@ -143,7 +175,7 @@ async def _deploy_fleet(
             owner="Uumi Platform",
             identity=identity,
             endpoint=f"https://{region}-aiplatform.googleapis.com",
-            deployment=resource.name,
+            deployment=deployment,
             registry=f"//agentregistry.googleapis.com/projects/{project_id}/locations/{region}",
             ingress_gateway=ingress_gateway,
             egress_gateway=egress_gateway,
@@ -165,19 +197,14 @@ def _deployment_config(
     kms_key: str,
     ingress_gateway: str,
     egress_gateway: str,
+    source_packages: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     return {
         "display_name": f"Uumi {kind.value.title()} Agent {version}",
         "description": f"Uumi managed {kind.value} agent",
         "staging_bucket": staging_bucket,
         "requirements": str(_ROOT / "server" / "agents" / "requirements.txt"),
-        "extra_packages": [
-            str(_ROOT / "server"),
-            str(_ROOT / "packages" / "contracts" / "src"),
-            str(_ROOT / "packages" / "policy" / "src"),
-            str(_ROOT / "packages" / "telemetry" / "src"),
-        ],
-        "env_vars": {"GOOGLE_CLOUD_PROJECT": project_id},
+        "extra_packages": list(source_packages or (name for _, name in _AGENT_SOURCE_PACKAGES)),
         "identity_type": types.IdentityType.AGENT_IDENTITY,
         "agent_gateway_config": {
             "client_to_agent_config": {"agent_gateway": ingress_gateway},
@@ -201,24 +228,93 @@ def _deployment_config(
     }
 
 
+@contextmanager
+def _staged_agent_source() -> Iterator[tuple[str, ...]]:
+    previous = Path.cwd()
+    with TemporaryDirectory(prefix="uumi-agent-source-") as directory:
+        root = Path(directory)
+        for source, name in _AGENT_SOURCE_PACKAGES:
+            copytree(
+                source,
+                root / name,
+                ignore=ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
+        os.chdir(root)
+        try:
+            yield tuple(name for _, name in _AGENT_SOURCE_PACKAGES)
+        finally:
+            os.chdir(previous)
+
+
 def _effective_identity(resource: Any) -> str:
     spec = getattr(resource, "spec", None)
     identity = getattr(spec, "effective_identity", None)
-    if not isinstance(identity, str) or not identity.startswith("principal://"):
+    if not isinstance(identity, str):
         raise RuntimeError("Agent Runtime returned no managed Agent Identity")
-    return identity
+    value = identity.removeprefix("principal://")
+    if _MANAGED_AGENT_IDENTITY.fullmatch(value) is None:
+        raise RuntimeError("Agent Runtime returned no managed Agent Identity")
+    return f"principal://{value}"
+
+
+def _canonical_deployment(name: str, project_id: str, region: str) -> str:
+    match = re.fullmatch(
+        rf"projects/[^/]+/locations/{re.escape(region)}/reasoningEngines/(\d+)",
+        name,
+    )
+    if match is None:
+        raise RuntimeError("Agent Runtime returned an invalid regional resource name")
+    return f"projects/{project_id}/locations/{region}/reasoningEngines/{match.group(1)}"
+
+
+def _matching_deployment(
+    client: Any,
+    kind: AgentKind,
+    version: str,
+    kms_key: str,
+    ingress_gateway: str,
+    egress_gateway: str,
+) -> Any | None:
+    matches = []
+    for remote in client.agent_engines.list():
+        resource = remote.api_resource
+        spec = getattr(resource, "spec", None)
+        deployment = getattr(spec, "deployment_spec", None)
+        gateways = getattr(deployment, "agent_gateway_config", None)
+        ingress = getattr(gateways, "client_to_agent_config", None)
+        egress = getattr(gateways, "agent_to_anywhere_config", None)
+        encryption = getattr(resource, "encryption_spec", None)
+        labels = getattr(resource, "labels", None)
+        if (
+            getattr(resource, "display_name", None) == f"Uumi {kind.value.title()} Agent {version}"
+            and isinstance(labels, dict)
+            and labels.get("uumi-agent") == kind.value
+            and labels.get("uumi-version") == version.replace(".", "-")
+            and getattr(encryption, "kms_key_name", None) == kms_key
+            and getattr(ingress, "agent_gateway", None) == ingress_gateway
+            and getattr(egress, "agent_gateway", None) == egress_gateway
+        ):
+            matches.append(remote)
+    if len(matches) > 1:
+        raise RuntimeError(f"multiple matching {kind.value} Agent Runtime deployments exist")
+    return matches[0] if matches else None
 
 
 async def _grant_callers(
     google: GoogleRestClient,
+    project_id: str,
     region: str,
     deployment: str,
     role: str,
     callers: frozenset[str],
 ) -> None:
-    project = deployment.split("/", 2)[1] if deployment.startswith("projects/") else ""
-    if role != f"projects/{project}/roles/uumiAgentCaller":
+    if role != f"projects/{project_id}/roles/uumiAgentCaller":
         raise ValueError("caller role must be the Uumi least-privilege project role")
+    if not re.fullmatch(
+        rf"projects/[^/]+/locations/{re.escape(region)}/reasoningEngines/\d+",
+        deployment,
+    ):
+        raise ValueError("deployment must be a regional Agent Runtime resource")
     if not callers or any(not _iam_member(value) for value in callers):
         raise ValueError("approved callers must be explicit IAM service-account or group members")
     endpoint = f"https://{region}-aiplatform.googleapis.com/v1beta1/{deployment}"

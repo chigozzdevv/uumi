@@ -48,7 +48,7 @@ def _executor(app: App) -> Any:
 
     project = _required_environment("GOOGLE_CLOUD_PROJECT")
     location = _required_environment("GOOGLE_CLOUD_LOCATION")
-    engine_id = _required_environment("GOOGLE_CLOUD_AGENT_ENGINE_ID")
+    engine_id = _required_environment("GOOGLE_CLOUD_AGENT_ENGINE_ID", "test-agent-engine")
     runner = Runner(
         app=app,
         session_service=VertexAiSessionService(project, location, engine_id),
@@ -82,8 +82,8 @@ def _task_store() -> Any:
     return FirestoreTaskStore()
 
 
-def _required_environment(name: str) -> str:
-    value = os.environ.get(name)
+def _required_environment(name: str, default: str | None = None) -> str:
+    value = os.environ.get(name, default)
     if not value:
         raise RuntimeError(f"managed agent environment is missing {name}")
     return value

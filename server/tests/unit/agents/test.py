@@ -1,17 +1,21 @@
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from agents.continuity import AgentContinuityService
 from agents.deploy import (
+    _canonical_deployment,
     _deployment_config,
     _deployment_credentials,
     _effective_identity,
     _grant_callers,
+    _staged_agent_source,
 )
 from agents.fleet import _SKILLS, AgentFleetService
 from agents.redact import redact
 from agents.runtime import AgentRuntimeService, _a2a_output, _prompt
+from agents.shared.app import _required_environment
 from connectors.base.errors import ConnectorError
 from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
 from vertexai import types
@@ -93,6 +97,7 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
 
     assert config["identity_type"] is types.IdentityType.AGENT_IDENTITY
     assert "service_account" not in config
+    assert "env_vars" not in config
     assert config["agent_gateway_config"] == {
         "client_to_agent_config": {
             "agent_gateway": "projects/project-one/locations/us-central1/agentGateways/ingress"
@@ -103,11 +108,69 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     }
 
 
+def test_agent_deployment_stages_importable_top_level_packages() -> None:
+    previous = Path.cwd()
+
+    with _staged_agent_source() as packages:
+        staged = Path.cwd()
+        assert packages == (
+            "agents",
+            "browser",
+            "connectors",
+            "core",
+            "contracts",
+            "policy",
+            "telemetry",
+        )
+        assert (staged / "agents" / "shared" / "app.py").is_file()
+        assert (staged / "contracts" / "agent.py").is_file()
+        assert not tuple(staged.rglob("__pycache__"))
+
+    assert Path.cwd() == previous
+    assert not staged.exists()
+
+
+def test_agent_build_uses_non_resource_sentinel_before_runtime_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", raising=False)
+
+    assert (
+        _required_environment("GOOGLE_CLOUD_AGENT_ENGINE_ID", "test-agent-engine")
+        == "test-agent-engine"
+    )
+
+
 def test_agent_deployment_requires_effective_identity() -> None:
     resource = type("Resource", (), {"spec": type("Spec", (), {"effective_identity": None})()})()
 
     with pytest.raises(RuntimeError, match="no managed Agent Identity"):
         _effective_identity(resource)
+
+
+def test_agent_deployment_normalises_managed_effective_identity() -> None:
+    identity = (
+        "agents.global.org-485216906701.system.id.goog/resources/aiplatform/"
+        "projects/256626005636/locations/us-east1/reasoningEngines/942888395422564352"
+    )
+    resource = type(
+        "Resource",
+        (),
+        {"spec": type("Spec", (), {"effective_identity": identity})()},
+    )()
+
+    assert _effective_identity(resource) == f"principal://{identity}"
+
+
+def test_agent_deployment_canonicalises_project_number_to_configured_id() -> None:
+    assert (
+        _canonical_deployment(
+            "projects/256626005636/locations/us-east1/reasoningEngines/942888395422564352",
+            "useuumi",
+            "us-east1",
+        )
+        == "projects/useuumi/locations/us-east1/reasoningEngines/942888395422564352"
+    )
 
 
 def test_agent_deployment_impersonates_explicit_identity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,8 +205,9 @@ async def test_agent_deployment_grants_only_declared_callers() -> None:
 
     await _grant_callers(
         google,  # type: ignore[arg-type]
+        "test",
         "us-central1",
-        "projects/test/locations/us-central1/reasoningEngines/planner",
+        "projects/test/locations/us-central1/reasoningEngines/123",
         "projects/test/roles/uumiAgentCaller",
         frozenset(
             {
@@ -177,8 +241,9 @@ async def test_agent_deployment_removes_obsolete_callers() -> None:
 
     await _grant_callers(
         google,  # type: ignore[arg-type]
+        "test",
         "us-central1",
-        "projects/test/locations/us-central1/reasoningEngines/planner",
+        "projects/test/locations/us-central1/reasoningEngines/123",
         "projects/test/roles/uumiAgentCaller",
         frozenset({"serviceAccount:coordinator@test.iam.gserviceaccount.com"}),
     )
