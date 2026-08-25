@@ -156,6 +156,7 @@ async def _deploy_fleet(
         if resource is None or not resource.name:
             raise RuntimeError(f"Agent Runtime returned no resource for {kind.value}")
         deployment = _canonical_deployment(resource.name, region)
+        deployment_project = deployment.split("/")[1]
         identity = _effective_identity(resource)
         await _grant_callers(
             google,
@@ -176,9 +177,11 @@ async def _deploy_fleet(
             identity=identity,
             endpoint=f"https://{region}-aiplatform.googleapis.com",
             deployment=deployment,
-            registry=f"//agentregistry.googleapis.com/projects/{project_id}/locations/{region}",
-            ingress_gateway=ingress_gateway,
-            egress_gateway=egress_gateway,
+            registry=(
+                f"//agentregistry.googleapis.com/projects/{deployment_project}/locations/{region}"
+            ),
+            ingress_gateway=_canonical_gateway(ingress_gateway, deployment_project, region),
+            egress_gateway=_canonical_gateway(egress_gateway, deployment_project, region),
             region=region,
             approved_callers=approved_callers,
             tool_destinations=frozenset({"firestore"}),
@@ -267,6 +270,16 @@ def _canonical_deployment(name: str, region: str) -> str:
     ):
         raise RuntimeError("Agent Runtime returned an invalid regional resource name")
     return name
+
+
+def _canonical_gateway(name: str, project: str, region: str) -> str:
+    match = re.fullmatch(
+        rf"projects/[^/]+/locations/{re.escape(region)}/agentGateways/(?P<gateway>[^/]+)",
+        name,
+    )
+    if match is None or not project.isdigit():
+        raise RuntimeError("Agent Runtime gateway cannot be paired with its deployment")
+    return f"projects/{project}/locations/{region}/agentGateways/{match.group('gateway')}"
 
 
 def _matching_deployment(

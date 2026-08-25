@@ -6,6 +6,7 @@ import pytest
 from agents.continuity import AgentContinuityService
 from agents.deploy import (
     _canonical_deployment,
+    _canonical_gateway,
     _deployment_config,
     _deployment_credentials,
     _effective_identity,
@@ -82,6 +83,25 @@ async def test_fleet_rejects_unregistered_skill_boundary() -> None:
 
     with pytest.raises(ValueError, match="invalid skill boundary"):
         await service.register(value)
+
+
+@pytest.mark.anyio
+async def test_fleet_accepts_canonical_numeric_runtime_resources() -> None:
+    value = registration().model_copy(
+        update={
+            "deployment": ("projects/256626005636/locations/us-central1/reasoningEngines/123"),
+            "registry": (
+                "//agentregistry.googleapis.com/projects/256626005636/locations/us-central1"
+            ),
+            "ingress_gateway": (
+                "projects/256626005636/locations/us-central1/agentGateways/ingress"
+            ),
+            "egress_gateway": ("projects/256626005636/locations/us-central1/agentGateways/egress"),
+        }
+    )
+    service = AgentFleetService(Repository(()))  # type: ignore[arg-type]
+
+    assert await service.register(value) == value
 
 
 def test_agent_deployment_uses_identity_and_both_gateways() -> None:
@@ -170,6 +190,14 @@ def test_agent_deployment_preserves_google_canonical_resource() -> None:
         )
         == "projects/256626005636/locations/us-east1/reasoningEngines/942888395422564352"
     )
+
+
+def test_agent_deployment_pairs_gateways_with_the_canonical_project() -> None:
+    assert _canonical_gateway(
+        "projects/useuumi/locations/us-east1/agentGateways/uumi-agent-ingress",
+        "256626005636",
+        "us-east1",
+    ) == ("projects/256626005636/locations/us-east1/agentGateways/uumi-agent-ingress")
 
 
 def test_agent_deployment_impersonates_explicit_identity(monkeypatch: pytest.MonkeyPatch) -> None:
