@@ -14,7 +14,7 @@ from agents.deploy import (
 )
 from agents.fleet import _SKILLS, AgentFleetService
 from agents.redact import redact
-from agents.runtime import AgentRuntimeService, _a2a_output, _prompt
+from agents.runtime import AgentRuntimeService, _a2a_endpoint, _a2a_output, _prompt
 from agents.shared.app import _required_environment
 from connectors.base.errors import ConnectorError
 from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
@@ -338,18 +338,34 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     assert message["contextId"] == "session-task-one"
     assert message["metadata"] == {"uumi_organisation_id": "org_acme"}
     assert "do-not-send" not in message["parts"][0]["text"]
+    assert google.headers == {"A2A-Version": "1.0"}
+
+
+def test_a2a_endpoint_uses_the_v1_tenant_route() -> None:
+    assert _a2a_endpoint(
+        "us-east1",
+        "projects/useuumi/locations/us-east1/reasoningEngines/123",
+        "org_acme",
+    ) == (
+        "https://us-east1-aiplatform.googleapis.com/v1beta1/projects/useuumi/locations/"
+        "us-east1/reasoningEngines/123/a2a/org_acme/message:send"
+    )
 
 
 class RuntimeGoogle:
     def __init__(self) -> None:
         self.body: dict[str, object] = {}
+        self.headers: dict[str, str] = {}
 
     async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
         assert method == "POST"
-        assert url.endswith("/a2a/v1/message:send")
+        assert url.endswith("/a2a/org_acme/message:send")
         body = kwargs.get("json")
         assert isinstance(body, dict)
         self.body = body
+        headers = kwargs.get("headers")
+        assert isinstance(headers, dict)
+        self.headers = headers
         return {"task": {"artifacts": [{"parts": [{"text": '{"decision":"plan"}'}]}]}}
 
 
@@ -378,6 +394,38 @@ class RuntimeContinuity:
         self, registration: AgentRegistration, query: str, count: int
     ) -> tuple[dict[str, object], ...]:
         return ()
+
+
+@pytest.mark.anyio
+async def test_agent_runtime_surfaces_safe_connector_error_code() -> None:
+    class FailingGoogle:
+        async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
+            raise ConnectorError("google-api-404", "upstream details must not escape")
+
+    runtime = AgentRuntimeService(
+        RuntimeFleet(),  # type: ignore[arg-type]
+        RuntimeContinuity(),  # type: ignore[arg-type]
+        FailingGoogle(),  # type: ignore[arg-type]
+        "project-one",
+        lambda: NOW,
+    )
+    from contracts import AgentTask
+
+    result = await runtime.execute(
+        AgentTask(
+            id="task_one",
+            organisation_id="org_acme",
+            run_id="run_one",
+            agent=AgentKind.PLANNER,
+            skill="plan_rotation",
+            objective="Plan a safe rotation",
+            requested_at=NOW,
+        )
+    )
+
+    assert result.succeeded is False
+    assert result.error == "google-api-404: agent execution failed"
+    assert "upstream details" not in result.error
 
 
 def test_agent_context_recursively_redacts_secret_material() -> None:

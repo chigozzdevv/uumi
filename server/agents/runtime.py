@@ -3,7 +3,9 @@ from collections.abc import Callable
 from datetime import datetime
 from time import monotonic
 from typing import Any
+from urllib.parse import quote
 
+from connectors.base.errors import ConnectorError
 from connectors.google import GoogleRestClient
 from contracts import AgentResult, AgentTask
 from telemetry import record
@@ -41,7 +43,12 @@ class AgentRuntimeService:
             memories = await self._continuity.retrieve(registration, task.objective, count=5)
             response = await self._google.request(
                 "POST",
-                _a2a_endpoint(registration.region, registration.deployment),
+                _a2a_endpoint(
+                    registration.region,
+                    registration.deployment,
+                    task.organisation_id,
+                ),
+                headers={"A2A-Version": "1.0"},
                 json={
                     "message": {
                         "messageId": task.id,
@@ -70,12 +77,13 @@ class AgentRuntimeService:
                 completed_at=self._clock(),
             )
         except Exception as error:
+            code = error.code if isinstance(error, ConnectorError) else type(error).__name__
             result = AgentResult(
                 task_id=task.id,
                 agent=task.agent,
                 skill=task.skill,
                 succeeded=False,
-                error=f"{type(error).__name__}: agent execution failed",
+                error=f"{code}: agent execution failed",
                 completed_at=self._clock(),
             )
         record(
@@ -145,8 +153,11 @@ def _collect_text(value: Any, output: list[str]) -> None:
             _collect_text(nested, output)
 
 
-def _a2a_endpoint(region: str, deployment: str) -> str:
+def _a2a_endpoint(region: str, deployment: str, tenant: str) -> str:
     expected = f"projects/{deployment.split('/')[1]}/locations/{region}/reasoningEngines/"
     if not deployment.startswith(expected):
         raise ValueError("agent deployment does not match its registered project and region")
-    return f"https://{region}-aiplatform.googleapis.com/v1beta1/{deployment}/a2a/v1/message:send"
+    return (
+        f"https://{region}-aiplatform.googleapis.com/v1beta1/{deployment}/a2a/"
+        f"{quote(tenant, safe='')}/message:send"
+    )
