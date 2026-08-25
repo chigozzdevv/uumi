@@ -81,10 +81,13 @@ resource "google_access_context_manager_service_perimeter" "uumi" {
 
     vpc_accessible_services {
       enable_restriction = true
-      allowed_services = [
-        "RESTRICTED-SERVICES",
-        "run.googleapis.com",
-      ]
+      allowed_services = concat(
+        [
+          "RESTRICTED-SERVICES",
+          "run.googleapis.com",
+        ],
+        var.enable_agent_gateway ? ["aiplatform.googleapis.com"] : [],
+      )
     }
   }
 
