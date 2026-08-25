@@ -234,9 +234,7 @@ async def github(
     )
 
 
-async def _reconcile_github_connection(
-    runtime: Runtime, installation: GitHubInstallation
-) -> None:
+async def _reconcile_github_connection(runtime: Runtime, installation: GitHubInstallation) -> None:
     reference = f"oauth://github/installation/{installation.installation_id}"
     matches = tuple(
         connection

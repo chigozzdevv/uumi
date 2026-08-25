@@ -229,9 +229,7 @@ class FirestoreGitHubRepository:
             values.append(GitHubRepository.model_validate(_data(snapshot)))
         return tuple(sorted(values, key=lambda value: value.full_name))
 
-    async def record_receipt(
-        self, receipt: GitHubWebhookReceipt
-    ) -> GitHubInstallation | None:
+    async def record_receipt(self, receipt: GitHubWebhookReceipt) -> GitHubInstallation | None:
         reference = self._client.document(
             FirestorePaths.github_webhook_receipt(receipt.installation_id)
         )

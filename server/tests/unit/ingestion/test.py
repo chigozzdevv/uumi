@@ -253,9 +253,7 @@ async def test_signed_installation_delivery_promotes_existing_github_connection(
             assert organisation_id == "org_one"
             return (self.value,)
 
-        async def replace_connection(
-            self, value: Connection, expected_revision: int
-        ) -> Connection:
+        async def replace_connection(self, value: Connection, expected_revision: int) -> Connection:
             assert expected_revision == 0
             self.value = value
             return value
