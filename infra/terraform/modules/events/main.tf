@@ -298,10 +298,10 @@ resource "google_pubsub_topic" "secrets" {
 }
 
 resource "google_pubsub_topic_iam_member" "secrets" {
-  for_each = google_pubsub_topic.secrets
+  for_each = local.secrets
 
-  project = each.value.project
-  topic   = each.value.name
+  project = var.project_id
+  topic   = google_pubsub_topic.secrets[each.key].name
   role    = "roles/pubsub.publisher"
   member  = var.secretmanager_member
 }
@@ -468,19 +468,19 @@ resource "google_pubsub_topic_iam_member" "deadletter" {
 }
 
 resource "google_pubsub_subscription_iam_member" "deadletter" {
-  for_each = google_pubsub_subscription.scc
+  for_each = local.scc
 
-  project      = each.value.project
-  subscription = each.value.name
+  project      = var.project_id
+  subscription = google_pubsub_subscription.scc[each.key].name
   role         = "roles/pubsub.subscriber"
   member       = google_project_service_identity.pubsub.member
 }
 
 resource "google_pubsub_subscription_iam_member" "secret_deadletter" {
-  for_each = google_pubsub_subscription.secrets
+  for_each = local.secrets
 
-  project      = each.value.project
-  subscription = each.value.name
+  project      = var.project_id
+  subscription = google_pubsub_subscription.secrets[each.key].name
   role         = "roles/pubsub.subscriber"
   member       = google_project_service_identity.pubsub.member
 }

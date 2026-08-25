@@ -311,6 +311,24 @@ resource "google_project_iam_member" "modelarmor" {
   member  = each.value.member
 }
 
+resource "google_project_iam_custom_role" "gateway_user" {
+  project     = var.project_id
+  role_id     = "uumiAgentGatewayUser"
+  title       = "Uumi Agent Gateway User"
+  description = "Allows the Vertex AI service agent to attach approved Agent Gateways."
+  permissions = [
+    "networkservices.agentGateways.get",
+    "networkservices.agentGateways.use",
+    "networkservices.operations.get",
+  ]
+}
+
+resource "google_project_iam_member" "gateway_user" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.gateway_user.name
+  member  = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+}
+
 resource "google_project_iam_member" "agent" {
   for_each = toset([
     "roles/agentregistry.viewer",

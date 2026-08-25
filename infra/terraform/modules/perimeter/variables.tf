@@ -32,3 +32,9 @@ variable "region" {
   description = "Only Google Cloud region in which new Uumi resources may be created."
   type        = string
 }
+
+variable "enable_agent_gateway" {
+  description = "Route Agent Runtime through Agent Gateway instead of protecting the Vertex API with VPC Service Controls."
+  type        = bool
+  default     = false
+}

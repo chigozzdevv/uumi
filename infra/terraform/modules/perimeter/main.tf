@@ -1,6 +1,5 @@
 locals {
-  restricted_services = toset([
-    "aiplatform.googleapis.com",
+  data_services = toset([
     "artifactregistry.googleapis.com",
     "cloudkms.googleapis.com",
     "cloudscheduler.googleapis.com",
@@ -20,6 +19,12 @@ locals {
     # Google VPC Service Controls supports Workflows but not the separate executions API.
     "workflows.googleapis.com",
   ])
+  # Agent Gateway and VPC Service Controls cannot both govern Agent Runtime. Keep
+  # persisted data services inside the perimeter when Gateway governance is enabled.
+  restricted_services = var.enable_agent_gateway ? local.data_services : setunion(
+    local.data_services,
+    toset(["aiplatform.googleapis.com"]),
+  )
 }
 
 resource "google_access_context_manager_service_perimeter" "uumi" {
@@ -33,6 +38,46 @@ resource "google_access_context_manager_service_perimeter" "uumi" {
     resources           = ["projects/${var.project_number}"]
     restricted_services = local.restricted_services
     access_levels       = [var.operator_access_level]
+
+    ingress_policies {
+      title = "agent-runtime-build"
+
+      ingress_from {
+        identities = [
+          "serviceAccount:service-${var.project_number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com",
+        ]
+        sources {
+          access_level = "*"
+        }
+      }
+
+      ingress_to {
+        resources = ["projects/${var.project_number}"]
+
+        operations {
+          service_name = "storage.googleapis.com"
+          method_selectors {
+            method = "google.storage.objects.get"
+          }
+          method_selectors {
+            method = "google.storage.objects.list"
+          }
+          method_selectors {
+            method = "google.storage.buckets.getStorageLayout"
+          }
+        }
+
+        operations {
+          service_name = "artifactregistry.googleapis.com"
+          method_selectors {
+            method = "artifactregistry.googleapis.com/DockerRead"
+          }
+          method_selectors {
+            method = "artifactregistry.googleapis.com/DockerWrite"
+          }
+        }
+      }
+    }
 
     vpc_accessible_services {
       enable_restriction = true

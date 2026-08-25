@@ -137,9 +137,11 @@ The resulting graph includes:
   its exact approved domains. Cloud Run uses a separate source subnet and a fixed Google and
   connector-domain list because Direct VPC egress does not propagate service-account identity to
   Secure Web Proxy; unmatched internet egress is denied.
-- An enforced VPC Service Controls perimeter for supported Google APIs plus a project resource
-  location policy bound to the selected region. Third-party internet control remains the Secure
-  Web Proxy's responsibility.
+- An enforced VPC Service Controls perimeter for persisted data APIs plus a project resource
+  location policy bound to the selected region. When Agent Gateway is enabled, Vertex Agent
+  Runtime is governed by Gateway, IAM, Model Armor, and CMEK instead of VPC Service Controls,
+  because Google Cloud does not support attaching Agent Gateway to a VPC-SC Agent Runtime.
+  Third-party internet control remains the Secure Web Proxy's responsibility.
 - The signed-webhook ingestion service remains externally reachable by design. Cloud Run's Admin
   API is therefore outside the service perimeter; ingress authentication and replay protection
   guard that transport, while every persisted data service stays inside the perimeter. The Admin

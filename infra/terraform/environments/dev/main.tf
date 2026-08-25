@@ -125,6 +125,7 @@ module "storage" {
     gateway      = module.identity.members["uumi-gateway"]
     notification = module.identity.members["uumi-notification"]
     auditlog     = module.identity.members["uumi-auditlog"]
+    agents       = module.identity.members["uumi-agents"]
   }
   evidence_users = {
     broker      = module.identity.members["uumi-broker"]
@@ -376,6 +377,7 @@ module "perimeter" {
   access_policy_id      = var.access_policy_id
   operator_access_level = var.operator_access_level
   region                = var.region
+  enable_agent_gateway  = var.enable_gateway
 
   depends_on = [module.project]
 }

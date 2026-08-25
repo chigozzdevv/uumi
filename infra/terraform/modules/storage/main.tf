@@ -408,6 +408,14 @@ resource "google_storage_bucket_iam_member" "agents" {
   member = var.agent_staging_user
 }
 
+resource "google_storage_bucket_iam_member" "agent_bucket_reader" {
+  count = var.agent_staging_user == null ? 0 : 1
+
+  bucket = google_storage_bucket.agents.name
+  role   = "roles/storage.legacyBucketReader"
+  member = var.agent_staging_user
+}
+
 resource "google_kms_crypto_key_iam_member" "agents" {
   count = var.agent_staging_user == null ? 0 : 1
 
@@ -591,10 +599,10 @@ resource "google_secret_manager_secret" "provider" {
 }
 
 resource "google_secret_manager_secret_iam_member" "provider" {
-  for_each = var.provider_secret_accessor == null ? {} : google_secret_manager_secret.provider
+  for_each = var.provider_secret_accessor == null ? {} : var.provider_sources
 
-  project   = each.value.project
-  secret_id = each.value.secret_id
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.provider[each.key].secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = var.provider_secret_accessor
 }
