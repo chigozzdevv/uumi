@@ -13,3 +13,8 @@ class AmbiguousMutationError(ConnectorError):
 class ConnectorAuthenticationError(ConnectorError):
     def __init__(self, message: str) -> None:
         super().__init__("connector-authentication", message, retryable=False)
+
+
+class ConnectorSetupRequiredError(ConnectorError):
+    def __init__(self, message: str) -> None:
+        super().__init__("connector-setup-required", message, retryable=False)

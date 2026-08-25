@@ -11,10 +11,11 @@ import { Failure, Loading } from "../components/state"
 import { Toolbar } from "../components/toolbar"
 import { Badge } from "../components/ui/badge"
 import { Button } from "../components/ui/button"
+import { Modal } from "../components/ui/modal"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import { ConnectPage, Field, FormGrid, ResourceSelect, SelectControl, SetupPage, SuccessPage, formControl } from "../components/workspace"
 import type { Connection, ConnectionRole, HttpProviderApi, Playbook } from "../types"
-import { activeOrganisationId, api, type CreateConnectionInput, type GitHubDiscoveryResponse, type GitHubOnboardingResponse, type GoogleCloudOnboardingResponse, type GoogleCloudProject } from "../lib/api"
+import { activeOrganisationId, ApiError, api, type CreateConnectionInput, type GitHubDiscoveryResponse, type GitHubOnboardingResponse, type GoogleCloudOnboardingResponse, type GoogleCloudProject } from "../lib/api"
 import { parseProviderAdapter } from "../lib/adapter"
 import { connectionCallbackIntegration } from "../lib/callback"
 import { connectionAction, connectionStatus, formatDate, titleCase } from "../lib/format"
@@ -396,11 +397,20 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
   const [step, setStep] = useState(0)
   const [discovery, setDiscovery] = useState<GitHubDiscoveryResponse | null>(null)
   const [callbackError, setCallbackError] = useState("")
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
+  const githubConnection = connections.find((item) => item.platform === "github" && item.roles.includes("incident"))
   const begin = useMutation({
-    mutationFn: (destination: "existing" | "install") => api.beginGitHubOnboarding().then((value) => ({ destination, value })),
-    onSuccess: ({ destination, value }) => {
+    mutationFn: () => api.beginGitHubOnboarding(),
+    onSuccess: (value) => {
       sessionStorage.setItem("uumi.github", JSON.stringify(value))
-      window.location.assign(destination === "existing" ? value.authorization_url : value.installation_url)
+      window.location.assign(value.authorization_url)
+    },
+  })
+  const install = useMutation({
+    mutationFn: () => api.beginGitHubOnboarding(),
+    onSuccess: (value) => {
+      sessionStorage.setItem("uumi.github", JSON.stringify(value))
+      window.location.assign(value.installation_url)
     },
   })
   const discover = useMutation({
@@ -471,16 +481,36 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
         setCallbackError("GitHub authorization is incomplete")
         return
       }
-      discover.mutate({ saved, code, state, installationId }, { onSuccess: (value) => {
-        setDiscovery(value)
-        sessionStorage.removeItem("uumi.github")
-        window.history.replaceState({}, "", window.location.pathname)
-      } })
+      discover.mutate({ saved, code, state, installationId }, {
+        onSuccess: (value) => {
+          setDiscovery(value)
+          sessionStorage.removeItem("uumi.github")
+          window.history.replaceState({}, "", window.location.pathname)
+        },
+        onError: (error) => {
+          if (error instanceof ApiError && error.code === "setup-required") {
+            sessionStorage.removeItem("uumi.github")
+            install.mutate()
+          }
+        },
+      })
     } catch {
       sessionStorage.removeItem("uumi.github")
       setCallbackError("GitHub connection session is invalid")
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const disconnect = useMutation({
+    mutationFn: () => {
+      if (!githubConnection) throw new Error("GitHub connection is unavailable")
+      return api.archiveConnection(githubConnection.id, githubConnection.revision)
+    },
+    onSuccess: async () => {
+      setConfirmingDisconnect(false)
+      await onChanged()
+      onClose()
+    },
+  })
 
   async function submit() {
     const connection = await complete.mutateAsync()
@@ -491,8 +521,9 @@ function GitHubSetup({ onClose, onBack, onChanged, onCreated, connections }: Pic
 
   if (!discovery) {
     const returning = Boolean(sessionStorage.getItem("uumi.github") && connectionCallbackIntegration() === "github")
-    const busy = begin.isPending || discover.isPending || returning
-    return <ConnectPage eyebrow="Inventory / Connections" title="GitHub" onBack={onBack} onClose={onClose} error={callbackError || begin.error?.message || discover.error?.message} action={<div className="flex flex-col items-center gap-2 sm:flex-row"><Button onClick={() => begin.mutate("existing")} disabled={busy}>{busy ? "Connecting…" : "Use existing installation"}</Button><Button variant="secondary" onClick={() => begin.mutate("install")} disabled={busy}>Install GitHub App</Button></div>}><div className="flex max-w-[360px] flex-col items-center gap-4 text-center"><IntegrationMark kind="github" /><p className="text-[10px] leading-5 text-[var(--ink-muted)]">Connect an existing Uumi Security installation or install it on another GitHub account.</p></div></ConnectPage>
+    const busy = begin.isPending || install.isPending || discover.isPending || returning
+    if (githubConnection && !returning) return <><ConnectPage eyebrow="Inventory / Connections" title="GitHub" onBack={onBack} onClose={onClose} error={disconnect.error?.message} action={<Button variant="secondary" onClick={() => setConfirmingDisconnect(true)}>Disconnect</Button>}><IntegrationMark kind="github" /></ConnectPage><Modal isOpen={confirmingDisconnect} onClose={() => setConfirmingDisconnect(false)} title="Disconnect GitHub?" description={disconnectImpact(githubConnection)} actions={<Button variant="danger" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>{disconnect.isPending ? "Disconnecting…" : "Disconnect"}</Button>}><p className="text-[10px] text-[var(--ink-soft)]">This removes the connection from Uumi.</p></Modal></>
+    return <ConnectPage eyebrow="Inventory / Connections" title="GitHub" onBack={onBack} onClose={onClose} error={callbackError || begin.error?.message || install.error?.message || discover.error?.message} action={<Button onClick={() => begin.mutate()} disabled={busy}>{busy ? "Connecting…" : "Connect"}</Button>}><IntegrationMark kind="github" /></ConnectPage>
   }
 
   return <SetupPage eyebrow="Inventory / Connections" title="GitHub" steps={["Repositories", "Review"]} current={step} onBack={() => setStep(0)} onExit={onBack} onCancel={onClose} error={complete.error?.message} primary={step === 0 ? <Button onClick={() => setStep(1)}>Continue</Button> : <Button onClick={submit} disabled={complete.isPending}>{complete.isPending ? "Connecting…" : "Connect"}</Button>}>

@@ -9,6 +9,7 @@ from core.errors import (
     PlaybookError,
     ResourceConflictError,
     ResourceNotFoundError,
+    ResourceSetupRequiredError,
     RevisionConflictError,
     RunNotFoundError,
     StorageIntegrityError,
@@ -78,6 +79,8 @@ async def _uumi_error(request: Request, error: Exception) -> JSONResponse:
         return _error(status.HTTP_403_FORBIDDEN, "forbidden", str(error))
     if isinstance(error, RunNotFoundError | ResourceNotFoundError):
         return _error(status.HTTP_404_NOT_FOUND, "not-found", str(error))
+    if isinstance(error, ResourceSetupRequiredError):
+        return _error(status.HTTP_409_CONFLICT, "setup-required", str(error))
     if isinstance(
         error,
         (

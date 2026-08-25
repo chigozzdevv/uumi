@@ -50,6 +50,10 @@ class ResourceConflictError(UumiError):
     pass
 
 
+class ResourceSetupRequiredError(UumiError):
+    pass
+
+
 class ApprovalError(UumiError):
     pass
 

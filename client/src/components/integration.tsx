@@ -61,7 +61,7 @@ export function IntegrationGrid({
         <span className="mt-7 text-[13px] font-semibold text-[var(--ink)]">{integration.name}</span>
         <span className="mt-1 text-[10px] text-[var(--ink-muted)]">{integration.description}</span>
         <span className="mt-auto flex items-center pt-5 text-[10px] font-semibold text-[var(--ink-soft)] group-hover:text-[var(--ink)]">
-          {isConnected ? "Add another" : integration.action}
+          {isConnected && integration.id === "github" ? "Disconnect" : isConnected ? "Add another" : integration.action}
           <ChevronRight className="ml-auto size-3.5" />
         </span>
       </button>

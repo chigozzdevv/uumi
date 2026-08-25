@@ -7,7 +7,7 @@ from secrets import token_urlsafe
 from typing import Protocol
 from urllib.parse import urlencode
 
-from connectors.base.errors import ConnectorAuthenticationError
+from connectors.base.errors import ConnectorAuthenticationError, ConnectorSetupRequiredError
 from connectors.github import GitHubOnboardingConnector
 from contracts import (
     GitHubInstallation,
@@ -19,7 +19,7 @@ from contracts import (
     GitHubWebhookReceipt,
 )
 
-from core.errors import ResourceConflictError
+from core.errors import ResourceConflictError, ResourceSetupRequiredError
 from core.ids import new_id
 
 
@@ -145,6 +145,8 @@ class GitHubOnboardingService:
             metadata, repository_metadata = await self._connector.verify(
                 code, verifier, installation_id
             )
+        except ConnectorSetupRequiredError as error:
+            raise ResourceSetupRequiredError(str(error)) from None
         except ConnectorAuthenticationError as error:
             raise ResourceConflictError(str(error)) from None
         resolved_installation_id = metadata["installation_id"]

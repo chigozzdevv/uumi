@@ -4,7 +4,11 @@ from typing import Any
 import httpx
 
 from connectors.base import SecretValue
-from connectors.base.errors import ConnectorAuthenticationError, ConnectorError
+from connectors.base.errors import (
+    ConnectorAuthenticationError,
+    ConnectorError,
+    ConnectorSetupRequiredError,
+)
 from connectors.secrets import SecretManagerConnector
 
 
@@ -118,7 +122,7 @@ class GitHubOnboardingConnector:
             if len(installations) < 100:
                 break
         if not matches:
-            raise ConnectorAuthenticationError(
+            raise ConnectorSetupRequiredError(
                 "Uumi Security is not installed on an accessible GitHub account"
             )
         if len(matches) != 1:

@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
-from connectors.base.errors import ConnectorAuthenticationError
+from connectors.base.errors import ConnectorAuthenticationError, ConnectorSetupRequiredError
 from connectors.github import GitHubOnboardingConnector, GitHubWebhook
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
@@ -17,7 +17,7 @@ from contracts import (
     GitHubRepositoryCandidate,
     GitHubWebhookReceipt,
 )
-from core.errors import ResourceConflictError
+from core.errors import ResourceConflictError, ResourceSetupRequiredError
 from core.github import GitHubOnboardingService
 from google.oauth2.credentials import Credentials
 
@@ -313,6 +313,65 @@ async def test_connector_rejects_ambiguous_existing_installations() -> None:
     await google.close()
 
 
+@pytest.mark.anyio
+async def test_connector_requires_installation_when_none_is_accessible() -> None:
+    def github_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "github.com":
+            return httpx.Response(200, json={"access_token": "temporary-user-token"})
+        return httpx.Response(200, json={"installations": []})
+
+    def google_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"payload": {"data": base64.b64encode(b"oauth-client-secret").decode()}},
+        )
+
+    google = GoogleRestClient(
+        credentials=Credentials(token="google-token"),  # type: ignore[no-untyped-call]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(google_handler)),
+    )
+    github = httpx.AsyncClient(transport=httpx.MockTransport(github_handler))
+    connector = GitHubOnboardingConnector(
+        "uumi-app",
+        "client-one",
+        "projects/project-one/secrets/github-oauth/versions/1",
+        "https://app.uumi.example/github/callback",
+        SecretManagerConnector(google),
+        github,
+    )
+
+    with pytest.raises(ConnectorSetupRequiredError, match="not installed"):
+        await connector.verify("code-one", "verifier-one", None)
+
+    await github.aclose()
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_onboarding_maps_a_missing_installation_to_setup_required() -> None:
+    repository = Repository(None)
+    service = GitHubOnboardingService(
+        repository,
+        MissingInstallationConnector(),  # type: ignore[arg-type]
+        "uumi-app",
+        "client-one",
+        "https://app.uumi.example/github/callback",
+        lambda: NOW,
+    )
+    session, state, verifier, _, _ = await service.begin("org_one", "user-one")
+
+    with pytest.raises(ResourceSetupRequiredError, match="not installed"):
+        await service.discover(
+            "org_one",
+            session.id,
+            "user-one",
+            state,
+            verifier,
+            "oauth-code",
+            None,
+        )
+
+
 def test_secret_scanning_event_uses_the_confirmed_source_connection() -> None:
     body = json.dumps(
         {
@@ -394,6 +453,15 @@ class Connector:
                     "secret_scanning": "enabled",
                 },
             ),
+        )
+
+
+class MissingInstallationConnector:
+    async def verify(
+        self, code: str, verifier: str, installation_id: int | None
+    ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
+        raise ConnectorSetupRequiredError(
+            "Uumi Security is not installed on an accessible GitHub account"
         )
 
 
