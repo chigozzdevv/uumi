@@ -34,6 +34,36 @@ type OverviewProps = {
   onNavigateApproval: (approvalId: string) => void
 }
 
+type QuickStartStep = {
+  label: string
+  done: boolean
+  target: NavItem
+}
+
+function QuickStart({ steps, onNavigate }: { steps: QuickStartStep[]; onNavigate: (nav: NavItem) => void }) {
+  return <div className="flex flex-col items-center">
+    <h2 className="text-[15px] font-semibold tracking-[-0.025em] text-[var(--ink)]">Quick start</h2>
+    <ol className="mt-6 flex w-max max-w-full flex-col items-start gap-4">
+      {steps.map((step, index) => <li key={step.label}>
+        {step.done
+          ? <div className="inline-grid grid-cols-[20px_auto_14px] items-center gap-x-3 text-[11px] text-[var(--ink-muted)]">
+            <span className="text-center font-semibold tabular-nums">{index + 1}</span>
+            <span className="line-through">{step.label}</span>
+            <Check className="size-3.5" aria-hidden="true" />
+          </div>
+          : <button
+            className="focus-ring group inline-grid grid-cols-[20px_auto_14px] items-center gap-x-3 rounded-lg text-left text-[11px] font-medium text-[var(--ink)]"
+            onClick={() => onNavigate(step.target)}
+          >
+            <span className="text-center font-semibold tabular-nums text-[var(--ink-muted)]">{index + 1}</span>
+            <span>{step.label}</span>
+            <ChevronRight className="size-3.5 text-[var(--ink-muted)] transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+          </button>}
+      </li>)}
+    </ol>
+  </div>
+}
+
 export function OverviewPage({ onNavigate, onNavigateRotation, onNavigateIncident, onNavigateApproval }: OverviewProps) {
   const [showAllAttention, setShowAllAttention] = useState(false)
   const [showAllActivities, setShowAllActivities] = useState(false)
@@ -123,6 +153,11 @@ export function OverviewPage({ onNavigate, onNavigateRotation, onNavigateInciden
   ]
   const visibleActionRows = showAllAttention ? actionRows : actionRows.slice(0, 2)
   const visibleRecentRuns = showAllActivities ? recentRuns : recentRuns.slice(0, 3)
+  const emptyOverview = metrics.every((metric) => metric.value === 0) && actionRows.length === 0 && recentRuns.length === 0
+
+  if (emptyOverview) return <div className="page flex min-h-[calc(100vh-56px)] items-center justify-center py-12 lg:min-h-[calc(100vh-48px)]">
+    <QuickStart steps={quickStart} onNavigate={onNavigate} />
+  </div>
 
   return <div className="page">
     <PageHeader title="Overview" />
@@ -189,17 +224,7 @@ export function OverviewPage({ onNavigate, onNavigateRotation, onNavigateInciden
               {showAllActivities ? "Show less" : "View all"}
               {showAllActivities ? <ChevronUp className="size-3.5" aria-hidden="true" /> : <ArrowUpRight className="size-3.5" aria-hidden="true" />}
             </button>}
-          </div> : <div className="grid min-h-[318px] place-items-center px-8 py-10">
-            <div className="w-full max-w-[260px] text-center">
-              <h3 className="text-[15px] font-semibold tracking-[-0.025em] text-[var(--ink)]">Quick start</h3>
-              <div className="mt-6 space-y-3 text-left">
-                {quickStart.map((step) => step.done
-                  ? <div key={step.label} className="flex items-center gap-3 text-[11px] text-[var(--ink-muted)]"><Check className="size-3.5 shrink-0" aria-hidden="true" /><span className="line-through">{step.label}</span></div>
-                  : <button key={step.label} className="focus-ring group flex w-full items-center justify-between gap-3 rounded-lg text-[11px] font-medium text-[var(--ink)]" onClick={() => onNavigate(step.target)}><span>{step.label}</span><ChevronRight className="size-3.5 text-[var(--ink-muted)] transition-transform group-hover:translate-x-0.5" aria-hidden="true" /></button>
-                )}
-              </div>
-            </div>
-          </div>}
+          </div> : <div className="grid min-h-[318px] place-items-center px-8 py-10"><QuickStart steps={quickStart} onNavigate={onNavigate} /></div>}
         </div>
       </section>
     </div>
