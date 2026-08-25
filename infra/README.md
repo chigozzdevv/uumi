@@ -168,6 +168,7 @@ uv run --all-extras python -m agents.deploy \
   --caller-role AGENT_CALLER_ROLE \
   --approved-caller serviceAccount:UUMI_API_SERVICE_ACCOUNT \
   --approved-caller serviceAccount:UUMI_COORDINATOR_SERVICE_ACCOUNT \
+  --impersonate-service-account UUMI_AGENTS_SERVICE_ACCOUNT \
   --version RELEASE_VERSION
 ```
 

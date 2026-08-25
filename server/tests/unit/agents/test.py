@@ -3,7 +3,12 @@ from datetime import UTC, datetime
 
 import pytest
 from agents.continuity import AgentContinuityService
-from agents.deploy import _deployment_config, _effective_identity, _grant_callers
+from agents.deploy import (
+    _deployment_config,
+    _deployment_credentials,
+    _effective_identity,
+    _grant_callers,
+)
 from agents.fleet import _SKILLS, AgentFleetService
 from agents.redact import redact
 from agents.runtime import AgentRuntimeService, _a2a_output, _prompt
@@ -103,6 +108,32 @@ def test_agent_deployment_requires_effective_identity() -> None:
 
     with pytest.raises(RuntimeError, match="no managed Agent Identity"):
         _effective_identity(resource)
+
+
+def test_agent_deployment_impersonates_explicit_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = object()
+    created: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "agents.deploy.google.auth.default",
+        lambda **kwargs: (source, None),
+    )
+
+    def credentials(**kwargs: object) -> object:
+        created.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("agents.deploy.impersonated_credentials.Credentials", credentials)
+
+    result = _deployment_credentials("uumi-agents@project-one.iam.gserviceaccount.com")
+
+    assert result is not None
+    assert created == {
+        "source_credentials": source,
+        "target_principal": "uumi-agents@project-one.iam.gserviceaccount.com",
+        "target_scopes": ("https://www.googleapis.com/auth/cloud-platform",),
+        "lifetime": 3600,
+    }
 
 
 @pytest.mark.anyio

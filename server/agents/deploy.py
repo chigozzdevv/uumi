@@ -3,12 +3,15 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import google.auth
 import vertexai
 from connectors.google import GoogleRestClient
 from contracts import AgentKind, AgentRegistration, AgentStatus
 from core.errors import ResourceNotFoundError
+from google.auth import impersonated_credentials
+from google.auth.credentials import Credentials
 from google.cloud.firestore_v1 import AsyncClient
 from vertexai import types
 
@@ -16,6 +19,7 @@ from agents.fleet import _SKILLS, AgentFleetService
 from agents.storage import AgentRepository
 
 _ROOT = Path(__file__).resolve().parents[2]
+_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 
 async def deploy(
@@ -29,8 +33,9 @@ async def deploy(
     caller_role: str,
     approved_callers: frozenset[str],
     version: str,
+    credentials: Credentials | None = None,
 ) -> tuple[AgentRegistration, ...]:
-    google = GoogleRestClient()
+    google = GoogleRestClient(credentials=credentials)
     try:
         return await _deploy_fleet(
             google,
@@ -44,6 +49,7 @@ async def deploy(
             caller_role,
             approved_callers,
             version,
+            credentials,
         )
     finally:
         await google.close()
@@ -61,6 +67,7 @@ async def _deploy_fleet(
     caller_role: str,
     approved_callers: frozenset[str],
     version: str,
+    credentials: Credentials | None = None,
 ) -> tuple[AgentRegistration, ...]:
     os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
     os.environ["GOOGLE_CLOUD_LOCATION"] = region
@@ -68,8 +75,9 @@ async def _deploy_fleet(
         project=project_id,
         location=region,
         http_options={"api_version": "v1beta1"},
+        credentials=credentials,
     )
-    repository = AgentRepository(AsyncClient(project=project_id))
+    repository = AgentRepository(AsyncClient(project=project_id, credentials=credentials))
     fleet = AgentFleetService(repository)
     registrations = []
     for kind in AgentKind:
@@ -252,6 +260,22 @@ def _iam_member(value: str) -> bool:
     return bool(separator and identifier and kind in {"serviceAccount", "group"})
 
 
+def _deployment_credentials(service_account: str | None) -> Credentials | None:
+    if service_account is None:
+        return None
+    source, _ = google.auth.default(scopes=(_CLOUD_PLATFORM_SCOPE,))
+    credential_factory: Any = impersonated_credentials.Credentials
+    return cast(
+        Credentials,
+        credential_factory(
+            source_credentials=source,
+            target_principal=service_account,
+            target_scopes=(_CLOUD_PLATFORM_SCOPE,),
+            lifetime=3600,
+        ),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
@@ -264,6 +288,7 @@ def main() -> None:
     parser.add_argument("--caller-role", required=True)
     parser.add_argument("--approved-caller", required=True, action="append")
     parser.add_argument("--version", required=True)
+    parser.add_argument("--impersonate-service-account")
     args = parser.parse_args()
     import asyncio
 
@@ -279,6 +304,7 @@ def main() -> None:
             args.caller_role,
             frozenset(args.approved_caller),
             args.version,
+            _deployment_credentials(args.impersonate_service_account),
         )
     )
     print(json.dumps([value.model_dump(mode="json") for value in values]))
