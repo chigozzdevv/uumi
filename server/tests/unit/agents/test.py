@@ -162,14 +162,13 @@ def test_agent_deployment_normalises_managed_effective_identity() -> None:
     assert _effective_identity(resource) == f"principal://{identity}"
 
 
-def test_agent_deployment_canonicalises_project_number_to_configured_id() -> None:
+def test_agent_deployment_preserves_google_canonical_resource() -> None:
     assert (
         _canonical_deployment(
             "projects/256626005636/locations/us-east1/reasoningEngines/942888395422564352",
-            "useuumi",
             "us-east1",
         )
-        == "projects/useuumi/locations/us-east1/reasoningEngines/942888395422564352"
+        == "projects/256626005636/locations/us-east1/reasoningEngines/942888395422564352"
     )
 
 
@@ -342,12 +341,22 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
 
 
 def test_a2a_endpoint_uses_the_v1_tenant_route() -> None:
+    value = registration().model_copy(
+        update={
+            "identity": (
+                "principal://agents.global.org-485216906701.system.id.goog/"
+                "resources/aiplatform/projects/256626005636/locations/us-east1/"
+                "reasoningEngines/123"
+            ),
+            "deployment": "projects/useuumi/locations/us-east1/reasoningEngines/123",
+            "region": "us-east1",
+        }
+    )
     assert _a2a_endpoint(
-        "us-east1",
-        "projects/useuumi/locations/us-east1/reasoningEngines/123",
+        value,
         "org_acme",
     ) == (
-        "https://us-east1-aiplatform.googleapis.com/v1beta1/projects/useuumi/locations/"
+        "https://us-east1-aiplatform.googleapis.com/v1beta1/projects/256626005636/locations/"
         "us-east1/reasoningEngines/123/a2a/org_acme/message:send"
     )
 
@@ -371,7 +380,16 @@ class RuntimeGoogle:
 
 class RuntimeFleet:
     async def resolve(self, organisation_id: str, kind: AgentKind, skill: str) -> AgentRegistration:
-        return registration()
+        return registration().model_copy(
+            update={
+                "identity": (
+                    "principal://agents.global.org-485216906701.system.id.goog/"
+                    "resources/aiplatform/projects/123/locations/us-central1/"
+                    "reasoningEngines/123"
+                ),
+                "deployment": "projects/test/locations/us-central1/reasoningEngines/123",
+            }
+        )
 
 
 class RuntimeContinuity:

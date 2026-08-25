@@ -155,7 +155,7 @@ async def _deploy_fleet(
         resource = remote.api_resource
         if resource is None or not resource.name:
             raise RuntimeError(f"Agent Runtime returned no resource for {kind.value}")
-        deployment = _canonical_deployment(resource.name, project_id, region)
+        deployment = _canonical_deployment(resource.name, region)
         identity = _effective_identity(resource)
         await _grant_callers(
             google,
@@ -257,14 +257,16 @@ def _effective_identity(resource: Any) -> str:
     return f"principal://{value}"
 
 
-def _canonical_deployment(name: str, project_id: str, region: str) -> str:
-    match = re.fullmatch(
-        rf"projects/[^/]+/locations/{re.escape(region)}/reasoningEngines/(\d+)",
-        name,
-    )
-    if match is None:
+def _canonical_deployment(name: str, region: str) -> str:
+    if (
+        re.fullmatch(
+            rf"projects/\d+/locations/{re.escape(region)}/reasoningEngines/\d+",
+            name,
+        )
+        is None
+    ):
         raise RuntimeError("Agent Runtime returned an invalid regional resource name")
-    return f"projects/{project_id}/locations/{region}/reasoningEngines/{match.group(1)}"
+    return name
 
 
 def _matching_deployment(

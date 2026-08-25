@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Callable
 from datetime import datetime
 from time import monotonic
@@ -7,7 +8,7 @@ from urllib.parse import quote
 
 from connectors.base.errors import ConnectorError
 from connectors.google import GoogleRestClient
-from contracts import AgentResult, AgentTask
+from contracts import AgentRegistration, AgentResult, AgentTask
 from telemetry import record
 
 from agents.continuity import AgentContinuityService
@@ -52,11 +53,7 @@ class AgentRuntimeService:
             try:
                 response = await self._google.request(
                     "POST",
-                    _a2a_endpoint(
-                        registration.region,
-                        registration.deployment,
-                        task.organisation_id,
-                    ),
+                    _a2a_endpoint(registration, task.organisation_id),
                     headers={"A2A-Version": "1.0"},
                     json={
                         "message": {
@@ -179,11 +176,37 @@ def _collect_text(value: Any, output: list[str]) -> None:
             _collect_text(nested, output)
 
 
-def _a2a_endpoint(region: str, deployment: str, tenant: str) -> str:
-    expected = f"projects/{deployment.split('/')[1]}/locations/{region}/reasoningEngines/"
-    if not deployment.startswith(expected):
-        raise ValueError("agent deployment does not match its registered project and region")
+def _a2a_endpoint(registration: AgentRegistration, tenant: str) -> str:
+    deployment = _runtime_deployment(registration)
     return (
-        f"https://{region}-aiplatform.googleapis.com/v1beta1/{deployment}/a2a/"
+        f"https://{registration.region}-aiplatform.googleapis.com/v1beta1/"
+        f"{deployment}/a2a/"
         f"{quote(tenant, safe='')}/message:send"
+    )
+
+
+def _runtime_deployment(registration: AgentRegistration) -> str:
+    identity = registration.identity.removeprefix("principal://")
+    identity_match = re.fullmatch(
+        r"agents\.global\.(?:org|project)-\d+\.system\.id\.goog/resources/aiplatform/"
+        r"projects/(?P<project>\d+)/locations/(?P<region>[a-z0-9-]+)/"
+        r"reasoningEngines/(?P<engine>\d+)",
+        identity,
+    )
+    deployment_match = re.fullmatch(
+        r"projects/[^/]+/locations/(?P<region>[a-z0-9-]+)/"
+        r"reasoningEngines/(?P<engine>\d+)",
+        registration.deployment,
+    )
+    if (
+        identity_match is None
+        or deployment_match is None
+        or identity_match.group("region") != registration.region
+        or deployment_match.group("region") != registration.region
+        or identity_match.group("engine") != deployment_match.group("engine")
+    ):
+        raise ValueError("agent deployment does not match its managed identity and region")
+    return (
+        f"projects/{identity_match.group('project')}/locations/{registration.region}/"
+        f"reasoningEngines/{identity_match.group('engine')}"
     )
