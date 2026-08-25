@@ -44,9 +44,7 @@ class AgentRuntimeService:
             except ConnectorError as error:
                 raise _stage_error(error, "session-create") from error
             try:
-                memories = await self._continuity.retrieve(
-                    registration, task.objective, count=5
-                )
+                memories = await self._continuity.retrieve(registration, task.objective, count=5)
             except ConnectorError as error:
                 raise _stage_error(error, "memory-retrieve") from error
             try:

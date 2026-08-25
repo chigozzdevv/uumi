@@ -445,8 +445,7 @@ async def test_agent_runtime_surfaces_safe_connector_error_code() -> None:
 
     assert result.succeeded is False
     assert result.error == (
-        "google-api-404.a2a-send.invalid-argument.field-message.messageId: "
-        "agent execution failed"
+        "google-api-404.a2a-send.invalid-argument.field-message.messageId: agent execution failed"
     )
     assert "upstream details" not in result.error
 

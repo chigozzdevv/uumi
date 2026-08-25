@@ -937,9 +937,7 @@ async def test_google_error_retains_only_machine_readable_safe_detail() -> None:
         await google.request("POST", "https://aiplatform.googleapis.com/message:send")
 
     assert captured.value.code == "google-api-400"
-    assert captured.value.safe_detail == (
-        "invalid-argument.invalid-params.field-message.messageId"
-    )
+    assert captured.value.safe_detail == ("invalid-argument.invalid-params.field-message.messageId")
     assert "must-not-escape" not in str(captured.value)
     await google.close()
 
