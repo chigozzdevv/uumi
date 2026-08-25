@@ -337,7 +337,6 @@ resource "google_project_iam_member" "agent" {
     "roles/aiplatform.user",
     "roles/browser",
     "roles/cloudtrace.agent",
-    "roles/datastore.viewer",
     "roles/logging.logWriter",
     "roles/monitoring.metricWriter",
     "roles/serviceusage.serviceUsageConsumer",
@@ -346,6 +345,18 @@ resource "google_project_iam_member" "agent" {
   project = var.project_id
   role    = each.value
   member  = var.agent_principal_set
+}
+
+resource "google_project_iam_member" "agent_database" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = var.agent_principal_set
+
+  condition {
+    title       = "uumi-managed-agents-database"
+    description = "Restricts managed Agent Identity task persistence to Uumi's primary database."
+    expression  = "resource.name == 'projects/${var.project_id}/databases/(default)'"
+  }
 }
 
 resource "google_project_iam_custom_role" "caller" {
