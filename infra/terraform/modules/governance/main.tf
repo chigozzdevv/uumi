@@ -155,7 +155,7 @@ resource "google_network_services_authz_extension" "iap" {
   fail_open       = false
   deletion_policy = "PREVENT"
   metadata = {
-    iapControlVersion = "V1"
+    iapPolicyVersion = "V1"
   }
 }
 
