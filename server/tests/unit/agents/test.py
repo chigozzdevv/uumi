@@ -341,7 +341,7 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     assert google.headers == {"A2A-Version": "1.0"}
 
 
-def test_a2a_endpoint_uses_the_http_json_v1_route() -> None:
+def test_a2a_endpoint_uses_the_tenant_scoped_http_json_v1_route() -> None:
     value = registration().model_copy(
         update={
             "identity": (
@@ -353,9 +353,9 @@ def test_a2a_endpoint_uses_the_http_json_v1_route() -> None:
             "region": "us-east1",
         }
     )
-    assert _a2a_endpoint(value) == (
+    assert _a2a_endpoint(value, "org_acme") == (
         "https://us-east1-aiplatform.googleapis.com/v1beta1/projects/256626005636/locations/"
-        "us-east1/reasoningEngines/123/a2a/v1/message:send"
+        "us-east1/reasoningEngines/123/a2a/v1/org_acme/message:send"
     )
 
 
@@ -366,7 +366,7 @@ class RuntimeGoogle:
 
     async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
         assert method == "POST"
-        assert url.endswith("/a2a/v1/message:send")
+        assert url.endswith("/a2a/v1/org_acme/message:send")
         body = kwargs.get("json")
         assert isinstance(body, dict)
         self.body = body

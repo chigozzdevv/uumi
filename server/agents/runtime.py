@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import datetime
 from time import monotonic
 from typing import Any
+from urllib.parse import quote
 
 from connectors.base.errors import ConnectorError
 from connectors.google import GoogleRestClient
@@ -50,7 +51,7 @@ class AgentRuntimeService:
             try:
                 response = await self._google.request(
                     "POST",
-                    _a2a_endpoint(registration),
+                    _a2a_endpoint(registration, task.organisation_id),
                     headers={"A2A-Version": "1.0"},
                     json={
                         "message": {
@@ -172,11 +173,11 @@ def _collect_text(value: Any, output: list[str]) -> None:
             _collect_text(nested, output)
 
 
-def _a2a_endpoint(registration: AgentRegistration) -> str:
+def _a2a_endpoint(registration: AgentRegistration, tenant: str) -> str:
     deployment = _runtime_deployment(registration)
     return (
         f"https://{registration.region}-aiplatform.googleapis.com/v1beta1/"
-        f"{deployment}/a2a/v1/message:send"
+        f"{deployment}/a2a/v1/{quote(tenant, safe='')}/message:send"
     )
 
 
