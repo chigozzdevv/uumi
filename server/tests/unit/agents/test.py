@@ -496,6 +496,8 @@ async def test_managed_session_retry_reconciles_exact_remote_binding() -> None:
     )
 
     assert session.remote_session.endswith("/sessions/session-task-one")
+    assert session.purpose == "plan rotation"
+    assert "displayName" not in google.body
     assert repository.session == session
 
 

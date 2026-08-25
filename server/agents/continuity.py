@@ -38,7 +38,6 @@ class AgentContinuityService:
         endpoint = _endpoint(registration.region)
         remote_id = _remote_id(session_id)
         body = {
-            "displayName": purpose,
             "userId": registration.organisation_id,
             "ttl": f"{int(ttl.total_seconds())}s",
             "labels": {
