@@ -34,12 +34,16 @@ class AgentRuntimeService:
         started = monotonic()
         try:
             registration = await self._fleet.resolve(task.organisation_id, task.agent, task.skill)
+            task_context = redact(task.context)
+            if not isinstance(task_context, dict):
+                raise ValueError("agent task context redaction changed its object shape")
             try:
                 session = await self._continuity.create_session(
                     registration,
                     f"session_{task.id}",
                     task.run_id,
                     f"{task.skill}: {task.objective[:160]}",
+                    task_context,
                 )
             except ConnectorError as error:
                 raise _stage_error(error, "session-create") from error
@@ -121,7 +125,6 @@ def _prompt(task: AgentTask, memories: tuple[dict[str, Any], ...] = ()) -> str:
             "task_id": task.id,
             "skill": task.skill,
             "objective": task.objective,
-            "context": task.context,
             "evidence_ids": task.evidence_ids,
             "approved_memory": memories,
         }

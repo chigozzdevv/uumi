@@ -1,5 +1,8 @@
 locals {
   registry = "//agentregistry.googleapis.com/projects/${var.project_id}/locations/${var.region}"
+  broker_host = (
+    var.broker_uri == null ? null : split("/", trimprefix(var.broker_uri, "https://"))[0]
+  )
   endpoints = merge(
     {
       aiplatform = {
@@ -33,6 +36,10 @@ locals {
       firestore = {
         display_name = "Firestore API"
         url          = "https://firestore.googleapis.com"
+      }
+      iamcredentials = {
+        display_name = "IAM Service Account Credentials API"
+        url          = "https://iamcredentials.googleapis.com"
       }
       logging = {
         display_name = "Cloud Logging API"
@@ -187,13 +194,32 @@ resource "google_network_security_authz_policy" "egress" {
   project         = var.project_id
   location        = var.region
   name            = "uumi-agent-egress-armor"
-  description     = "Screens supported Uumi MCP, agent, and model egress."
+  description     = "Screens supported Uumi MCP egress without intercepting internal data APIs."
   policy_profile  = "CONTENT_AUTHZ"
   action          = "CUSTOM"
   deletion_policy = "PREVENT"
 
   target {
     resources = [google_network_services_agent_gateway.egress.id]
+  }
+
+  dynamic "http_rules" {
+    for_each = local.broker_host == null ? [] : [local.broker_host]
+    content {
+      to {
+        operations {
+          hosts {
+            exact = http_rules.value
+          }
+
+          paths {
+            prefix = "/mcp"
+          }
+        }
+      }
+
+      when = "request.headers['content-type'] == 'application/json' || request.headers['content-type'].startsWith('text/')"
+    }
   }
 
   custom_provider {

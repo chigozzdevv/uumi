@@ -273,12 +273,9 @@ class StageCoordinator:
                     "declared actions remain eligible. Do not propose new tools or mutations."
                 ),
                 context={
-                    "recovery_id": recovery.id,
-                    "failed_stage": recovery.failed_stage.value,
-                    "mode": recovery.mode.value,
-                    "actions": [
-                        {"tool": item.tool, "operation": item.operation} for item in recovery.steps
-                    ],
+                    "run": run.model_dump(mode="json"),
+                    "plan": plan.model_dump(mode="json"),
+                    "recovery": recovery.model_dump(mode="json"),
                 },
                 requested_at=self._clock(),
             )
@@ -481,7 +478,12 @@ class StageCoordinator:
             agent=AgentKind.INVENTORY,
             skill="detect_stale_mapping",
             objective="Confirm every observed credential consumer is represented in inventory.",
-            context={"credential_id": credential.id},
+            context={
+                "run": run.model_dump(mode="json"),
+                "inventory_item": credential.model_dump(mode="json"),
+                "bindings": tuple(item.model_dump(mode="json") for item in context.bindings),
+                "services": (),
+            },
             requested_at=self._clock(),
         )
         agent = await self._agents.execute(task)
@@ -529,6 +531,10 @@ class StageCoordinator:
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
         context = await self._rotation_context(run)
         credential = context.credential
+        control_version, _ = await self._control(run)
+        current_generation = await self._optional_generation(
+            run.organisation_id, run.current_generation_id
+        )
         task = AgentTask(
             id=_id("task", run.id, "plan"),
             organisation_id=run.organisation_id,
@@ -537,9 +543,21 @@ class StageCoordinator:
             skill="plan_rotation",
             objective="Select a rotation strategy from controls and confirmed inventory.",
             context={
-                "credential_id": credential.id,
-                "browser_playbook_version": (
-                    context.browser_playbook.id if context.browser_playbook is not None else None
+                "run": run.model_dump(mode="json"),
+                "inventory_item": credential.model_dump(mode="json"),
+                "bindings": tuple(item.model_dump(mode="json") for item in context.bindings),
+                "services": (),
+                "provider_connection": context.provider.model_dump(mode="json"),
+                "controls": control_version.model_dump(mode="json"),
+                "published_playbook": (
+                    context.browser_playbook.model_dump(mode="json")
+                    if context.browser_playbook is not None
+                    else None
+                ),
+                "current_generation": (
+                    current_generation.model_dump(mode="json")
+                    if current_generation is not None
+                    else None
                 ),
             },
             requested_at=self._clock(),
@@ -560,7 +578,6 @@ class StageCoordinator:
             raise ValueError("immediate rotation is invalid for multiple consumers")
         recovery_ids: dict[Stage, str] = {}
         recoveries: list[RecoveryPlan] = []
-        control_version, _ = await self._control(run)
         if not control_version.definition.recovery:
             raise ValueError("rotation controls has no recovery branches")
         plan_key = (
@@ -1181,7 +1198,7 @@ class StageCoordinator:
                     if step.protected
                     else None
                 )
-                decision = await self._operator_decision(run, step)
+                decision = await self._operator_decision(run, step, context, control_version)
                 resolved = step.model_copy(update={"parameters": payload})
                 browser_output = await self._browser.execute(
                     run,
@@ -1244,7 +1261,13 @@ class StageCoordinator:
             )
         return result.result, result.evidence_ids
 
-    async def _operator_decision(self, run: RotationRun, step: PlaybookStep) -> OperatorDecision:
+    async def _operator_decision(
+        self,
+        run: RotationRun,
+        step: PlaybookStep,
+        context: RotationContext,
+        control_version: ControlVersion,
+    ) -> OperatorDecision:
         result = await self._agents.execute(
             AgentTask(
                 id=_id("task", run.id, step.id, "operator"),
@@ -1256,7 +1279,19 @@ class StageCoordinator:
                     f"Load immutable browser step {step.id} and decide whether it is ready "
                     "for the isolated Computer Use worker. Do not execute the browser action."
                 ),
-                context={"step_id": step.id, "stage": step.stage.value},
+                context={
+                    "run": run.model_dump(mode="json"),
+                    "inventory_item": context.credential.model_dump(mode="json"),
+                    "provider_connection": context.provider.model_dump(mode="json"),
+                    "controls": control_version.model_dump(mode="json"),
+                    "published_playbook": (
+                        context.browser_playbook.model_dump(mode="json")
+                        if context.browser_playbook is not None
+                        else None
+                    ),
+                    "step_id": step.id,
+                    "stage": step.stage.value,
+                },
                 requested_at=self._clock(),
             )
         )

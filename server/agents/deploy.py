@@ -190,7 +190,7 @@ async def _deploy_fleet(
             egress_gateway=_canonical_gateway(egress_gateway, deployment_project, region),
             region=region,
             approved_callers=approved_callers,
-            tool_destinations=frozenset({"firestore"}),
+            tool_destinations=frozenset({"uumi-broker"}),
             status=AgentStatus.READY,
             registered_at=datetime.now(UTC),
         )

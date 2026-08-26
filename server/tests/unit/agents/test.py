@@ -1,4 +1,3 @@
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,7 +20,6 @@ from agents.runtime import AgentRuntimeService, _a2a_endpoint, _a2a_output, _pro
 from agents.shared.app import UumiA2aAgent, _bind_request_tenant, _required_environment, managed_app
 from connectors.base.errors import ConnectorError
 from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
-from google.auth.credentials import AnonymousCredentials
 from vertexai import types
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -63,7 +61,7 @@ def registration() -> AgentRegistration:
         egress_gateway="projects/test/locations/us-central1/agentGateways/egress",
         region="us-central1",
         approved_callers=frozenset({"workflow@example.iam.gserviceaccount.com"}),
-        tool_destinations=frozenset({"firestore"}),
+        tool_destinations=frozenset({"uumi-broker"}),
         status=AgentStatus.READY,
         registered_at=datetime.now(UTC),
     )
@@ -129,14 +127,6 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
             "agent_gateway": "projects/project-one/locations/us-central1/agentGateways/egress"
         },
     }
-
-
-def test_managed_agent_firestore_uses_the_registered_rest_transport() -> None:
-    from agents.shared.firestore import rest_client
-
-    client = rest_client("test", "(default)", AnonymousCredentials())  # type: ignore[no-untyped-call]
-
-    assert type(client._firestore_api.transport).__name__ == "FirestoreRestTransport"
 
 
 def test_agent_deployment_stages_importable_top_level_packages() -> None:
@@ -424,9 +414,10 @@ def test_a2a_response_returns_only_structured_artifact() -> None:
 async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPatch) -> None:
     del monkeypatch
     google = RuntimeGoogle()
+    continuity = RuntimeContinuity()
     runtime = AgentRuntimeService(
         RuntimeFleet(),  # type: ignore[arg-type]
-        RuntimeContinuity(),  # type: ignore[arg-type]
+        continuity,  # type: ignore[arg-type]
         google,  # type: ignore[arg-type]
         "project-one",
         lambda: NOW,
@@ -454,6 +445,10 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     assert message["role"] == "1"
     assert message["metadata"] == {"uumi_organisation_id": "org_acme"}
     assert "do-not-send" not in message["content"][0]["text"]
+    assert continuity.task_context == {
+        "credential_id": "credential_one",
+        "api_key": "[REDACTED]",
+    }
     assert google.headers == {"A2A-Version": "0.3"}
 
 
@@ -523,6 +518,88 @@ def test_managed_agent_enables_runtime_v03_compatibility() -> None:
         "0.3",
     ]
     assert value._tmpl_attrs["extended_agent_card"] is value.agent_card
+
+
+def test_managed_agent_uses_a_request_local_task_store() -> None:
+    from a2a.server.tasks import InMemoryTaskStore
+    from google.adk.agents import LlmAgent
+    from google.adk.apps import App
+
+    value = managed_app(
+        App(
+            name="test_app",
+            root_agent=LlmAgent(
+                name="test_agent",
+                description="Test agent",
+                model="gemini-2.5-flash",
+            ),
+        ),
+        {"test_skill"},
+    )
+
+    assert isinstance(value._tmpl_attrs["task_store_builder"](), InMemoryTaskStore)
+
+
+@pytest.mark.anyio
+async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
+    from agents.shared.tools import detect_stale_mapping, execute_console_playbook, select_strategy
+
+    tool_context = type(
+        "BoundToolContext",
+        (),
+        {
+            "state": {
+                "organisation_id": "org_acme",
+                "run_id": "run_one",
+                "task_context": {
+                    "run": {"id": "run_one", "credential_id": "credential_one"},
+                    "inventory_item": {
+                        "id": "credential_one",
+                        "connection_id": "connection_one",
+                        "consumer_ids": ["service_one"],
+                    },
+                    "bindings": [
+                        {
+                            "id": "binding_one",
+                            "credential_id": "credential_one",
+                            "service_id": "service_one",
+                        }
+                    ],
+                    "services": [],
+                    "provider_connection": {
+                        "id": "connection_one",
+                        "interface": "browser",
+                    },
+                    "controls": {"id": "controls_one"},
+                    "published_playbook": {
+                        "id": "playbook_version_one",
+                        "state": "published",
+                        "definition": {
+                            "steps": [
+                                {
+                                    "id": "open_keys",
+                                    "tool": "browser.click",
+                                    "selector": "text=API Keys",
+                                }
+                            ]
+                        },
+                    },
+                },
+            }
+        },
+    )()
+
+    assert await detect_stale_mapping("credential_one", tool_context) == {
+        "declared_consumers": ["service_one"],
+        "observed_consumers": ["service_one"],
+        "missing_inventory": [],
+        "unobserved_inventory": [],
+    }
+    selected = await select_strategy(tool_context)
+    assert selected["provider_connection"]["id"] == "connection_one"
+    execution = await execute_console_playbook("open_keys", tool_context)
+    assert execution["step"]["selector"] == "text=API Keys"
+    assert execution["run"]["id"] == "run_one"
 
 
 def test_managed_agent_accepts_the_deployed_runtime_http_contract() -> None:
@@ -634,9 +711,18 @@ class RuntimeFleet:
 
 
 class RuntimeContinuity:
+    def __init__(self) -> None:
+        self.task_context: dict[str, object] = {}
+
     async def create_session(
-        self, value: AgentRegistration, session_id: str, run_id: str, purpose: str
+        self,
+        value: AgentRegistration,
+        session_id: str,
+        run_id: str,
+        purpose: str,
+        task_context: dict[str, object],
     ) -> AgentSession:
+        self.task_context = task_context
         return AgentSession(
             id=session_id,
             organisation_id=value.organisation_id,
@@ -747,7 +833,7 @@ def test_agent_context_recursively_redacts_secret_material() -> None:
     }
 
 
-def test_agent_prompt_preserves_references_and_removes_values() -> None:
+def test_agent_prompt_exposes_only_the_objective_and_approved_memory() -> None:
     from contracts import AgentTask
 
     prompt = _prompt(
@@ -767,8 +853,9 @@ def test_agent_prompt_preserves_references_and_removes_values() -> None:
         )
     )
 
-    assert '"credential_id":"credential_one"' in prompt
-    assert '"secret_reference":"projects/test/secrets/mail/versions/2"' in prompt
+    assert '"objective":"Plan a safe rotation"' in prompt
+    assert "credential_one" not in prompt
+    assert "projects/test/secrets/mail/versions/2" not in prompt
     assert "must-not-escape" not in prompt
 
 
@@ -785,12 +872,21 @@ async def test_managed_session_retry_reconciles_exact_remote_binding() -> None:
     )
 
     session = await continuity.create_session(
-        registration(), "session_task_one", "run_one", "plan rotation"
+        registration(),
+        "session_task_one",
+        "run_one",
+        "plan rotation",
+        {"credential_id": "credential_one"},
     )
 
     assert session.remote_session.endswith("/sessions/session-task-one")
     assert session.purpose == "plan rotation"
     assert "displayName" not in google.body
+    assert google.body["sessionState"] == {
+        "organisation_id": "org_acme",
+        "run_id": "run_one",
+        "task_context": {"credential_id": "credential_one"},
+    }
     assert repository.session == session
 
 
@@ -863,106 +959,3 @@ class ExistingGoogle:
             "scope": self.body["scope"],
             "revisionLabels": self.body["revisionLabels"],
         }
-
-
-class MemoryDocumentSnapshot:
-    def __init__(self, data: dict[str, object] | None, exists: bool = True) -> None:
-        self._data = data
-        self.exists = exists
-
-    def to_dict(self) -> dict[str, object] | None:
-        return self._data
-
-
-class MemoryDocumentReference:
-    def __init__(self, store: dict[str, dict[str, object]], path: str) -> None:
-        self._store = store
-        self._path = path
-
-    async def set(self, data: dict[str, object]) -> None:
-        self._store[self._path] = data
-
-    async def get(self) -> MemoryDocumentSnapshot:
-        if self._path in self._store:
-            return MemoryDocumentSnapshot(self._store[self._path], exists=True)
-        return MemoryDocumentSnapshot(None, exists=False)
-
-    async def delete(self) -> None:
-        self._store.pop(self._path, None)
-
-
-class MemoryQuery:
-    def __init__(self, items: list[dict[str, object]]) -> None:
-        self._items = items
-
-    def where(self, field: str, op: str, value: object) -> "MemoryQuery":
-        filtered = [item for item in self._items if item.get(field) == value]
-        return MemoryQuery(filtered)
-
-    def limit(self, count: int) -> "MemoryQuery":
-        return MemoryQuery(self._items[:count])
-
-    async def stream(self) -> AsyncGenerator[MemoryDocumentSnapshot, None]:
-        for item in self._items:
-            yield MemoryDocumentSnapshot(item, exists=True)
-
-
-class MemoryCollectionReference:
-    def __init__(self, store: dict[str, dict[str, object]], prefix: str) -> None:
-        self._store = store
-        self._prefix = prefix
-
-    def where(self, field: str, op: str, value: object) -> MemoryQuery:
-        items = [v for k, v in self._store.items() if k.startswith(self._prefix)]
-        return MemoryQuery(items).where(field, op, value)
-
-    def limit(self, count: int) -> MemoryQuery:
-        items = [v for k, v in self._store.items() if k.startswith(self._prefix)]
-        return MemoryQuery(items).limit(count)
-
-    async def stream(self) -> AsyncGenerator[MemoryDocumentSnapshot, None]:
-        items = [v for k, v in self._store.items() if k.startswith(self._prefix)]
-        for item in items:
-            yield MemoryDocumentSnapshot(item, exists=True)
-
-
-class MemoryFirestoreClient:
-    def __init__(self) -> None:
-        self._store: dict[str, dict[str, object]] = {}
-
-    def document(self, path: str) -> MemoryDocumentReference:
-        return MemoryDocumentReference(self._store, path)
-
-    def collection(self, path: str) -> MemoryCollectionReference:
-        return MemoryCollectionReference(self._store, path)
-
-
-@pytest.mark.anyio
-async def test_firestore_task_store_lifecycle() -> None:
-    from a2a.server.context import ServerCallContext
-    from a2a.types import ListTasksRequest, Task, TaskState
-    from agents.shared.tasks import FirestoreTaskStore
-
-    client = MemoryFirestoreClient()
-    store = FirestoreTaskStore(client=client)  # type: ignore[arg-type]
-
-    context = ServerCallContext()
-    context.tenant = "org_test"
-
-    task = Task(id="task_1", context_id="ctx_1")
-    task.status.state = TaskState.TASK_STATE_WORKING
-
-    await store.save(task, context)
-
-    fetched = await store.get("task_1", context)
-    assert fetched is not None
-    assert fetched.id == "task_1"
-    assert fetched.context_id == "ctx_1"
-    assert fetched.status.state == TaskState.TASK_STATE_WORKING
-
-    listing = await store.list(ListTasksRequest(context_id="ctx_1"), context)
-    assert listing.total_size == 1
-    assert listing.tasks[0].id == "task_1"
-
-    await store.delete("task_1", context)
-    assert await store.get("task_1", context) is None

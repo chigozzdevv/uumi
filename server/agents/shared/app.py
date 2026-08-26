@@ -123,9 +123,11 @@ def _request(context: Any, part_converter: Any) -> Any:
 
 
 def _task_store() -> Any:
-    from agents.shared.tasks import FirestoreTaskStore
+    from a2a.server.tasks import InMemoryTaskStore
 
-    return FirestoreTaskStore()
+    # Uumi persists the authoritative AgentResult in the control plane. The A2A
+    # task object only coordinates one synchronous message:send request.
+    return InMemoryTaskStore()
 
 
 def _required_environment(name: str, default: str | None = None) -> str:

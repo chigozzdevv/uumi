@@ -30,6 +30,7 @@ class AgentContinuityService:
         session_id: str,
         run_id: str,
         purpose: str,
+        task_context: dict[str, Any],
         ttl: timedelta = timedelta(hours=24),
     ) -> AgentSession:
         if ttl < timedelta(hours=24):
@@ -48,8 +49,7 @@ class AgentContinuityService:
             "sessionState": {
                 "organisation_id": registration.organisation_id,
                 "run_id": run_id,
-                "project_id": self._project,
-                "firestore_database": self._database,
+                "task_context": task_context,
             },
         }
         try:

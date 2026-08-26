@@ -55,7 +55,7 @@ def agent_registration(
         egress_gateway=f"projects/{project}/locations/{region}/agentGateways/egress",
         region=region,
         approved_callers=frozenset({"uumi-api@uumi-test.iam.gserviceaccount.com"}),
-        tool_destinations=frozenset({"firestore"}),
+        tool_destinations=frozenset({"uumi-broker"}),
         status=AgentStatus.READY,
         registered_at=NOW,
     )

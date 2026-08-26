@@ -275,11 +275,12 @@ async def _generate_definition(
             ),
             evidence_ids=source_ids,
             context={
+                "playbook_id": playbook_id,
                 "walkthroughs": tuple(
                     source.analysis.model_dump(mode="json")
                     for source in sources
                     if source.analysis is not None
-                )
+                ),
             },
             requested_at=datetime.now(UTC),
         )
