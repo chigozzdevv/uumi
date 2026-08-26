@@ -28,7 +28,7 @@ class Repository:
     def __init__(self, values: tuple[AgentRegistration, ...]) -> None:
         self.values = values
 
-    async def register(self, value: AgentRegistration) -> AgentRegistration:
+    async def activate(self, value: AgentRegistration) -> AgentRegistration:
         return value
 
     async def list(self, organisation_id: str) -> tuple[AgentRegistration, ...]:

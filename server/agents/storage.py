@@ -1,24 +1,68 @@
-from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession
-from core.errors import ResourceNotFoundError
+from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
+from core.errors import ResourceNotFoundError, StorageIntegrityError
 from core.storage.catalog import FirestoreCatalog
+from core.storage.codec import encode
 from core.storage.paths import FirestorePaths
 from google.cloud.firestore_v1 import AsyncClient
+from google.cloud.firestore_v1.async_transaction import AsyncTransaction, async_transactional
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 
 class AgentRepository:
     def __init__(self, client: AsyncClient) -> None:
+        self._client = client
         self._catalog = FirestoreCatalog(client)
 
-    async def register(self, registration: AgentRegistration) -> AgentRegistration:
-        path = FirestorePaths.agent(registration.organisation_id, registration.id)
-        try:
-            current = await self._catalog.get(path, AgentRegistration)
-        except ResourceNotFoundError:
-            await self._catalog.create(path, registration)
-            return registration
-        if current.deployment != registration.deployment or current.version != registration.version:
-            raise ValueError("agent registration is immutable; deploy a new registration ID")
-        return current
+    async def activate(self, registration: AgentRegistration) -> AgentRegistration:
+        root = f"{FirestorePaths.organisation(registration.organisation_id)}/agents"
+        target = self._client.document(
+            FirestorePaths.agent(registration.organisation_id, registration.id)
+        )
+        same_kind = self._client.collection(root).where(
+            filter=FieldFilter("kind", "==", registration.kind.value)
+        )
+
+        @async_transactional
+        async def apply(transaction: AsyncTransaction) -> AgentRegistration:
+            target_snapshot = await target.get(transaction=transaction)
+            stream = await transaction.get(same_kind)
+            snapshots = [snapshot async for snapshot in stream]
+            active = registration
+            if target_snapshot.exists:
+                data = target_snapshot.to_dict()
+                if data is None:
+                    raise StorageIntegrityError(
+                        f"resource {target_snapshot.reference.path} has no data"
+                    )
+                current = AgentRegistration.model_validate(data)
+                if (
+                    current.deployment != registration.deployment
+                    or current.version != registration.version
+                    or current.kind is not registration.kind
+                ):
+                    raise ValueError(
+                        "agent registration is immutable; deploy a new registration ID"
+                    )
+                active = registration.model_copy(update={"registered_at": current.registered_at})
+
+            for snapshot in snapshots:
+                data = snapshot.to_dict()
+                if data is None:
+                    raise StorageIntegrityError(f"resource {snapshot.reference.path} has no data")
+                current = AgentRegistration.model_validate(data)
+                if current.id != active.id and current.status is AgentStatus.READY:
+                    transaction.set(
+                        snapshot.reference,
+                        encode(current.model_copy(update={"status": AgentStatus.DISABLED})),
+                    )
+
+            if target_snapshot.exists:
+                transaction.set(target, encode(active))
+            else:
+                transaction.create(target, encode(active))
+            return active
+
+        return await apply(self._client.transaction(max_attempts=5))
 
     async def get(self, organisation_id: str, agent_id: str) -> AgentRegistration:
         return await self._catalog.get(

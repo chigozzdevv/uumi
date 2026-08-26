@@ -29,7 +29,7 @@ class AgentFleetService:
                 raise ValueError("agent gateways must match the deployment project and region")
         if not registration.identity.startswith("principal://"):
             raise ValueError("agent deployment must expose a managed Agent Identity")
-        return await self._repository.register(registration)
+        return await self._repository.activate(registration)
 
     async def resolve(self, organisation_id: str, kind: AgentKind, skill: str) -> AgentRegistration:
         candidates = [

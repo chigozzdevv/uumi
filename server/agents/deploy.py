@@ -117,7 +117,6 @@ async def _deploy_fleet(
                 raise RuntimeError(
                     f"existing {kind.value} registration does not match this deployment"
                 )
-            registrations.append(current)
             await _grant_callers(
                 google,
                 project_id,
@@ -126,6 +125,7 @@ async def _deploy_fleet(
                 caller_role,
                 approved_callers,
             )
+            registrations.append(await fleet.register(current))
             continue
         module = __import__(f"agents.{kind.value}.agent", fromlist=["agent_app"])
         app = module.agent_app

@@ -3,7 +3,18 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from contracts import CreateRunCommand, MemberRole, RunStatus, StartRunCommand, Trigger
+from agents.fleet import _SKILLS, AgentFleetService
+from agents.storage import AgentRepository
+from contracts import (
+    AgentKind,
+    AgentRegistration,
+    AgentStatus,
+    CreateRunCommand,
+    MemberRole,
+    RunStatus,
+    StartRunCommand,
+    Trigger,
+)
 from core.account import AccountService, FirestoreAccountRepository
 from core.auth import AuthenticatedIdentity
 from core.errors import IdempotencyConflictError
@@ -18,6 +29,36 @@ if "FIRESTORE_EMULATOR_HOST" not in os.environ:
 
 pytestmark = pytest.mark.integration
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
+
+
+def agent_registration(
+    organisation_id: str,
+    agent_id: str,
+    version: str,
+    kind: AgentKind = AgentKind.PLANNER,
+) -> AgentRegistration:
+    project = "uumi-test"
+    region = "us-east1"
+    return AgentRegistration(
+        id=agent_id,
+        organisation_id=organisation_id,
+        kind=kind,
+        display_name=f"Uumi {kind.value.title()} Agent",
+        version=version,
+        skills=_SKILLS[kind],
+        owner="Uumi Platform",
+        identity=f"principal://iam.googleapis.com/{agent_id}",
+        endpoint=f"https://{region}-aiplatform.googleapis.com",
+        deployment=f"projects/{project}/locations/{region}/reasoningEngines/{agent_id}",
+        registry=f"//agentregistry.googleapis.com/projects/{project}/locations/{region}",
+        ingress_gateway=f"projects/{project}/locations/{region}/agentGateways/ingress",
+        egress_gateway=f"projects/{project}/locations/{region}/agentGateways/egress",
+        region=region,
+        approved_callers=frozenset({"uumi-api@uumi-test.iam.gserviceaccount.com"}),
+        tool_destinations=frozenset({"firestore"}),
+        status=AgentStatus.READY,
+        registered_at=NOW,
+    )
 
 
 @pytest.mark.anyio
@@ -138,3 +179,25 @@ async def test_invited_identity_discovers_and_joins_its_organisation(
     assert len(session.organisations) == 1
     assert session.organisations[0].organisation.id == created.organisation.id
     assert session.organisations[0].role is MemberRole.OPERATOR
+
+
+@pytest.mark.anyio
+async def test_agent_activation_atomically_disables_the_superseded_release(
+    firestore_client: AsyncClient,
+) -> None:
+    suffix = secrets.token_hex(6)
+    organisation_id = f"org_{suffix}"
+    previous = agent_registration(organisation_id, f"planner_previous_{suffix}", "1.0.0")
+    replacement = agent_registration(organisation_id, f"planner_replacement_{suffix}", "1.1.0")
+    repository = AgentRepository(firestore_client)
+    fleet = AgentFleetService(repository)
+
+    await fleet.register(previous)
+    activated = await fleet.register(replacement)
+
+    stored = {item.id: item for item in await repository.list(organisation_id)}
+    resolved = await fleet.resolve(organisation_id, AgentKind.PLANNER, "plan_rotation")
+    assert activated == replacement
+    assert stored[previous.id].status is AgentStatus.DISABLED
+    assert stored[replacement.id].status is AgentStatus.READY
+    assert resolved.id == replacement.id
