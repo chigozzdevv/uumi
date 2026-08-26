@@ -12,6 +12,7 @@ from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.resourcedetector.gcp_resource_detector import GoogleCloudResourceDetector
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -76,16 +77,7 @@ def instrument(app: Starlette, service: str) -> TelemetryConfig:
     if _configured:
         raise RuntimeError("process telemetry is already configured")
 
-    resource = Resource.create(
-        {
-            "service.name": config.service,
-            "service.version": os.getenv("K_REVISION", "local"),
-            "deployment.environment.name": config.environment,
-            "cloud.provider": "gcp",
-            "cloud.region": config.region,
-            "cloud.account.id": config.project_id,
-        }
-    )
+    resource = _resource(config)
     tracer_provider = TracerProvider(
         resource=resource,
         sampler=ParentBased(TraceIdRatioBased(config.sample_ratio)),
@@ -125,6 +117,22 @@ def instrument(app: Starlette, service: str) -> TelemetryConfig:
     )
     _configured = True
     return config
+
+
+def _resource(config: TelemetryConfig) -> Resource:
+    detected = GoogleCloudResourceDetector().detect()
+    configured = Resource.create(
+        {
+            "service.name": config.service,
+            "service.namespace": config.environment,
+            "service.version": os.getenv("K_REVISION", "local"),
+            "deployment.environment.name": config.environment,
+            "cloud.provider": "gcp",
+            "cloud.region": config.region,
+            "cloud.account.id": config.project_id,
+        }
+    )
+    return detected.merge(configured)
 
 
 @contextmanager

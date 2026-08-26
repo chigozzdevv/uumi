@@ -9,6 +9,7 @@ dependencies = [
     "opentelemetry-exporter-gcp-trace>=1.11,<2",
     "opentelemetry-instrumentation-fastapi>=0.57b0,<1",
     "opentelemetry-instrumentation-httpx>=0.57b0,<1",
+    "opentelemetry-resourcedetector-gcp>=1.11,<2",
     "opentelemetry-sdk>=1.36,<2",
 ]
 

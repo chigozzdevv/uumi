@@ -1,6 +1,12 @@
 import pytest
 from fastapi import FastAPI
+from opentelemetry.resourcedetector.gcp_resource_detector import GoogleCloudResourceDetector
+from opentelemetry.resourcedetector.gcp_resource_detector._mapping import (
+    get_monitored_resource,
+)
+from opentelemetry.sdk.resources import Resource
 from telemetry import REDACTED, TelemetryConfig, instrument, operation, record, redact
+from telemetry.runtime import _resource
 
 
 def test_redact_removes_nested_secret_values() -> None:
@@ -63,6 +69,45 @@ def test_telemetry_is_disabled_outside_managed_runtime(monkeypatch: pytest.Monke
         enabled=False,
         sample_ratio=1,
     )
+
+
+def test_cloud_run_metrics_use_unique_task_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    detected = Resource(
+        {
+            "cloud.platform": "gcp_cloud_run",
+            "cloud.region": "us-east1",
+            "faas.name": "uumi-notification",
+            "faas.version": "uumi-notification-00001-test",
+            "faas.instance": "instance-one",
+        }
+    )
+
+    def detect(_: GoogleCloudResourceDetector) -> Resource:
+        return detected
+
+    monkeypatch.setattr(GoogleCloudResourceDetector, "detect", detect)
+
+    resource = _resource(
+        TelemetryConfig(
+            service="uumi-notification",
+            project_id="useuumi",
+            region="us-east1",
+            environment="production",
+            enabled=True,
+            sample_ratio=1,
+        )
+    )
+    monitored = get_monitored_resource(resource)
+
+    assert resource.attributes["service.namespace"] == "production"
+    assert monitored is not None
+    assert monitored.type == "generic_task"
+    assert monitored.labels == {
+        "location": "us-east1",
+        "namespace": "production",
+        "job": "uumi-notification",
+        "task_id": "instance-one",
+    }
 
 
 def test_operation_metrics_reject_unbounded_or_sensitive_attributes() -> None:
