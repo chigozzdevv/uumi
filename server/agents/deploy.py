@@ -105,14 +105,14 @@ async def _deploy_fleet(
         except ResourceNotFoundError:
             pass
         else:
-            if (
-                current.kind is not kind
-                or current.version != version
-                or current.region != region
-                or current.ingress_gateway != ingress_gateway
-                or current.egress_gateway != egress_gateway
-                or current.approved_callers != approved_callers
-                or current.status is not AgentStatus.READY
+            if not _matches_existing_registration(
+                current,
+                kind,
+                version,
+                region,
+                ingress_gateway,
+                egress_gateway,
+                approved_callers,
             ):
                 raise RuntimeError(
                     f"existing {kind.value} registration does not match this deployment"
@@ -190,6 +190,32 @@ async def _deploy_fleet(
         )
         registrations.append(await fleet.register(registration))
     return tuple(registrations)
+
+
+def _matches_existing_registration(
+    registration: AgentRegistration,
+    kind: AgentKind,
+    version: str,
+    region: str,
+    ingress_gateway: str,
+    egress_gateway: str,
+    approved_callers: frozenset[str],
+) -> bool:
+    try:
+        deployment_project = registration.deployment.split("/")[1]
+        expected_ingress = _canonical_gateway(ingress_gateway, deployment_project, region)
+        expected_egress = _canonical_gateway(egress_gateway, deployment_project, region)
+    except (IndexError, RuntimeError):
+        return False
+    return (
+        registration.kind is kind
+        and registration.version == version
+        and registration.region == region
+        and registration.ingress_gateway == expected_ingress
+        and registration.egress_gateway == expected_egress
+        and registration.approved_callers == approved_callers
+        and registration.status is AgentStatus.READY
+    )
 
 
 def _deployment_config(

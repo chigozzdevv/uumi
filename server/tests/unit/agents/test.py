@@ -11,6 +11,7 @@ from agents.deploy import (
     _deployment_credentials,
     _effective_identity,
     _grant_callers,
+    _matches_existing_registration,
     _staged_agent_source,
 )
 from agents.fleet import _SKILLS, AgentFleetService
@@ -224,6 +225,28 @@ def test_agent_deployment_impersonates_explicit_identity(monkeypatch: pytest.Mon
         "target_scopes": ("https://www.googleapis.com/auth/cloud-platform",),
         "lifetime": 3600,
     }
+
+
+def test_agent_deployment_retry_canonicalises_gateway_project_ids() -> None:
+    value = registration().model_copy(
+        update={
+            "deployment": ("projects/256626005636/locations/us-central1/reasoningEngines/123"),
+            "ingress_gateway": (
+                "projects/256626005636/locations/us-central1/agentGateways/ingress"
+            ),
+            "egress_gateway": ("projects/256626005636/locations/us-central1/agentGateways/egress"),
+        }
+    )
+
+    assert _matches_existing_registration(
+        value,
+        AgentKind.PLANNER,
+        "1.0.0",
+        "us-central1",
+        "projects/useuumi/locations/us-central1/agentGateways/ingress",
+        "projects/useuumi/locations/us-central1/agentGateways/egress",
+        value.approved_callers,
+    )
 
 
 @pytest.mark.anyio
