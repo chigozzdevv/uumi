@@ -52,6 +52,7 @@ async def deploy(
     approved_callers: frozenset[str],
     version: str,
     credentials: Credentials | None = None,
+    catalog_credentials: Credentials | None = None,
 ) -> tuple[AgentRegistration, ...]:
     google = GoogleRestClient(credentials=credentials)
     try:
@@ -68,6 +69,7 @@ async def deploy(
             approved_callers,
             version,
             credentials,
+            catalog_credentials,
         )
     finally:
         await google.close()
@@ -86,6 +88,7 @@ async def _deploy_fleet(
     approved_callers: frozenset[str],
     version: str,
     credentials: Credentials | None = None,
+    catalog_credentials: Credentials | None = None,
 ) -> tuple[AgentRegistration, ...]:
     os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
     os.environ["GOOGLE_CLOUD_LOCATION"] = region
@@ -95,7 +98,10 @@ async def _deploy_fleet(
         http_options={"api_version": "v1beta1"},
         credentials=credentials,
     )
-    repository = AgentRepository(AsyncClient(project=project_id, credentials=credentials))
+    # Keep the VPC-SC operator identity on catalog calls; runtime calls use impersonation.
+    repository = AgentRepository(
+        AsyncClient(project=project_id, credentials=catalog_credentials or credentials)
+    )
     fleet = AgentFleetService(repository)
     registrations = []
     for kind in AgentKind:
@@ -397,10 +403,15 @@ def _iam_member(value: str) -> bool:
     return bool(separator and identifier and kind in {"serviceAccount", "group"})
 
 
-def _deployment_credentials(service_account: str | None) -> Credentials | None:
+def _deployment_credentials(
+    service_account: str | None,
+    source_credentials: Credentials | None = None,
+) -> Credentials | None:
     if service_account is None:
         return None
-    source, _ = google.auth.default(scopes=(_CLOUD_PLATFORM_SCOPE,))
+    source = source_credentials
+    if source is None:
+        source, _ = google.auth.default(scopes=(_CLOUD_PLATFORM_SCOPE,))
     credential_factory: Any = impersonated_credentials.Credentials
     return cast(
         Credentials,
@@ -429,6 +440,9 @@ def main() -> None:
     args = parser.parse_args()
     import asyncio
 
+    source_credentials = None
+    if args.impersonate_service_account is not None:
+        source_credentials, _ = google.auth.default(scopes=(_CLOUD_PLATFORM_SCOPE,))
     values = asyncio.run(
         deploy(
             args.project,
@@ -441,7 +455,8 @@ def main() -> None:
             args.caller_role,
             frozenset(args.approved_caller),
             args.version,
-            _deployment_credentials(args.impersonate_service_account),
+            _deployment_credentials(args.impersonate_service_account, source_credentials),
+            source_credentials,
         )
     )
     print(json.dumps([value.model_dump(mode="json") for value in values]))

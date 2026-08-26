@@ -7,6 +7,7 @@ from agents.continuity import AgentContinuityService
 from agents.deploy import (
     _canonical_deployment,
     _canonical_gateway,
+    _deploy_fleet,
     _deployment_config,
     _deployment_credentials,
     _effective_identity,
@@ -225,6 +226,44 @@ def test_agent_deployment_impersonates_explicit_identity(monkeypatch: pytest.Mon
         "target_scopes": ("https://www.googleapis.com/auth/cloud-platform",),
         "lifetime": 3600,
     }
+
+
+@pytest.mark.anyio
+async def test_agent_deployment_keeps_operator_identity_on_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_credentials = object()
+    catalog_credentials = object()
+    captured: dict[str, object] = {}
+
+    def firestore_client(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("agents.deploy.AsyncClient", firestore_client)
+    monkeypatch.setattr("agents.deploy.vertexai.Client", lambda **kwargs: object())
+    monkeypatch.setattr("agents.deploy.AgentRepository", lambda client: object())
+    monkeypatch.setattr("agents.deploy.AgentFleetService", lambda repository: object())
+    monkeypatch.setattr("agents.deploy.AgentKind", ())
+
+    result = await _deploy_fleet(
+        object(),  # type: ignore[arg-type]
+        "project-one",
+        "org_acme",
+        "us-central1",
+        "gs://staging",
+        "projects/project-one/locations/us-central1/keyRings/uumi/cryptoKeys/agents",
+        "projects/project-one/locations/us-central1/agentGateways/ingress",
+        "projects/project-one/locations/us-central1/agentGateways/egress",
+        "projects/project-one/roles/uumiAgentCaller",
+        frozenset({"serviceAccount:api@project-one.iam.gserviceaccount.com"}),
+        "1.2.3",
+        runtime_credentials,  # type: ignore[arg-type]
+        catalog_credentials,  # type: ignore[arg-type]
+    )
+
+    assert result == ()
+    assert captured["credentials"] is catalog_credentials
 
 
 def test_agent_deployment_retry_canonicalises_gateway_project_ids() -> None:
