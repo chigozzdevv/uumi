@@ -401,7 +401,7 @@ module "governance" {
   deployment_member   = module.identity.members["uumi-agents"]
   broker_uri          = module.runtime.broker_uri
 
-  depends_on = [module.project, module.runtime]
+  depends_on = [module.project]
 }
 
 module "gateway" {
