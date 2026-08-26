@@ -245,6 +245,9 @@ def _deployment_config(
         "env_vars": {
             "UUMI_GOOGLE_CLOUD_PROJECT": project_id,
             "UUMI_GOOGLE_CLOUD_LOCATION": region,
+            # Agent Gateway is the token-sharing boundary; without this documented
+            # opt-out Agent Identity binds the token to the originating runtime.
+            "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES": False,
         },
         "identity_type": types.IdentityType.AGENT_IDENTITY,
         "agent_gateway_config": {
