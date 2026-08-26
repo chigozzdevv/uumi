@@ -18,7 +18,7 @@ Never receive, read, repeat, or store credential values.""",
     tools=[execute_console_playbook, detect_interface_drift],
     output_schema=OperatorDecision,
     output_key="operator_decision",
-    mode="task",
+    mode="chat",
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,
 )

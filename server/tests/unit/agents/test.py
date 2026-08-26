@@ -404,6 +404,7 @@ def test_managed_agents_use_the_supported_us_model_endpoint() -> None:
             "vertexai": True,
             "location": MODEL_LOCATION,
         }
+        assert agent.mode == "chat"
 
 
 def test_a2a_response_returns_only_structured_artifact() -> None:

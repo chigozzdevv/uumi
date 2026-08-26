@@ -31,7 +31,7 @@ add tools, change actions, or mutate resources. Return structured JSON.""",
     ],
     output_schema=PlannerOutput,
     output_key="rotation_plan",
-    mode="task",
+    mode="chat",
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,
 )

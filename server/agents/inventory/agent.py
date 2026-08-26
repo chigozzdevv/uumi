@@ -16,7 +16,7 @@ IDs. Never request or infer credential values. Return conclusions as structured 
     tools=[correlate_exposure, resolve_consumers, detect_stale_mapping],
     output_schema=InventoryAssessment,
     output_key="inventory_assessment",
-    mode="task",
+    mode="chat",
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,
 )

@@ -25,7 +25,7 @@ secret values in a playbook or response.""",
     tools=[analyse_walkthrough, build_playbook, validate_playbook],
     output_schema=PlaybookDraft,
     output_key="playbook_draft",
-    mode="task",
+    mode="chat",
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,
 )
