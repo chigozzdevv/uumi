@@ -3,11 +3,12 @@ from google.adk.agents import Agent
 from google.adk.apps import App
 
 from agents.shared.app import managed_app
+from agents.shared.model import managed_model
 from agents.shared.tools import analyse_walkthrough, build_playbook, validate_playbook
 
 root_agent = Agent(
     name="playbook_builder_agent",
-    model="gemini-3.7-flash",
+    model=managed_model(),
     description="Builds versioned browser procedures from sanitised source evidence.",
     instruction="""Analyse only sanitised source evidence. Produce ordered browser actions for
 credential creation and revocation with deterministic selectors, exact page checkpoints, and

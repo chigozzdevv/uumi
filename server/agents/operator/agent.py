@@ -2,12 +2,13 @@ from google.adk.agents import Agent
 from google.adk.apps import App
 
 from agents.shared.app import managed_app
+from agents.shared.model import managed_model
 from agents.shared.models import OperatorDecision
 from agents.shared.tools import detect_interface_drift, execute_console_playbook
 
 root_agent = Agent(
     name="console_operator_agent",
-    model="gemini-3.7-flash",
+    model=managed_model(),
     description="Coordinates immutable console steps with the isolated browser worker.",
     instruction="""For execute_console_playbook, load only the requested immutable browser step
 and report its precise action and expected checkpoint; the separate worker owns browser execution

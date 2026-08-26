@@ -321,6 +321,23 @@ def test_managed_agents_publish_their_exact_a2a_skills() -> None:
         assert "on_message_send" in application.register_operations()["a2a_extension"]
 
 
+def test_managed_agents_use_the_supported_us_model_endpoint() -> None:
+    from agents.inventory.agent import root_agent as inventory
+    from agents.operator.agent import root_agent as operator
+    from agents.planner.agent import root_agent as planner
+    from agents.playbook.agent import root_agent as playbook
+    from agents.shared.model import MODEL_ID, MODEL_LOCATION
+    from google.adk.models import Gemini
+
+    for agent in (inventory, planner, playbook, operator):
+        assert isinstance(agent.model, Gemini)
+        assert agent.model.model == MODEL_ID
+        assert agent.model.client_kwargs == {
+            "vertexai": True,
+            "location": MODEL_LOCATION,
+        }
+
+
 def test_a2a_response_returns_only_structured_artifact() -> None:
     output = _a2a_output(
         {

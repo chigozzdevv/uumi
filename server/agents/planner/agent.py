@@ -2,6 +2,7 @@ from google.adk.agents import Agent
 from google.adk.apps import App
 
 from agents.shared.app import managed_app
+from agents.shared.model import managed_model
 from agents.shared.models import PlannerOutput
 from agents.shared.tools import (
     bind_playbook,
@@ -13,7 +14,7 @@ from agents.shared.tools import (
 
 root_agent = Agent(
     name="rotation_planner_agent",
-    model="gemini-3.7-flash",
+    model=managed_model(),
     description="Builds rotation plans from inventory and pinned credential controls.",
     instruction="""For plan_rotation, use the authoritative run, confirmed inventory, active
 credential controls, and browser playbook only when the provider connection uses a browser.
