@@ -1,6 +1,5 @@
 google-adk[a2a,gcp]==2.6.3
 google-cloud-aiplatform[agent-engines,adk]==1.164.0
-# 2.13 introduced custom-client mTLS; keep Agent Identity CAA and DPoP enabled.
 google-genai==2.18.0
 google-auth[pyopenssl]==2.56.3
 google-cloud-firestore==2.28.1
