@@ -62,8 +62,13 @@ class AgentRuntimeService:
                             "contextId": session.remote_session.rsplit("/", 1)[-1],
                             "role": "1",
                             "content": [{"text": _prompt(task, memories)}],
-                            "metadata": {"uumi_organisation_id": task.organisation_id},
-                        }
+                            "metadata": {
+                                "uumi_organisation_id": task.organisation_id,
+                                "uumi_run_id": task.run_id,
+                                "uumi_task_context": task_context,
+                            },
+                        },
+                        "configuration": {"blocking": True},
                     },
                 )
             except ConnectorError as error:
@@ -150,6 +155,16 @@ def _a2a_output(response: dict[str, Any]) -> dict[str, Any]:
     _collect_text(payload.get("artifacts"), texts)
     status = payload.get("status")
     if isinstance(status, dict):
+        state = status.get("state")
+        if state in {
+            "TASK_STATE_FAILED",
+            "TASK_STATE_CANCELED",
+            "TASK_STATE_REJECTED",
+        }:
+            raise ConnectorError(
+                "agent-runtime-terminal",
+                "Agent Runtime returned a terminal task failure",
+            )
         _collect_text(status.get("message"), texts)
     _collect_text(payload.get("history"), texts)
     _collect_text(payload.get("parts"), texts)

@@ -41,6 +41,10 @@ locals {
         display_name = "IAM Service Account Credentials API"
         url          = "https://iamcredentials.googleapis.com"
       }
+      iamcredentials_mtls = {
+        display_name = "IAM Service Account Credentials mTLS API"
+        url          = "https://iamcredentials.mtls.googleapis.com"
+      }
       logging = {
         display_name = "Cloud Logging API"
         url          = "https://logging.googleapis.com"

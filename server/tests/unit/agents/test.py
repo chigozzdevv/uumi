@@ -17,7 +17,14 @@ from agents.deploy import (
 from agents.fleet import _SKILLS, AgentFleetService
 from agents.redact import redact
 from agents.runtime import AgentRuntimeService, _a2a_endpoint, _a2a_output, _prompt
-from agents.shared.app import UumiA2aAgent, _bind_request_tenant, _required_environment, managed_app
+from agents.shared.app import (
+    RequestSessionService,
+    UumiA2aAgent,
+    _bind_request_tenant,
+    _request,
+    _required_environment,
+    managed_app,
+)
 from connectors.base.errors import ConnectorError
 from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
 from vertexai import types
@@ -410,6 +417,22 @@ def test_a2a_response_returns_only_structured_artifact() -> None:
     assert output == {"decision": "plan", "safe": True}
 
 
+def test_a2a_response_rejects_terminal_failure_without_exposing_message() -> None:
+    with pytest.raises(ConnectorError, match="terminal task failure") as error:
+        _a2a_output(
+            {
+                "task": {
+                    "status": {
+                        "state": "TASK_STATE_FAILED",
+                        "message": {"content": [{"text": "sensitive upstream detail"}]},
+                    }
+                }
+            }
+        )
+
+    assert error.value.code == "agent-runtime-terminal"
+
+
 @pytest.mark.anyio
 async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPatch) -> None:
     del monkeypatch
@@ -443,13 +466,21 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     assert isinstance(message, dict)
     assert message["contextId"] == "session-task-one"
     assert message["role"] == "1"
-    assert message["metadata"] == {"uumi_organisation_id": "org_acme"}
+    assert message["metadata"] == {
+        "uumi_organisation_id": "org_acme",
+        "uumi_run_id": "run_one",
+        "uumi_task_context": {
+            "credential_id": "credential_one",
+            "api_key": "[REDACTED]",
+        },
+    }
     assert "do-not-send" not in message["content"][0]["text"]
     assert continuity.task_context == {
         "credential_id": "credential_one",
         "api_key": "[REDACTED]",
     }
     assert google.headers == {"A2A-Version": "0.3"}
+    assert google.body["configuration"] == {"blocking": True}
 
 
 def test_a2a_endpoint_uses_the_agent_runtime_compatibility_route() -> None:
@@ -538,6 +569,70 @@ def test_managed_agent_uses_a_request_local_task_store() -> None:
     )
 
     assert isinstance(value._tmpl_attrs["task_store_builder"](), InMemoryTaskStore)
+
+
+def test_managed_agent_uses_request_local_session_state() -> None:
+    from a2a.server.agent_execution import RequestContext
+    from a2a.server.context import ServerCallContext
+    from a2a.types import SendMessageRequest
+    from google.adk.a2a.converters.part_converter import convert_a2a_part_to_genai_part
+    from google.protobuf.json_format import ParseDict
+
+    context = RequestContext(
+        ServerCallContext(),
+        ParseDict(
+            {
+                "message": {
+                    "messageId": "message_one",
+                    "contextId": "session_one",
+                    "role": "ROLE_USER",
+                    "parts": [{"text": "Plan a rotation"}],
+                    "metadata": {
+                        "uumi_organisation_id": "org_acme",
+                        "uumi_run_id": "run_one",
+                        "uumi_task_context": {
+                            "inventory_item": {"id": "credential_one"},
+                            "api_key": "must-not-reach-the-model",
+                        },
+                    },
+                }
+            },
+            SendMessageRequest(),
+        ),
+    )
+
+    request = _request(context, convert_a2a_part_to_genai_part)
+
+    assert request.user_id == "org_acme"
+    assert request.session_id == "session_one"
+    assert request.state_delta == {
+        "organisation_id": "org_acme",
+        "run_id": "run_one",
+        "task_context": {
+            "inventory_item": {"id": "credential_one"},
+            "api_key": "[REDACTED]",
+        },
+    }
+
+
+def test_managed_agent_executor_uses_no_remote_session_service() -> None:
+    from agents.shared.app import _executor
+    from google.adk.agents import LlmAgent
+    from google.adk.apps import App
+
+    executor = _executor(
+        App(
+            name="test_app",
+            root_agent=LlmAgent(
+                name="test_agent",
+                description="Test agent",
+                model="gemini-2.5-flash",
+            ),
+        )
+    )
+
+    assert isinstance(executor._runner.session_service, RequestSessionService)
+    assert executor._runner.memory_service is None
 
 
 @pytest.mark.anyio

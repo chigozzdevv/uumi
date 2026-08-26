@@ -1,11 +1,45 @@
 import os
 from collections.abc import Collection
+from contextvars import ContextVar
 from copy import deepcopy
 from typing import Any
 
 import vertexai
 from google.adk.apps import App
+from google.adk.sessions import BaseSessionService, InMemorySessionService
 from vertexai.agent_engines.templates.a2a import A2aAgent, create_agent_card
+
+from agents.redact import redact
+
+_request_session: ContextVar[InMemorySessionService | None] = ContextVar(
+    "uumi_request_session", default=None
+)
+
+
+class RequestSessionService(BaseSessionService):
+    def _current(self) -> InMemorySessionService:
+        service = _request_session.get()
+        if service is None:
+            raise RuntimeError("managed agent session is outside an A2A request")
+        return service
+
+    async def create_session(self, **kwargs: Any) -> Any:
+        return await self._current().create_session(**kwargs)
+
+    async def get_session(self, **kwargs: Any) -> Any:
+        return await self._current().get_session(**kwargs)
+
+    async def list_sessions(self, **kwargs: Any) -> Any:
+        return await self._current().list_sessions(**kwargs)
+
+    async def delete_session(self, **kwargs: Any) -> None:
+        await self._current().delete_session(**kwargs)
+
+    async def append_event(self, session: Any, event: Any) -> Any:
+        return await self._current().append_event(session, event)
+
+    async def get_user_state(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._current().get_user_state(**kwargs)
 
 
 class UumiA2aAgent(A2aAgent):
@@ -30,7 +64,11 @@ class UumiA2aAgent(A2aAgent):
 
     async def on_message_send(self, request: Any, context: Any) -> Any:
         _bind_request_tenant(request, context)
-        return await super().on_message_send(request, context)
+        token = _request_session.set(InMemorySessionService())  # type: ignore[no-untyped-call]
+        try:
+            return await super().on_message_send(request, context)
+        finally:
+            _request_session.reset(token)
 
 
 def managed_app(app: App, skills: Collection[str]) -> Any:
@@ -93,17 +131,11 @@ def _bind_request_tenant(request: Any, context: Any) -> str:
 def _executor(app: App) -> Any:
     from google.adk.a2a.executor.a2a_agent_executor import A2aAgentExecutor
     from google.adk.a2a.executor.config import A2aAgentExecutorConfig
-    from google.adk.memory import VertexAiMemoryBankService
     from google.adk.runners import Runner
-    from google.adk.sessions import VertexAiSessionService
 
-    project = _required_environment("GOOGLE_CLOUD_PROJECT")
-    location = _required_environment("GOOGLE_CLOUD_LOCATION")
-    engine_id = _required_environment("GOOGLE_CLOUD_AGENT_ENGINE_ID", "test-agent-engine")
     runner = Runner(
         app=app,
-        session_service=VertexAiSessionService(project, location, engine_id),
-        memory_service=VertexAiMemoryBankService(project, location, engine_id),
+        session_service=RequestSessionService(),
     )
     return A2aAgentExecutor(
         runner=runner,
@@ -118,8 +150,27 @@ def _request(context: Any, part_converter: Any) -> Any:
 
     request = convert_a2a_request_to_agent_run_request(context, part_converter)
     organisation_id = _bind_request_tenant(context, context.call_context)
+    metadata = _message_metadata(context)
+    run_id = metadata.get("uumi_run_id")
+    task_context = redact(deepcopy(metadata.get("uumi_task_context")))
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("managed A2A request is missing its run binding")
+    if not isinstance(task_context, dict):
+        raise ValueError("managed A2A request task context must be an object")
     request.user_id = organisation_id
+    request.state_delta = {
+        "organisation_id": organisation_id,
+        "run_id": run_id,
+        "task_context": task_context,
+    }
     return request
+
+
+def _message_metadata(context: Any) -> dict[str, Any]:
+    from google.adk.a2a import _compat
+
+    message = getattr(context, "message", None)
+    return _compat.meta_to_dict(getattr(message, "metadata", None))
 
 
 def _task_store() -> Any:
