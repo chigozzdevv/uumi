@@ -407,6 +407,23 @@ def test_managed_agents_use_the_supported_us_model_endpoint() -> None:
         assert agent.mode == "chat"
 
 
+def test_playbook_agent_schema_omits_unsupported_gemini_keywords() -> None:
+    from agents.shared.models import PlaybookAgentDraft
+
+    schema = PlaybookAgentDraft.model_json_schema()
+
+    def contains_unique_items(value: object) -> bool:
+        if isinstance(value, dict):
+            return "uniqueItems" in value or any(
+                contains_unique_items(item) for item in value.values()
+            )
+        if isinstance(value, list):
+            return any(contains_unique_items(item) for item in value)
+        return False
+
+    assert contains_unique_items(schema) is False
+
+
 def test_a2a_response_returns_only_structured_artifact() -> None:
     output = _a2a_output(
         {

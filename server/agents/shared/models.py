@@ -1,6 +1,40 @@
-from typing import Literal
+from typing import Any, Literal
 
+from contracts import PlaybookDraft
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode
+
+
+class PlaybookAgentDraft(PlaybookDraft):
+    @classmethod
+    def model_json_schema(
+        cls,
+        by_alias: bool = True,
+        ref_template: str = "#/$defs/{model}",
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        mode: JsonSchemaMode = "validation",
+        *,
+        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
+    ) -> dict[str, Any]:
+        schema = super().model_json_schema(
+            by_alias=by_alias,
+            ref_template=ref_template,
+            schema_generator=schema_generator,
+            mode=mode,
+            union_format=union_format,
+        )
+        _remove_unique_items(schema)
+        return schema
+
+
+def _remove_unique_items(value: Any) -> None:
+    if isinstance(value, dict):
+        value.pop("uniqueItems", None)
+        for nested in value.values():
+            _remove_unique_items(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            _remove_unique_items(nested)
 
 
 class InventoryAssessment(BaseModel):

@@ -1,9 +1,9 @@
-from contracts import PlaybookDraft
 from google.adk.agents import Agent
 from google.adk.apps import App
 
 from agents.shared.app import managed_app
 from agents.shared.model import managed_model
+from agents.shared.models import PlaybookAgentDraft
 from agents.shared.tools import analyse_walkthrough, build_playbook, validate_playbook
 
 root_agent = Agent(
@@ -23,7 +23,7 @@ clicks use browser.click. Use build_playbook to canonicalise the candidate and v
 before returning it. Never put
 secret values in a playbook or response.""",
     tools=[analyse_walkthrough, build_playbook, validate_playbook],
-    output_schema=PlaybookDraft,
+    output_schema=PlaybookAgentDraft,
     output_key="playbook_draft",
     mode="chat",
     disallow_transfer_to_parent=True,
