@@ -397,7 +397,7 @@ def test_managed_agents_publish_their_exact_a2a_skills(
         assert "on_message_send" in application.register_operations()["a2a_extension"]
 
 
-def test_managed_agents_use_the_supported_us_model_endpoint(
+def test_managed_agents_use_the_runtime_region_model_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
@@ -406,16 +406,17 @@ def test_managed_agents_use_the_supported_us_model_endpoint(
     from agents.operator.agent import root_agent as operator
     from agents.planner.agent import root_agent as planner
     from agents.playbook.agent import root_agent as playbook
-    from agents.shared.model import MODEL_ID, MODEL_LOCATION
+    from agents.shared.model import MODEL_ID
     from google.adk.models import Gemini
 
+    assert MODEL_ID == "gemini-2.5-flash"
     for agent in (inventory, planner, playbook, operator):
         assert isinstance(agent.model, Gemini)
         assert agent.model.model == MODEL_ID
         assert agent.model.client_kwargs == {
             "vertexai": True,
             "project": "useuumi",
-            "location": MODEL_LOCATION,
+            "location": "us-east1",
         }
         assert agent.mode == "chat"
 
@@ -430,6 +431,21 @@ def test_managed_model_requires_an_explicit_project(
     with pytest.raises(
         RuntimeError,
         match="managed agent environment is missing UUMI_GOOGLE_CLOUD_PROJECT",
+    ):
+        managed_model()
+
+
+def test_managed_model_requires_an_explicit_location(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents.shared.model import managed_model
+
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
+    monkeypatch.delenv("UUMI_GOOGLE_CLOUD_LOCATION", raising=False)
+
+    with pytest.raises(
+        RuntimeError,
+        match="managed agent environment is missing UUMI_GOOGLE_CLOUD_LOCATION",
     ):
         managed_model()
 
