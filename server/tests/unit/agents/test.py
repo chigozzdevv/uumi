@@ -129,7 +129,6 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     assert config["env_vars"] == {
         "UUMI_GOOGLE_CLOUD_PROJECT": "project-one",
         "UUMI_GOOGLE_CLOUD_LOCATION": "us-central1",
-        "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES": "false",
     }
     assert config["agent_gateway_config"] == {
         "client_to_agent_config": {

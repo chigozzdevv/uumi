@@ -245,7 +245,6 @@ def _deployment_config(
         "env_vars": {
             "UUMI_GOOGLE_CLOUD_PROJECT": project_id,
             "UUMI_GOOGLE_CLOUD_LOCATION": region,
-            "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES": "false",
         },
         "identity_type": types.IdentityType.AGENT_IDENTITY,
         "agent_gateway_config": {
