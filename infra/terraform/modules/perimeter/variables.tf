@@ -8,6 +8,16 @@ variable "project_number" {
   type        = string
 }
 
+variable "organisation_id" {
+  description = "Numeric Google Cloud organisation containing the Uumi project."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.organisation_id))
+    error_message = "organisation_id must be numeric."
+  }
+}
+
 variable "access_policy_id" {
   description = "Organisation Access Context Manager policy containing the Uumi perimeter."
   type        = string

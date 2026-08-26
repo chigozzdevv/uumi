@@ -374,6 +374,7 @@ module "perimeter" {
 
   project_id            = var.project_id
   project_number        = data.google_project.current.number
+  organisation_id       = data.google_project.current.org_id
   access_policy_id      = var.access_policy_id
   operator_access_level = var.operator_access_level
   region                = var.region

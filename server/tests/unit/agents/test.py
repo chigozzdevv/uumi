@@ -115,6 +115,7 @@ async def test_fleet_accepts_canonical_numeric_runtime_resources() -> None:
 def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     config = _deployment_config(
         "project-one",
+        "us-central1",
         AgentKind.PLANNER,
         "1.2.3",
         "gs://staging",
@@ -125,7 +126,10 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
 
     assert config["identity_type"] is types.IdentityType.AGENT_IDENTITY
     assert "service_account" not in config
-    assert "env_vars" not in config
+    assert config["env_vars"] == {
+        "UUMI_GOOGLE_CLOUD_PROJECT": "project-one",
+        "UUMI_GOOGLE_CLOUD_LOCATION": "us-central1",
+    }
     assert config["agent_gateway_config"] == {
         "client_to_agent_config": {
             "agent_gateway": "projects/project-one/locations/us-central1/agentGateways/ingress"
@@ -373,8 +377,8 @@ class PolicyGoogle:
 def test_managed_agents_publish_their_exact_a2a_skills(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "useuumi")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-east1")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
     from agents.inventory.agent import agent_app as inventory
     from agents.operator.agent import agent_app as operator
     from agents.planner.agent import agent_app as planner
@@ -396,8 +400,8 @@ def test_managed_agents_publish_their_exact_a2a_skills(
 def test_managed_agents_use_the_supported_us_model_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "useuumi")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-east1")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
     from agents.inventory.agent import root_agent as inventory
     from agents.operator.agent import root_agent as operator
     from agents.planner.agent import root_agent as planner
@@ -421,11 +425,11 @@ def test_managed_model_requires_an_explicit_project(
 ) -> None:
     from agents.shared.model import managed_model
 
-    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("UUMI_GOOGLE_CLOUD_PROJECT", raising=False)
 
     with pytest.raises(
         RuntimeError,
-        match="managed agent environment is missing GOOGLE_CLOUD_PROJECT",
+        match="managed agent environment is missing UUMI_GOOGLE_CLOUD_PROJECT",
     ):
         managed_model()
 

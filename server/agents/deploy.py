@@ -90,8 +90,8 @@ async def _deploy_fleet(
     credentials: Credentials | None = None,
     catalog_credentials: Credentials | None = None,
 ) -> tuple[AgentRegistration, ...]:
-    os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-    os.environ["GOOGLE_CLOUD_LOCATION"] = region
+    os.environ["UUMI_GOOGLE_CLOUD_PROJECT"] = project_id
+    os.environ["UUMI_GOOGLE_CLOUD_LOCATION"] = region
     client = vertexai.Client(
         project=project_id,
         location=region,
@@ -149,6 +149,7 @@ async def _deploy_fleet(
                     agent=app,
                     config=_deployment_config(
                         project_id,
+                        region,
                         kind,
                         version,
                         staging_bucket,
@@ -226,6 +227,7 @@ def _matches_existing_registration(
 
 def _deployment_config(
     project_id: str,
+    region: str,
     kind: AgentKind,
     version: str,
     staging_bucket: str,
@@ -240,6 +242,10 @@ def _deployment_config(
         "staging_bucket": staging_bucket,
         "requirements": str(_ROOT / "server" / "agents" / "requirements.txt"),
         "extra_packages": list(source_packages or (name for _, name in _AGENT_SOURCE_PACKAGES)),
+        "env_vars": {
+            "UUMI_GOOGLE_CLOUD_PROJECT": project_id,
+            "UUMI_GOOGLE_CLOUD_LOCATION": region,
+        },
         "identity_type": types.IdentityType.AGENT_IDENTITY,
         "agent_gateway_config": {
             "client_to_agent_config": {"agent_gateway": ingress_gateway},

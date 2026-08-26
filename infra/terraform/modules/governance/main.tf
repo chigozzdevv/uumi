@@ -53,6 +53,10 @@ locals {
         display_name = "Cloud Logging API"
         url          = "https://logging.googleapis.com"
       }
+      logging_mtls = {
+        display_name = "Cloud Logging mTLS API"
+        url          = "https://logging.mtls.googleapis.com"
+      }
       monitoring = {
         display_name = "Cloud Monitoring API"
         url          = "https://monitoring.googleapis.com"

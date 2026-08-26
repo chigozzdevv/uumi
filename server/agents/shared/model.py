@@ -7,9 +7,9 @@ MODEL_LOCATION = "us"
 
 
 def managed_model() -> Gemini:
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    project = os.environ.get("UUMI_GOOGLE_CLOUD_PROJECT")
     if not project:
-        raise RuntimeError("managed agent environment is missing GOOGLE_CLOUD_PROJECT")
+        raise RuntimeError("managed agent environment is missing UUMI_GOOGLE_CLOUD_PROJECT")
     return Gemini(
         model=MODEL_ID,
         client_kwargs={
