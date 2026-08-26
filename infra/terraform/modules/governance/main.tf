@@ -21,6 +21,10 @@ locals {
         display_name = "Vertex AI US multi-region model API"
         url          = "https://aiplatform.us.rep.googleapis.com"
       }
+      aiplatform_model_mtls = {
+        display_name = "Vertex AI US multi-region model mTLS API"
+        url          = "https://aiplatform.us.rep.mtls.googleapis.com"
+      }
       agentregistry = {
         display_name = "Agent Registry API"
         url          = "https://agentregistry.googleapis.com"

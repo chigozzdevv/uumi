@@ -370,7 +370,11 @@ class PolicyGoogle:
         return policy
 
 
-def test_managed_agents_publish_their_exact_a2a_skills() -> None:
+def test_managed_agents_publish_their_exact_a2a_skills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "useuumi")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-east1")
     from agents.inventory.agent import agent_app as inventory
     from agents.operator.agent import agent_app as operator
     from agents.planner.agent import agent_app as planner
@@ -389,7 +393,11 @@ def test_managed_agents_publish_their_exact_a2a_skills() -> None:
         assert "on_message_send" in application.register_operations()["a2a_extension"]
 
 
-def test_managed_agents_use_the_supported_us_model_endpoint() -> None:
+def test_managed_agents_use_the_supported_us_model_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "useuumi")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-east1")
     from agents.inventory.agent import root_agent as inventory
     from agents.operator.agent import root_agent as operator
     from agents.planner.agent import root_agent as planner
@@ -402,9 +410,24 @@ def test_managed_agents_use_the_supported_us_model_endpoint() -> None:
         assert agent.model.model == MODEL_ID
         assert agent.model.client_kwargs == {
             "vertexai": True,
+            "project": "useuumi",
             "location": MODEL_LOCATION,
         }
         assert agent.mode == "chat"
+
+
+def test_managed_model_requires_an_explicit_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents.shared.model import managed_model
+
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+
+    with pytest.raises(
+        RuntimeError,
+        match="managed agent environment is missing GOOGLE_CLOUD_PROJECT",
+    ):
+        managed_model()
 
 
 def test_playbook_agent_schema_omits_unsupported_gemini_keywords() -> None:

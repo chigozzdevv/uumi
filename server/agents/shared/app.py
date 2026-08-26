@@ -73,8 +73,8 @@ class UumiA2aAgent(A2aAgent):
 
 def managed_app(app: App, skills: Collection[str]) -> Any:
     vertexai.init(
-        project=os.environ.get("GOOGLE_CLOUD_PROJECT", "uumi-local"),
-        location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
+        project=_required_environment("GOOGLE_CLOUD_PROJECT"),
+        location=_required_environment("GOOGLE_CLOUD_LOCATION"),
     )
     from a2a.types import AgentInterface, AgentSkill
     from a2a.utils.constants import TransportProtocol
