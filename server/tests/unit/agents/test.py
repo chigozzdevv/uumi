@@ -129,7 +129,6 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     assert config["env_vars"] == {
         "UUMI_GOOGLE_CLOUD_PROJECT": "project-one",
         "UUMI_GOOGLE_CLOUD_LOCATION": "us-central1",
-        "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES": "False",
     }
     assert config["agent_gateway_config"] == {
         "client_to_agent_config": {
@@ -139,6 +138,15 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
             "agent_gateway": "projects/project-one/locations/us-central1/agentGateways/egress"
         },
     }
+
+
+def test_agent_runtime_pins_mtls_capable_genai_client() -> None:
+    requirements = (Path(__file__).parents[3] / "agents" / "requirements.txt").read_text(
+        encoding="utf-8"
+    )
+
+    assert "google-genai==2.18.0" in requirements.splitlines()
+    assert "google-auth[pyopenssl]==2.56.3" in requirements.splitlines()
 
 
 def test_agent_deployment_stages_importable_top_level_packages() -> None:
