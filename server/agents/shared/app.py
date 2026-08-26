@@ -1,5 +1,6 @@
 import os
 from collections.abc import Collection
+from copy import deepcopy
 from typing import Any
 
 import vertexai
@@ -8,6 +9,18 @@ from vertexai.agent_engines.templates.a2a import A2aAgent, create_agent_card
 
 
 class UumiA2aAgent(A2aAgent):
+    def clone(self) -> "UumiA2aAgent":
+        return UumiA2aAgent(
+            agent_card=deepcopy(self.agent_card),
+            task_store_builder=self._tmpl_attrs["task_store_builder"],
+            task_store_kwargs=self._tmpl_attrs["task_store_kwargs"],
+            agent_executor_kwargs=self._tmpl_attrs["agent_executor_kwargs"],
+            agent_executor_builder=self._tmpl_attrs["agent_executor_builder"],
+            request_handler_kwargs=self._tmpl_attrs["request_handler_kwargs"],
+            request_handler_builder=self._tmpl_attrs["request_handler_builder"],
+            extended_agent_card=self._tmpl_attrs["extended_agent_card"],
+        )
+
     def set_up(self) -> None:
         super().set_up()  # type: ignore[no-untyped-call]
         primary_url = self.agent_card.supported_interfaces[0].url

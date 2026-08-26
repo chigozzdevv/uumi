@@ -17,7 +17,7 @@ from agents.deploy import (
 from agents.fleet import _SKILLS, AgentFleetService
 from agents.redact import redact
 from agents.runtime import AgentRuntimeService, _a2a_endpoint, _a2a_output, _prompt
-from agents.shared.app import _bind_request_tenant, _required_environment, managed_app
+from agents.shared.app import UumiA2aAgent, _bind_request_tenant, _required_environment, managed_app
 from connectors.base.errors import ConnectorError
 from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
 from vertexai import types
@@ -532,6 +532,8 @@ def test_managed_agent_accepts_the_deployed_runtime_http_contract() -> None:
     value._tmpl_attrs["agent_executor_kwargs"] = {}
     value._tmpl_attrs["task_store_builder"] = Store
     value._tmpl_attrs["task_store_kwargs"] = {}
+    value = value.clone()
+    assert isinstance(value, UumiA2aAgent)
     value.set_up()
 
     response = TestClient(Starlette(routes=value.rest_routes)).post(
