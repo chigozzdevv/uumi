@@ -215,14 +215,7 @@ async def _collection(
     context: AgentContext, name: str, field: str, value: str
 ) -> list[dict[str, Any]]:
     root = f"{FirestorePaths.organisation(context.organisation_id)}/{name}"
-    values = []
-    async for snapshot in context.client.collection(root).where(field, "==", value).stream():
-        data = snapshot.to_dict()
-        if data is not None:
-            from agents.redact import redact
-
-            values.append(redact(data))
-    return values
+    return list(await context.collection(root, field, value))
 
 
 def _string(value: dict[str, Any], name: str) -> str:

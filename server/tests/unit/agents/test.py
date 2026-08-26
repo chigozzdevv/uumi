@@ -21,6 +21,7 @@ from agents.runtime import AgentRuntimeService, _a2a_endpoint, _a2a_output, _pro
 from agents.shared.app import UumiA2aAgent, _bind_request_tenant, _required_environment, managed_app
 from connectors.base.errors import ConnectorError
 from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus
+from google.auth.credentials import AnonymousCredentials
 from vertexai import types
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -128,6 +129,14 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
             "agent_gateway": "projects/project-one/locations/us-central1/agentGateways/egress"
         },
     }
+
+
+def test_managed_agent_firestore_uses_the_registered_rest_transport() -> None:
+    from agents.shared.firestore import rest_client
+
+    client = rest_client("test", "(default)", AnonymousCredentials())  # type: ignore[no-untyped-call]
+
+    assert type(client._firestore_api.transport).__name__ == "FirestoreRestTransport"
 
 
 def test_agent_deployment_stages_importable_top_level_packages() -> None:
