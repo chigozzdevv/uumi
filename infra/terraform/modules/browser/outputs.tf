@@ -19,11 +19,11 @@ output "template" {
 }
 
 output "egress_gateway" {
-  description = "Regional default-deny Secure Web Proxy used by browser workers."
-  value       = google_network_services_gateway.browser.id
+  description = "No persistent browser egress gateway is deployed."
+  value       = null
 }
 
 output "egress_domains" {
-  description = "Exact provider and Google domains allowed by the browser egress policy."
-  value       = local.egress_domains
+  description = "No browser egress domains are active while Computer Use is disabled."
+  value       = []
 }

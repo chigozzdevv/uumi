@@ -154,12 +154,12 @@ output "browser_template" {
 }
 
 output "browser_egress_gateway" {
-  description = "Default-deny Secure Web Proxy governing browser egress."
+  description = "No persistent browser egress gateway is deployed."
   value       = module.browser.egress_gateway
 }
 
 output "browser_egress_domains" {
-  description = "External domains allowed through browser Secure Web Proxy."
+  description = "No browser egress domains are active while Computer Use is disabled."
   value       = module.browser.egress_domains
 }
 

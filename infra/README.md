@@ -38,9 +38,10 @@ terraform -chdir=infra/terraform/environments/dev apply \
 This creates the protected Firestore database, service accounts, immutable Artifact Registry,
 CMEK keys, locked evidence and audit storage, Agent Runtime staging bucket, GitHub App OAuth and
 webhook secret containers, provider webhook secret containers, capability secret container,
-service perimeter, regional policy,
-private browser network, Secure Web Proxy, one-run VM template, and Identity Platform sign-in
-configuration (email and password enabled; `identity_platform_domains` admits the client origin).
+service perimeter, regional policy, private browser network, one-run VM template, and Identity
+Platform sign-in configuration (email and password enabled; `identity_platform_domains` admits the
+client origin). Computer Use remains unavailable until its on-demand secure-egress lifecycle is
+implemented.
 
 Create secret versions outside Terraform. The capability secret version must contain exactly the
 raw 32-byte private key of an Ed25519 keypair; `capability_public_key` contains only the paired raw
@@ -133,10 +134,8 @@ The resulting graph includes:
 - SCC v2 and Secret Manager topics, retrying push subscriptions, recurring Cloud Scheduler jobs,
   and retained dead-letter review.
 - A no-public-IP, Shielded, CMEK-encrypted, auto-deleting Compute Engine VM per browser run.
-- A regional next-hop Secure Web Proxy that admits the browser VM only by workload identity and
-  its exact approved domains. Cloud Run uses a separate source subnet and a fixed Google and
-  connector-domain list because Direct VPC egress does not propagate service-account identity to
-  Secure Web Proxy; unmatched internet egress is denied.
+- A private browser network and one-run VM template. Computer Use egress is intentionally disabled
+  until Uumi can create and remove its allowlisted proxy for active browser sessions only.
 - An enforced VPC Service Controls perimeter for persisted data APIs plus a project resource
   location policy bound to the selected region. When Agent Gateway is enabled, Vertex Agent
   Runtime is governed by Gateway, IAM, Model Armor, and CMEK instead of VPC Service Controls,
