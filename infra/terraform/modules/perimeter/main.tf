@@ -149,6 +149,50 @@ resource "google_access_context_manager_service_perimeter" "uumi" {
       }
     }
 
+    ingress_policies {
+      title = "cloud-build"
+
+      ingress_from {
+        identities = [
+          "serviceAccount:${var.project_number}-compute@developer.gserviceaccount.com",
+        ]
+        sources {
+          access_level = "*"
+        }
+      }
+
+      ingress_to {
+        resources = ["projects/${var.project_number}"]
+
+        operations {
+          service_name = "storage.googleapis.com"
+          method_selectors {
+            method = "google.storage.objects.get"
+          }
+          method_selectors {
+            method = "google.storage.objects.list"
+          }
+        }
+
+        operations {
+          service_name = "artifactregistry.googleapis.com"
+          method_selectors {
+            method = "artifactregistry.googleapis.com/DockerRead"
+          }
+          method_selectors {
+            method = "artifactregistry.googleapis.com/DockerWrite"
+          }
+        }
+
+        operations {
+          service_name = "logging.googleapis.com"
+          method_selectors {
+            method = "LoggingServiceV2.WriteLogEntries"
+          }
+        }
+      }
+    }
+
     vpc_accessible_services {
       enable_restriction = true
       allowed_services = concat(
