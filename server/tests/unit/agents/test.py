@@ -1345,9 +1345,10 @@ def test_agent_prompt_exposes_only_the_objective_and_approved_memory() -> None:
 
 
 @pytest.mark.anyio
-async def test_managed_session_retry_reconciles_exact_remote_binding() -> None:
+@pytest.mark.parametrize("status", (400, 409))
+async def test_managed_session_retry_reconciles_exact_remote_binding(status: int) -> None:
     repository = ContinuityRepository()
-    google = ExistingGoogle("session")
+    google = ExistingGoogle("session", status)
     continuity = AgentContinuityService(
         repository,  # type: ignore[arg-type]
         google,  # type: ignore[arg-type]
@@ -1414,8 +1415,9 @@ class ContinuityRepository:
 
 
 class ExistingGoogle:
-    def __init__(self, resource: str) -> None:
+    def __init__(self, resource: str, status: int = 409) -> None:
         self.resource = resource
+        self.status = status
         self.body: dict[str, object] = {}
 
     async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
@@ -1423,7 +1425,7 @@ class ExistingGoogle:
             body = kwargs.get("json")
             assert isinstance(body, dict)
             self.body = body
-            raise ConnectorError("google-api-409", "already exists")
+            raise ConnectorError(f"google-api-{self.status}", "already exists")
         assert method == "GET"
         name = (
             "projects/project-one/locations/us-central1/reasoningEngines/planner/"
@@ -1434,6 +1436,7 @@ class ExistingGoogle:
                 "name": name,
                 "userId": "org_acme",
                 "sessionState": self.body["sessionState"],
+                "labels": self.body["labels"],
             }
         return {
             "name": (

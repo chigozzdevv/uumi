@@ -64,14 +64,18 @@ class AgentContinuityService:
                 _string(operation, "name"), base_url=f"{endpoint}/v1"
             )
         except ConnectorError as error:
-            if error.code != "google-api-409":
+            if error.code not in {"google-api-400", "google-api-409"}:
                 raise
-            response = await self._google.request(
-                "GET", f"{endpoint}/v1/{parent}/sessions/{remote_id}"
-            )
+            try:
+                response = await self._google.request(
+                    "GET", f"{endpoint}/v1/{parent}/sessions/{remote_id}"
+                )
+            except ConnectorError as reconcile_error:
+                raise error from reconcile_error
             if (
                 response.get("userId") != registration.organisation_id
                 or response.get("sessionState") != body["sessionState"]
+                or response.get("labels") != body["labels"]
             ):
                 raise ValueError("existing Agent Runtime session has different bindings") from error
         now = self._clock()
@@ -126,11 +130,14 @@ class AgentContinuityService:
                 _string(operation, "name"), base_url=f"{endpoint}/v1beta1"
             )
         except ConnectorError as error:
-            if error.code != "google-api-409":
+            if error.code not in {"google-api-400", "google-api-409"}:
                 raise
-            response = await self._google.request(
-                "GET", f"{endpoint}/v1beta1/{registration.deployment}/memories/{remote_id}"
-            )
+            try:
+                response = await self._google.request(
+                    "GET", f"{endpoint}/v1beta1/{registration.deployment}/memories/{remote_id}"
+                )
+            except ConnectorError as reconcile_error:
+                raise error from reconcile_error
             expected = (fact, body["scope"], body["revisionLabels"])
             actual = (
                 response.get("fact"),
