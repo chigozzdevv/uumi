@@ -19,6 +19,7 @@ from agents.deploy import (
     _staged_agent_source,
 )
 from agents.fleet import _SKILLS, AgentFleetService
+from agents.probe import _inventory_context, run_probe
 from agents.redact import redact
 from agents.runtime import AgentRuntimeService, _a2a_endpoint, _a2a_output, _prompt
 from agents.shared.app import (
@@ -30,7 +31,16 @@ from agents.shared.app import (
     managed_app,
 )
 from connectors.base.errors import ConnectorError
-from contracts import AgentKind, AgentMemory, AgentRegistration, AgentSession, AgentStatus, Evidence
+from contracts import (
+    AgentKind,
+    AgentMemory,
+    AgentRegistration,
+    AgentResult,
+    AgentSession,
+    AgentStatus,
+    AgentTask,
+    Evidence,
+)
 from vertexai import types
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -76,6 +86,85 @@ def registration() -> AgentRegistration:
         status=AgentStatus.READY,
         registered_at=datetime.now(UTC),
     )
+
+
+class ProbeRuntime:
+    def __init__(self) -> None:
+        self.tasks: list[AgentTask] = []
+
+    async def execute(self, task: AgentTask) -> AgentResult:
+        self.tasks.append(task)
+        if "block" in task.id:
+            return AgentResult(
+                task_id=task.id,
+                agent=task.agent,
+                skill=task.skill,
+                succeeded=False,
+                evidence_ids=("evidence_block",),
+                error=("model-armor-blocked.model-armor-prompt.prompt: agent execution failed"),
+                completed_at=NOW,
+            )
+        return AgentResult(
+            task_id=task.id,
+            agent=task.agent,
+            skill=task.skill,
+            succeeded=True,
+            output={"credential_id": "credential_evidence_demo"},
+            evidence_ids=("evidence_allow_prompt", "evidence_allow_response"),
+            completed_at=NOW,
+        )
+
+
+class ProbeEvidence:
+    def __init__(self) -> None:
+        self.content = b""
+        self.kind = ""
+
+    async def store(
+        self,
+        organisation_id: str,
+        run_id: str,
+        kind: str,
+        content: bytes,
+        content_type: str,
+        now: datetime,
+    ) -> Evidence:
+        self.content = content
+        self.kind = kind
+        return Evidence(
+            id="evidence_summary",
+            organisation_id=organisation_id,
+            kind=kind,
+            resource=f"gs://evidence/{run_id}/{kind}",
+            digest=hashlib.sha256(content).hexdigest(),
+            content_type=content_type,
+            size=len(content),
+            created_at=now,
+            region="us-east1",
+        )
+
+
+@pytest.mark.anyio
+async def test_model_armor_probe_requires_block_and_end_to_end_allow() -> None:
+    runtime = ProbeRuntime()
+    evidence = ProbeEvidence()
+
+    report, passed = await run_probe(
+        runtime,  # type: ignore[arg-type]
+        evidence,  # type: ignore[arg-type]
+        "org_acme",
+        "run_probe_one",
+        lambda: NOW,
+    )
+
+    assert passed is True
+    assert report["summary_evidence_id"] == "evidence_summary"
+    assert [item["actual"] for item in report["tests"]] == ["BLOCK", "ALLOW"]
+    assert evidence.kind == "model-armor-probe"
+    stored = json.loads(evidence.content)
+    assert stored["passed"] is True
+    assert "Ignore all previous" not in evidence.content.decode()
+    assert all(task.context == _inventory_context() for task in runtime.tasks)
 
 
 @pytest.mark.anyio
