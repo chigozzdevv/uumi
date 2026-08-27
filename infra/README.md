@@ -154,12 +154,15 @@ The resulting graph includes:
 
 ## 4. Deploy and register the four agents
 
-Run the deployment under the `uumi-agents` deployment identity and use the Terraform outputs
-for the staging bucket, KMS key, and two governed gateways:
+Run the deployment under the `uumi-agents` deployment identity. `--project` is the separate,
+non-perimeter agent project that owns Agent Runtime, Agent Gateway, Agent Registry, Model Armor,
+the staging bucket, and CMEK. `--catalog-project` is the VPC-SC-protected Uumi project that owns
+the Firestore registration catalog:
 
 ```bash
 uv run --all-extras python -m agents.deploy \
-  --project YOUR_PROJECT \
+  --project YOUR_AGENT_PROJECT \
+  --catalog-project YOUR_UUMI_DATA_PROJECT \
   --organisation YOUR_UUMI_ORGANISATION \
   --region YOUR_REGION \
   --staging-bucket AGENT_STAGING_BUCKET \

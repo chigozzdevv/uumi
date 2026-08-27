@@ -1,6 +1,9 @@
 project_id                = "replace-with-project-id"
+agent_project_id          = "replace-with-agent-project-id"
 region                    = "us-east1"
 enable_gateway            = true
+enable_legacy_gateway     = false
+agent_broker_uri          = null
 access_policy_id          = "123456789012"
 operator_access_level     = "accessPolicies/123456789012/accessLevels/uumiOperators"
 browser_allowed_domains   = ["console.vendor.example"]

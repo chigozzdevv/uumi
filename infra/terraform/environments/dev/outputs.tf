@@ -105,47 +105,70 @@ output "image_repository" {
 
 output "agent_staging_bucket" {
   description = "Bucket used by the managed Agent Runtime deployment script."
-  value       = module.storage.agent_bucket
+  value = local.split_agent_project ? (
+    module.agentstorage[0].bucket
+  ) : module.storage.agent_bucket
 }
 
 output "agent_kms_key" {
   description = "CMEK used by managed agents."
-  value       = module.storage.kms_key
+  value = local.split_agent_project ? (
+    module.agentstorage[0].kms_key
+  ) : module.storage.kms_key
 }
 
 output "agent_ingress_gateway" {
   description = "Model Armor governed gateway for client-to-agent calls."
-  value       = try(module.governance[0].ingress_gateway, null)
+  value = local.split_agent_project ? (
+    try(module.agent_governance[0].ingress_gateway, null)
+  ) : try(module.governance[0].ingress_gateway, null)
 }
 
 output "agent_egress_gateway" {
   description = "Identity and Model Armor governed gateway for agent egress."
-  value       = try(module.governance[0].egress_gateway, null)
+  value = local.split_agent_project ? (
+    try(module.agent_governance[0].egress_gateway, null)
+  ) : try(module.governance[0].egress_gateway, null)
 }
 
 output "agent_model_armor" {
   description = "Model Armor template applied to the managed agent fleet."
-  value       = try(module.governance[0].model_armor_template, null)
+  value = local.split_agent_project ? (
+    try(module.agent_governance[0].model_armor_template, null)
+  ) : try(module.governance[0].model_armor_template, null)
 }
 
 output "agent_endpoints" {
   description = "Agent Registry resources allowed through the egress gateway."
-  value       = try(module.governance[0].registered_endpoints, {})
+  value = local.split_agent_project ? (
+    try(module.agent_governance[0].registered_endpoints, {})
+  ) : try(module.governance[0].registered_endpoints, {})
 }
 
 output "agent_broker" {
   description = "MCP broker registration governed by the agent egress gateway."
-  value       = try(module.governance[0].registered_broker, null)
+  value = local.split_agent_project ? (
+    try(module.agent_governance[0].registered_broker, null)
+  ) : try(module.governance[0].registered_broker, null)
 }
 
 output "agent_caller_role" {
   description = "Custom role applied to approved callers on each managed agent deployment."
-  value       = try(module.governance[0].caller_role, null)
+  value = local.split_agent_project ? (
+    try(module.agent_governance[0].caller_role, null)
+  ) : try(module.governance[0].caller_role, null)
 }
 
 output "agent_deployer_role" {
   description = "Least-privilege role used by the managed agent deployment identity."
-  value       = try(module.governance[0].deployer_role, null)
+  value = local.split_agent_project ? (
+    try(module.agent_governance[0].deployer_role, null)
+  ) : try(module.governance[0].deployer_role, null)
+}
+
+output "agent_project" {
+  description = "Project hosting the governed managed agent fleet."
+  value       = local.agent_project_id
 }
 
 output "browser_template" {

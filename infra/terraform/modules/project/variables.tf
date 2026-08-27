@@ -9,3 +9,17 @@ variable "enable_gateway" {
   default     = true
 }
 
+variable "service_overrides" {
+  description = "Exact API set to enable instead of the default Uumi control-plane services."
+  type        = set(string)
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.service_overrides == null ||
+      alltrue([for service in var.service_overrides : endswith(service, ".googleapis.com")])
+    )
+    error_message = "service_overrides must contain Google API service names."
+  }
+}

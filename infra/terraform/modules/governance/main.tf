@@ -6,67 +6,63 @@ locals {
   endpoints = merge(
     {
       aiplatform = {
-        display_name = "Vertex AI regional API"
-        url          = "https://${var.region}-aiplatform.googleapis.com"
+        display_name = "Vertex AI global API"
+        service_id   = "aiplatform"
+        url          = "https://aiplatform.googleapis.com"
       }
       aiplatform_mtls = {
+        display_name = "Vertex AI global mTLS API"
+        service_id   = "aiplatform-mtls"
+        url          = "https://aiplatform.mtls.googleapis.com"
+      }
+      aiplatform_region = {
+        display_name = "Vertex AI regional API"
+        service_id   = "${var.region}-aiplatform"
+        url          = "https://${var.region}-aiplatform.googleapis.com"
+      }
+      aiplatform_region_mtls = {
         display_name = "Vertex AI regional mTLS API"
+        service_id   = "${var.region}-aiplatform-mtls"
         url          = "https://${var.region}-aiplatform.mtls.googleapis.com"
       }
       aiplatform_rep = {
         display_name = "Vertex AI regional REP API"
+        service_id   = "aiplatform-${var.region}-rep"
         url          = "https://aiplatform.${var.region}.rep.googleapis.com"
-      }
-      aiplatform_model = {
-        display_name = "Vertex AI US multi-region model API"
-        url          = "https://aiplatform.us.rep.googleapis.com"
-      }
-      aiplatform_model_mtls = {
-        display_name = "Vertex AI US multi-region model mTLS API"
-        url          = "https://aiplatform.us.rep.mtls.googleapis.com"
       }
       agentregistry = {
         display_name = "Agent Registry API"
+        service_id   = "agentregistry"
         url          = "https://agentregistry.googleapis.com"
-      }
-      aiplatform_global = {
-        display_name = "Vertex AI global API"
-        url          = "https://aiplatform.googleapis.com"
-      }
-      cloudresourcemanager_mtls = {
-        display_name = "Resource Manager mTLS API"
-        url          = "https://cloudresourcemanager.mtls.googleapis.com"
-      }
-      firestore = {
-        display_name = "Firestore API"
-        url          = "https://firestore.googleapis.com"
       }
       iamcredentials = {
         display_name = "IAM Service Account Credentials API"
+        service_id   = "iamcredentials"
         url          = "https://iamcredentials.googleapis.com"
-      }
-      iamcredentials_mtls = {
-        display_name = "IAM Service Account Credentials mTLS API"
-        url          = "https://iamcredentials.mtls.googleapis.com"
       }
       logging = {
         display_name = "Cloud Logging API"
+        service_id   = "logging"
         url          = "https://logging.googleapis.com"
       }
       logging_mtls = {
         display_name = "Cloud Logging mTLS API"
+        service_id   = "logging-mtls"
         url          = "https://logging.mtls.googleapis.com"
       }
-      monitoring = {
-        display_name = "Cloud Monitoring API"
-        url          = "https://monitoring.googleapis.com"
+      oauth2 = {
+        display_name = "Google OAuth API"
+        service_id   = "oauth2"
+        url          = "https://oauth2.googleapis.com"
       }
       telemetry = {
         display_name = "Cloud Telemetry API"
+        service_id   = "telemetry"
         url          = "https://telemetry.googleapis.com"
       }
       telemetry_mtls = {
         display_name = "Cloud Telemetry mTLS API"
+        service_id   = "telemetry-mtls"
         url          = "https://telemetry.mtls.googleapis.com"
       }
     },
@@ -264,16 +260,16 @@ resource "google_network_security_authz_policy" "egress_identity" {
 resource "google_agent_registry_service" "endpoint" {
   for_each = local.endpoints
 
-  project         = var.project_id
+  project         = data.google_project.current.number
   location        = var.region
-  service_id      = "uumi-${replace(each.key, "_", "-")}"
+  service_id      = each.value.service_id
   display_name    = each.value.display_name
   description     = "Approved Uumi Agent Gateway destination."
   deletion_policy = "PREVENT"
 
   interfaces {
     url              = each.value.url
-    protocol_binding = "HTTP_JSON"
+    protocol_binding = "JSONRPC"
   }
 
   endpoint_spec {
@@ -326,19 +322,21 @@ data "google_project" "current" {
 }
 
 locals {
+  documented_gateway_email = "service-${data.google_project.current.number}@gcp-sa-dep.iam.gserviceaccount.com"
+  modelarmor_roles = toset([
+    "roles/modelarmor.calloutUser",
+    "roles/modelarmor.user",
+    "roles/serviceusage.serviceUsageConsumer",
+  ])
   modelarmor_grants = {
     for grant in setproduct(
       toset(["gateway", "runtime"]),
-      toset([
-        "roles/modelarmor.calloutUser",
-        "roles/modelarmor.user",
-        "roles/serviceusage.serviceUsageConsumer",
-      ]),
+      local.modelarmor_roles,
       ) : "${grant[0]}-${grant[1]}" => {
       role = grant[1]
       member = (
         grant[0] == "gateway" ?
-        "serviceAccount:service-${data.google_project.current.number}@gcp-sa-dep.iam.gserviceaccount.com" :
+        "serviceAccount:${local.documented_gateway_email}" :
         "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
       )
     }
@@ -377,7 +375,6 @@ resource "google_project_iam_member" "agent" {
     "roles/aiplatform.agentDefaultAccess",
     "roles/aiplatform.expressUser",
     "roles/aiplatform.user",
-    "roles/browser",
     "roles/cloudtrace.agent",
     "roles/logging.logWriter",
     "roles/monitoring.metricWriter",
@@ -387,18 +384,6 @@ resource "google_project_iam_member" "agent" {
   project = var.project_id
   role    = each.value
   member  = var.agent_principal_set
-}
-
-resource "google_project_iam_member" "agent_database" {
-  project = var.project_id
-  role    = "roles/datastore.user"
-  member  = var.agent_principal_set
-
-  condition {
-    title       = "uumi-managed-agents-database"
-    description = "Restricts managed Agent Identity task persistence to Uumi's primary database."
-    expression  = "resource.name == 'projects/${var.project_id}/databases/(default)'"
-  }
 }
 
 resource "google_project_iam_custom_role" "caller" {

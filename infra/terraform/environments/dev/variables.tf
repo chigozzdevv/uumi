@@ -8,6 +8,50 @@ variable "project_id" {
   }
 }
 
+variable "agent_project_id" {
+  description = "Separate project for Agent Runtime, Gateway, Registry, Model Armor, staging, and CMEK."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.agent_project_id == null ||
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.agent_project_id))
+    )
+    error_message = "agent_project_id must be null or a valid Google Cloud project ID."
+  }
+}
+
+variable "agent_access_token" {
+  description = "Optional ephemeral OAuth token for the isolated agent-project provider."
+  type        = string
+  default     = null
+  nullable    = true
+  sensitive   = true
+}
+
+variable "agent_broker_uri" {
+  description = "Private Uumi MCP broker URI registered as governed agent egress."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.agent_broker_uri == null ||
+      can(regex("^https://[A-Za-z0-9.-]+$", var.agent_broker_uri))
+    )
+    error_message = "agent_broker_uri must be null or an HTTPS origin without a path."
+  }
+}
+
+variable "enable_legacy_gateway" {
+  description = "Temporarily retain the unsupported in-perimeter gateway while the split project is verified."
+  type        = bool
+  default     = false
+}
+
 variable "region" {
   description = "Shared region for Uumi control-plane and agent resources."
   type        = string

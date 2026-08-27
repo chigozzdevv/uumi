@@ -47,7 +47,9 @@ locals {
     "texttospeech.googleapis.com",
   ])
 
-  services = var.enable_gateway ? setunion(local.base_services, local.gateway_services) : local.base_services
+  services = var.service_overrides != null ? var.service_overrides : (
+    var.enable_gateway ? setunion(local.base_services, local.gateway_services) : local.base_services
+  )
 }
 
 resource "google_project_service" "service" {

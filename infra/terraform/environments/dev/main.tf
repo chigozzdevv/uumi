@@ -1,8 +1,49 @@
+locals {
+  agent_project_id    = coalesce(var.agent_project_id, var.project_id)
+  split_agent_project = var.enable_gateway && local.agent_project_id != var.project_id
+  agent_services = toset([
+    "agentregistry.googleapis.com",
+    "aiplatform.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "cloudkms.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "cloudtrace.googleapis.com",
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "iap.googleapis.com",
+    "logging.googleapis.com",
+    "modelarmor.googleapis.com",
+    "monitoring.googleapis.com",
+    "networksecurity.googleapis.com",
+    "networkservices.googleapis.com",
+    "orgpolicy.googleapis.com",
+    "serviceusage.googleapis.com",
+    "storage.googleapis.com",
+    "sts.googleapis.com",
+    "telemetry.googleapis.com",
+  ])
+}
+
 module "project" {
   source = "../../modules/project"
 
   project_id     = var.project_id
   enable_gateway = var.enable_gateway
+}
+
+module "agent_project" {
+  count  = local.split_agent_project ? 1 : 0
+  source = "../../modules/project"
+
+  providers = {
+    google      = google.agent
+    google-beta = google-beta.agent
+  }
+
+  project_id        = local.agent_project_id
+  enable_gateway    = true
+  service_overrides = local.agent_services
 }
 
 resource "google_org_policy_policy" "public_iam" {
@@ -368,6 +409,12 @@ data "google_project" "current" {
   project_id = var.project_id
 }
 
+data "google_project" "agent" {
+  provider = google.agent
+
+  project_id = local.agent_project_id
+}
+
 module "perimeter" {
   count  = var.access_policy_id == null || var.operator_access_level == null ? 0 : 1
   source = "../../modules/perimeter"
@@ -384,25 +431,68 @@ module "perimeter" {
 }
 
 locals {
-  agent_trust_domain = data.google_project.current.org_id != null && data.google_project.current.org_id != "" ? (
+  legacy_agent_trust_domain = data.google_project.current.org_id != null && data.google_project.current.org_id != "" ? (
     "agents.global.org-${data.google_project.current.org_id}.system.id.goog"
     ) : (
     "agents.global.project-${data.google_project.current.number}.system.id.goog"
   )
-  agent_principal_set = "principalSet://${local.agent_trust_domain}/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
+  legacy_agent_principal_set = "principalSet://${local.legacy_agent_trust_domain}/attribute.platformContainer/aiplatform/projects/${data.google_project.current.number}"
+  agent_trust_domain = data.google_project.agent.org_id != null && data.google_project.agent.org_id != "" ? (
+    "agents.global.org-${data.google_project.agent.org_id}.system.id.goog"
+    ) : (
+    "agents.global.project-${data.google_project.agent.number}.system.id.goog"
+  )
+  agent_principal_set = "principalSet://${local.agent_trust_domain}/attribute.platformContainer/aiplatform/projects/${data.google_project.agent.number}"
 }
 
 module "governance" {
-  count  = var.enable_gateway ? 1 : 0
+  count = var.enable_gateway && (
+    !local.split_agent_project || var.enable_legacy_gateway
+  ) ? 1 : 0
   source = "../../modules/governance"
 
   project_id          = var.project_id
   region              = var.region
-  agent_principal_set = local.agent_principal_set
+  agent_principal_set = local.legacy_agent_principal_set
   deployment_member   = module.identity.members["uumi-agents"]
   broker_uri          = module.runtime.broker_uri
 
   depends_on = [module.project]
+}
+
+module "agentstorage" {
+  count  = local.split_agent_project ? 1 : 0
+  source = "../../modules/agentstorage"
+
+  providers = {
+    google      = google.agent
+    google-beta = google-beta.agent
+  }
+
+  project_id        = local.agent_project_id
+  project_number    = data.google_project.agent.number
+  location          = var.region
+  deployment_member = module.identity.members["uumi-agents"]
+
+  depends_on = [module.agent_project]
+}
+
+module "agent_governance" {
+  count  = local.split_agent_project ? 1 : 0
+  source = "../../modules/governance"
+
+  providers = {
+    google      = google.agent
+    google-beta = google-beta.agent
+  }
+
+  project_id          = local.agent_project_id
+  region              = var.region
+  agent_principal_set = local.agent_principal_set
+  deployment_member   = module.identity.members["uumi-agents"]
+  broker_uri          = var.agent_broker_uri
+
+  depends_on = [module.agent_project, module.agentstorage]
 }
 
 module "gateway" {
@@ -524,6 +614,19 @@ resource "google_project_iam_member" "agent_deployer" {
   member  = module.identity.members["uumi-agents"]
 }
 
+resource "google_project_iam_member" "agent_project_deployer" {
+  provider = google.agent
+  for_each = local.split_agent_project ? toset([
+    "roles/agentregistry.viewer",
+    "roles/aiplatform.user",
+    "roles/serviceusage.serviceUsageConsumer",
+  ]) : toset([])
+
+  project = local.agent_project_id
+  role    = each.value
+  member  = module.identity.members["uumi-agents"]
+}
+
 locals {
   agent_context_grants = {
     api_memory          = [module.identity.members["uumi-api"], "roles/aiplatform.memoryUser"]
@@ -537,6 +640,15 @@ resource "google_project_iam_member" "agent_context" {
   for_each = local.agent_context_grants
 
   project = var.project_id
+  member  = each.value[0]
+  role    = each.value[1]
+}
+
+resource "google_project_iam_member" "agent_project_context" {
+  provider = google.agent
+  for_each = local.split_agent_project ? local.agent_context_grants : {}
+
+  project = local.agent_project_id
   member  = each.value[0]
   role    = each.value[1]
 }
