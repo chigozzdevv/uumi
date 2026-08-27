@@ -2,8 +2,7 @@ import os
 
 from google.adk.models import Gemini
 
-# Agent Identity routes Google API calls through the Gateway's regional mTLS endpoint;
-# Vertex's US multi-region model endpoint has no corresponding mTLS hostname.
+# Model calls use the regional endpoint registered with Agent Gateway.
 MODEL_ID = "gemini-2.5-flash"
 
 

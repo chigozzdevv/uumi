@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import cloudpickle  # type: ignore[import-untyped]
 import pytest
 from agents.continuity import AgentContinuityService
 from agents.deploy import (
@@ -129,6 +130,8 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     assert config["env_vars"] == {
         "UUMI_GOOGLE_CLOUD_PROJECT": "project-one",
         "UUMI_GOOGLE_CLOUD_LOCATION": "us-central1",
+        "GOOGLE_API_USE_CLIENT_CERTIFICATE": "true",
+        "GOOGLE_API_USE_MTLS_ENDPOINT": "always",
     }
     assert config["agent_gateway_config"] == {
         "client_to_agent_config": {
@@ -254,12 +257,14 @@ async def test_agent_deployment_keeps_operator_identity_on_catalog(
     runtime_credentials = object()
     catalog_credentials = object()
     captured: dict[str, object] = {}
+    initialised: dict[str, object] = {}
 
     def firestore_client(**kwargs: object) -> object:
         captured.update(kwargs)
         return object()
 
     monkeypatch.setattr("agents.deploy.AsyncClient", firestore_client)
+    monkeypatch.setattr("agents.deploy.vertexai.init", lambda **kwargs: initialised.update(kwargs))
     monkeypatch.setattr("agents.deploy.vertexai.Client", lambda **kwargs: object())
     monkeypatch.setattr("agents.deploy.AgentRepository", lambda client: object())
     monkeypatch.setattr("agents.deploy.AgentFleetService", lambda repository: object())
@@ -279,10 +284,18 @@ async def test_agent_deployment_keeps_operator_identity_on_catalog(
         "1.2.3",
         runtime_credentials,  # type: ignore[arg-type]
         catalog_credentials,  # type: ignore[arg-type]
+        "catalog-project",
     )
 
     assert result == ()
+    assert captured["project"] == "catalog-project"
     assert captured["credentials"] is catalog_credentials
+    assert initialised == {
+        "project": "project-one",
+        "location": "us-central1",
+        "staging_bucket": "gs://staging",
+        "credentials": runtime_credentials,
+    }
 
 
 def test_agent_deployment_retry_canonicalises_gateway_project_ids() -> None:
@@ -427,7 +440,43 @@ def test_managed_agents_use_the_runtime_region_model_endpoint(
             "project": "useuumi",
             "location": "us-east1",
         }
+        assert type(agent.model) is Gemini
         assert agent.mode == "chat"
+
+
+def test_managed_model_keeps_vertex_pickle_compatible_gemini(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents.shared.model import managed_model
+    from google.adk.models import Gemini
+
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
+
+    original = managed_model()
+    restored = cloudpickle.loads(cloudpickle.dumps(original))
+
+    assert type(restored) is Gemini
+    assert restored.client_kwargs == original.client_kwargs
+    assert restored.model == original.model
+
+
+def test_managed_model_does_not_patch_google_transports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents.shared.model import managed_model
+    from google.adk.models import Gemini
+    from google.auth.transport.requests import AuthorizedSession
+
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
+    original_model_method = Gemini.generate_content_async
+    original_request = AuthorizedSession.request
+
+    managed_model()
+
+    assert Gemini.generate_content_async is original_model_method
+    assert AuthorizedSession.request is original_request
 
 
 def test_managed_model_requires_an_explicit_project(

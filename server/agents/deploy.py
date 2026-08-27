@@ -53,6 +53,7 @@ async def deploy(
     version: str,
     credentials: Credentials | None = None,
     catalog_credentials: Credentials | None = None,
+    catalog_project_id: str | None = None,
 ) -> tuple[AgentRegistration, ...]:
     google = GoogleRestClient(credentials=credentials)
     try:
@@ -70,6 +71,7 @@ async def deploy(
             version,
             credentials,
             catalog_credentials,
+            catalog_project_id,
         )
     finally:
         await google.close()
@@ -89,9 +91,16 @@ async def _deploy_fleet(
     version: str,
     credentials: Credentials | None = None,
     catalog_credentials: Credentials | None = None,
+    catalog_project_id: str | None = None,
 ) -> tuple[AgentRegistration, ...]:
     os.environ["UUMI_GOOGLE_CLOUD_PROJECT"] = project_id
     os.environ["UUMI_GOOGLE_CLOUD_LOCATION"] = region
+    vertexai.init(
+        project=project_id,
+        location=region,
+        staging_bucket=staging_bucket,
+        credentials=credentials,
+    )
     client = vertexai.Client(
         project=project_id,
         location=region,
@@ -100,7 +109,10 @@ async def _deploy_fleet(
     )
     # Keep the VPC-SC operator identity on catalog calls; runtime calls use impersonation.
     repository = AgentRepository(
-        AsyncClient(project=project_id, credentials=catalog_credentials or credentials)
+        AsyncClient(
+            project=catalog_project_id or project_id,
+            credentials=catalog_credentials or credentials,
+        )
     )
     fleet = AgentFleetService(repository)
     registrations = []
@@ -245,6 +257,8 @@ def _deployment_config(
         "env_vars": {
             "UUMI_GOOGLE_CLOUD_PROJECT": project_id,
             "UUMI_GOOGLE_CLOUD_LOCATION": region,
+            "GOOGLE_API_USE_CLIENT_CERTIFICATE": "true",
+            "GOOGLE_API_USE_MTLS_ENDPOINT": "always",
         },
         "identity_type": types.IdentityType.AGENT_IDENTITY,
         "agent_gateway_config": {
@@ -433,6 +447,7 @@ def _deployment_credentials(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
+    parser.add_argument("--catalog-project")
     parser.add_argument("--organisation", required=True)
     parser.add_argument("--region", required=True)
     parser.add_argument("--staging-bucket", required=True)
@@ -463,6 +478,7 @@ def main() -> None:
             args.version,
             _deployment_credentials(args.impersonate_service_account, source_credentials),
             source_credentials,
+            args.catalog_project,
         )
     )
     print(json.dumps([value.model_dump(mode="json") for value in values]))
