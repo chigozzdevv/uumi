@@ -1,0 +1,18 @@
+steps:
+  - id: api
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/api/Dockerfile, --tag, "${_REGISTRY}/api:${_TAG}", .]
+  - id: coordinator
+    name: gcr.io/cloud-builders/docker
+    args:
+      [build, --file, server/coordinator/Dockerfile, --tag, "${_REGISTRY}/coordinator:${_TAG}", .]
+images:
+  - "${_REGISTRY}/api:${_TAG}"
+  - "${_REGISTRY}/coordinator:${_TAG}"
+options:
+  dynamicSubstitutions: true
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s
+substitutions:
+  _REGISTRY: us-east1-docker.pkg.dev/${PROJECT_ID}/uumi
+  _TAG: manual

@@ -434,7 +434,7 @@ variable "browser_zone" {
 }
 
 variable "model_armor_template" {
-  description = "Model Armor template applied to browser Computer Use prompts and responses."
+  description = "Model Armor template applied to agent and browser prompts and responses."
   type        = string
 
   validation {

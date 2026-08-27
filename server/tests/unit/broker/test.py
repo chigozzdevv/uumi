@@ -12,6 +12,7 @@ from broker import (
     ConnectorRegistry,
 )
 from broker.capability import request_digest
+from broker.evidence import _evidence_object
 from broker.server import server as mcp_server
 from broker.validate import validate_request
 from connectors import ConnectorContext, ConnectorResponse, SecretValue
@@ -49,6 +50,15 @@ NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+def test_evidence_objects_are_grouped_by_run_and_type() -> None:
+    assert _evidence_object("org_acme", "run_one", "model-armor-prompt", "evidence_one") == (
+        "organisations/org_acme/runs/run_one/types/model-armor-prompt/evidence_one"
+    )
+
+    with pytest.raises(ValueError, match="lowercase hyphenated"):
+        _evidence_object("org_acme", "run_one", "Model Armor", "evidence_one")
 
 
 class Provider:

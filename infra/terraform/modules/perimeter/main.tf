@@ -160,6 +160,7 @@ resource "google_access_context_manager_service_perimeter" "uumi" {
           "aiplatform.googleapis.com",
           # Managed Agent Runtime refreshes its location-bound credentials before data API calls.
           "iamcredentials.googleapis.com",
+          "modelarmor.googleapis.com",
         ] : [],
       )
     }

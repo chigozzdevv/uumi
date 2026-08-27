@@ -10,6 +10,7 @@ from connectors.google import GoogleRestClient
 from contracts import AgentRegistration, AgentResult, AgentTask
 from telemetry import record
 
+from agents.armor import ContentGuard, ModelArmorError
 from agents.continuity import AgentContinuityService
 from agents.fleet import AgentFleetService
 from agents.redact import redact
@@ -21,17 +22,18 @@ class AgentRuntimeService:
         fleet: AgentFleetService,
         continuity: AgentContinuityService,
         google: GoogleRestClient,
-        project_id: str,
+        guard: ContentGuard | None,
         clock: Callable[[], datetime],
     ) -> None:
         self._fleet = fleet
         self._continuity = continuity
         self._google = google
-        self._project = project_id
+        self._guard = guard
         self._clock = clock
 
     async def execute(self, task: AgentTask) -> AgentResult:
         started = monotonic()
+        evidence_ids = list(task.evidence_ids)
         try:
             registration = await self._fleet.resolve(task.organisation_id, task.agent, task.skill)
             task_context = redact(task.context)
@@ -51,6 +53,18 @@ class AgentRuntimeService:
                 memories = await self._continuity.retrieve(registration, task.objective, count=5)
             except ConnectorError as error:
                 raise _stage_error(error, "memory-retrieve") from error
+            prompt = _prompt(task, memories)
+            if self._guard is None:
+                raise ConnectorError(
+                    "model-armor-unconfigured",
+                    "Managed agent content screening is not configured",
+                    safe_detail="prompt",
+                )
+            try:
+                evidence_ids.append(await self._guard.screen_prompt(task, prompt))
+            except ModelArmorError as error:
+                evidence_ids.append(error.evidence_id)
+                raise _stage_error(error, "model-armor-prompt") from error
             try:
                 response = await self._google.request(
                     "POST",
@@ -61,7 +75,7 @@ class AgentRuntimeService:
                             "messageId": task.id,
                             "contextId": session.remote_session.rsplit("/", 1)[-1],
                             "role": "1",
-                            "content": [{"text": _prompt(task, memories)}],
+                            "content": [{"text": prompt}],
                             "metadata": {
                                 "uumi_organisation_id": task.organisation_id,
                                 "uumi_run_id": task.run_id,
@@ -73,10 +87,17 @@ class AgentRuntimeService:
                 )
             except ConnectorError as error:
                 raise _stage_error(error, "a2a-send") from error
-            event = redact(_event(response))
-            if not isinstance(event, dict):
-                raise ValueError("agent response redaction changed its object shape")
-            output = _a2a_output(event)
+            output = _a2a_output(_event(response))
+            try:
+                evidence_ids.append(
+                    await self._guard.screen_response(
+                        task,
+                        json.dumps(output, separators=(",", ":"), sort_keys=True),
+                    )
+                )
+            except ModelArmorError as error:
+                evidence_ids.append(error.evidence_id)
+                raise _stage_error(error, "model-armor-response") from error
             safe_output = redact(output)
             if not isinstance(safe_output, dict):
                 raise ValueError("agent output redaction changed its object shape")
@@ -86,7 +107,7 @@ class AgentRuntimeService:
                 skill=task.skill,
                 succeeded=True,
                 output=safe_output,
-                evidence_ids=task.evidence_ids,
+                evidence_ids=tuple(dict.fromkeys(evidence_ids)),
                 completed_at=self._clock(),
             )
         except Exception as error:
@@ -101,6 +122,7 @@ class AgentRuntimeService:
                 agent=task.agent,
                 skill=task.skill,
                 succeeded=False,
+                evidence_ids=tuple(dict.fromkeys(evidence_ids)),
                 error=f"{code}{detail}: agent execution failed",
                 completed_at=self._clock(),
             )

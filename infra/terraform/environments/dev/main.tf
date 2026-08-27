@@ -222,7 +222,7 @@ module "browser" {
   allowed_domains        = var.browser_allowed_domains
   connector_domains      = var.runtime_connector_domains
 
-  depends_on = [module.project, module.identity, module.storage]
+  depends_on = [module.project]
 }
 
 locals {
@@ -398,7 +398,7 @@ module "runtime" {
   capability_public_key     = var.capability_public_key
   browser_template          = module.browser.template
   browser_zone              = var.zone
-  model_armor_template      = "projects/${var.project_id}/locations/${var.region}/templates/uumi-agent-guardrails"
+  model_armor_template      = "projects/${local.agent_project_id}/locations/${var.region}/templates/uumi-agent-guardrails"
   network                   = module.browser.network
   subnetwork                = module.browser.runtime_subnetwork
 
@@ -418,6 +418,10 @@ data "google_project" "agent" {
 module "perimeter" {
   count  = var.access_policy_id == null || var.operator_access_level == null ? 0 : 1
   source = "../../modules/perimeter"
+
+  providers = {
+    google = google.org
+  }
 
   project_id            = var.project_id
   project_number        = data.google_project.current.number
@@ -455,7 +459,11 @@ module "governance" {
   region              = var.region
   agent_principal_set = local.legacy_agent_principal_set
   deployment_member   = module.identity.members["uumi-agents"]
-  broker_uri          = module.runtime.broker_uri
+  model_armor_callers = toset([
+    module.identity.members["uumi-api"],
+    module.identity.members["uumi-coordinator"],
+  ])
+  broker_uri = module.runtime.broker_uri
 
   depends_on = [module.project]
 }
@@ -490,7 +498,11 @@ module "agent_governance" {
   region              = var.region
   agent_principal_set = local.agent_principal_set
   deployment_member   = module.identity.members["uumi-agents"]
-  broker_uri          = var.agent_broker_uri
+  model_armor_callers = toset([
+    module.identity.members["uumi-api"],
+    module.identity.members["uumi-coordinator"],
+  ])
+  broker_uri = var.agent_broker_uri
 
   depends_on = [module.agent_project, module.agentstorage]
 }

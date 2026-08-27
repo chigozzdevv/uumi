@@ -52,7 +52,7 @@ class GcsEvidenceSink:
                 raise ResourceConflictError(f"evidence {evidence_id} digest changed")
             return existing
 
-        object_name = f"organisations/{organisation_id}/runs/{run_id}/{evidence_id}"
+        object_name = _evidence_object(organisation_id, run_id, kind, evidence_id)
         uploaded = await self._upload(object_name, content, content_type, content_digest)
         generation = uploaded.get("generation")
         if not isinstance(generation, str):
@@ -144,3 +144,9 @@ class GcsEvidenceSink:
         if not isinstance(metadata, dict) or metadata.get("uumi-digest") != content_digest:
             raise ResourceConflictError("immutable evidence object contains different bytes")
         return existing
+
+
+def _evidence_object(organisation_id: str, run_id: str, kind: str, evidence_id: str) -> str:
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", kind) is None:
+        raise ValueError("evidence kind must be a lowercase hyphenated identifier")
+    return f"organisations/{organisation_id}/runs/{run_id}/types/{kind}/{evidence_id}"

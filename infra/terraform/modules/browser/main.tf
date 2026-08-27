@@ -49,6 +49,43 @@ resource "google_compute_subnetwork" "runtime" {
   }
 }
 
+resource "google_network_connectivity_regional_endpoint" "modelarmor" {
+  project           = var.project_id
+  location          = var.region
+  name              = "uumi-model-armor"
+  description       = "Private regional endpoint for fail-closed Model Armor screening."
+  access_type       = "REGIONAL"
+  network           = google_compute_network.uumi.id
+  subnetwork        = google_compute_subnetwork.runtime.id
+  target_google_api = "modelarmor.${var.region}.rep.googleapis.com"
+  deletion_policy   = "PREVENT"
+}
+
+resource "google_dns_managed_zone" "modelarmor" {
+  project         = var.project_id
+  name            = "uumi-model-armor"
+  description     = "Private DNS for the regional Model Armor endpoint."
+  dns_name        = "modelarmor.${var.region}.rep.googleapis.com."
+  visibility      = "private"
+  deletion_policy = "PREVENT"
+
+  private_visibility_config {
+    networks {
+      network_url = google_compute_network.uumi.id
+    }
+  }
+}
+
+resource "google_dns_record_set" "modelarmor" {
+  project         = var.project_id
+  managed_zone    = google_dns_managed_zone.modelarmor.name
+  name            = google_dns_managed_zone.modelarmor.dns_name
+  type            = "A"
+  ttl             = 300
+  rrdatas         = [google_network_connectivity_regional_endpoint.modelarmor.address]
+  deletion_policy = "PREVENT"
+}
+
 resource "google_compute_firewall" "worker" {
   project   = var.project_id
   name      = "uumi-browser-worker"

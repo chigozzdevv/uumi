@@ -13,6 +13,11 @@ output "runtime_subnetwork" {
   value       = google_compute_subnetwork.runtime.id
 }
 
+output "modelarmor_endpoint" {
+  description = "Private regional endpoint for Model Armor screening."
+  value       = google_network_connectivity_regional_endpoint.modelarmor.id
+}
+
 output "template" {
   description = "One-run browser instance template resource name."
   value       = "projects/${var.project_id}/global/instanceTemplates/${google_compute_instance_template.browser.name}"

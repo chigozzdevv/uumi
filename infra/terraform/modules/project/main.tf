@@ -18,6 +18,7 @@ locals {
     "iap.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
+    "networkconnectivity.googleapis.com",
     "networksecurity.googleapis.com",
     "networkservices.googleapis.com",
     "orgpolicy.googleapis.com",

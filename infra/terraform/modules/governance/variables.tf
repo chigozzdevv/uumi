@@ -28,6 +28,19 @@ variable "deployment_member" {
   }
 }
 
+variable "model_armor_callers" {
+  description = "Service-account members allowed to sanitize Uumi agent prompts and responses directly."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for member in var.model_armor_callers : startswith(member, "serviceAccount:")
+    ])
+    error_message = "model_armor_callers must contain only service-account IAM members."
+  }
+}
+
 variable "broker_uri" {
   description = "Private Uumi MCP broker URI, or null before runtime deployment."
   type        = string

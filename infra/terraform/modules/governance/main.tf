@@ -361,6 +361,22 @@ resource "google_project_iam_member" "modelarmor" {
   member  = each.value.member
 }
 
+resource "google_project_iam_member" "modelarmor_caller" {
+  for_each = {
+    for grant in setproduct(
+      var.model_armor_callers,
+      toset(["roles/modelarmor.user", "roles/modelarmor.viewer"]),
+      ) : "${grant[0]}-${grant[1]}" => {
+      member = grant[0]
+      role   = grant[1]
+    }
+  }
+
+  project = var.project_id
+  role    = each.value.role
+  member  = each.value.member
+}
+
 resource "google_project_iam_custom_role" "gateway_user" {
   project     = var.project_id
   role_id     = "uumiAgentGatewayUser"

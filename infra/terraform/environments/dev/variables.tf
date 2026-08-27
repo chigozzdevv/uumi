@@ -31,6 +31,14 @@ variable "agent_access_token" {
   sensitive   = true
 }
 
+variable "deployer_access_token" {
+  description = "Optional ephemeral OAuth token for Terraform provider operations."
+  type        = string
+  default     = null
+  nullable    = true
+  sensitive   = true
+}
+
 variable "agent_broker_uri" {
   description = "Private Uumi MCP broker URI registered as governed agent egress."
   type        = string

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, cast
 
+from agents.armor import ModelArmorGuard
 from agents.continuity import AgentContinuityService
 from agents.fleet import AgentFleetService
 from agents.runtime import AgentRuntimeService
@@ -146,6 +147,11 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         if configured.evidence_bucket
         else None
     )
+    guard = (
+        ModelArmorGuard(google, configured.model_armor_template, evidence, _now)
+        if evidence is not None and configured.model_armor_template
+        else None
+    )
     browser_setup = None
     github = None
     google_cloud = None
@@ -266,7 +272,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             AgentFleetService(agent_repository),
             continuity,
             google,
-            configured.project_id,
+            guard,
             _now,
         ),
         agent_repository=agent_repository,

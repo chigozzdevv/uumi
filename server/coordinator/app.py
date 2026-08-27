@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from time import monotonic
 from typing import Annotated
 
+from agents.armor import ModelArmorGuard
 from agents.continuity import AgentContinuityService
 from agents.fleet import AgentFleetService
 from agents.runtime import AgentRuntimeService
@@ -85,6 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     with await secrets.access(settings.capability_secret) as secret:
         signer = CapabilitySigner(secret.bytes())
     evidence = GcsEvidenceSink(google, firestore, settings.evidence_bucket, settings.region)
+    guard = ModelArmorGuard(google, settings.model_armor_template, evidence, _now)
     connectors = ConnectorRegistry()
     connectors.register(
         ConnectionRole.SECRET_STORE,
@@ -126,7 +128,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.firestore_database,
         _now,
     )
-    agent_runtime = AgentRuntimeService(fleet, continuity, google, settings.project_id, _now)
+    agent_runtime = AgentRuntimeService(fleet, continuity, google, guard, _now)
     browser_service = BrowserService(FirestoreBrowserRepository(firestore), _now)
 
     async def load_signer() -> CapabilitySigner:
