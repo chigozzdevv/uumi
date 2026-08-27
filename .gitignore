@@ -21,3 +21,6 @@ htmlcov/
 *.tfplan
 **/values.tfvars
 crash.log
+/AGENTS.md
+/uumi.md
+/infra/gateway.md

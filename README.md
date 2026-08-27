@@ -2,8 +2,6 @@
 
 Uumi is an enterprise credential-rotation platform that discovers credential exposure, plans safe rotations, deploys replacement generations, verifies real application behaviour, obtains action-bound approval, revokes old credentials, and produces immutable evidence.
 
-The product and end-to-end safety contract live in [`uumi.md`](uumi.md).
-
 ## End-to-end architecture
 
 The product has nine deployable Python boundaries: API, incident ingestion, transactional
