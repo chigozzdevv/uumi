@@ -169,6 +169,7 @@ module "storage" {
     agents       = module.identity.members["uumi-agents"]
   }
   evidence_users = {
+    api         = module.identity.members["uumi-api"]
     broker      = module.identity.members["uumi-broker"]
     coordinator = module.identity.members["uumi-coordinator"]
     browser     = module.identity.members["uumi-browser"]
