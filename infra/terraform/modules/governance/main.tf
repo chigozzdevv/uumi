@@ -50,6 +50,16 @@ locals {
         service_id   = "logging-mtls"
         url          = "https://logging.mtls.googleapis.com"
       }
+      resourcemanager = {
+        display_name = "Cloud Resource Manager API"
+        service_id   = "cloudresourcemanager"
+        url          = "https://cloudresourcemanager.googleapis.com"
+      }
+      resourcemanager_mtls = {
+        display_name = "Cloud Resource Manager mTLS API"
+        service_id   = "cloudresourcemanager-mtls"
+        url          = "https://cloudresourcemanager.mtls.googleapis.com"
+      }
       oauth2 = {
         display_name = "Google OAuth API"
         service_id   = "oauth2"
@@ -375,6 +385,7 @@ resource "google_project_iam_member" "agent" {
     "roles/aiplatform.agentDefaultAccess",
     "roles/aiplatform.expressUser",
     "roles/aiplatform.user",
+    "roles/browser",
     "roles/cloudtrace.agent",
     "roles/logging.logWriter",
     "roles/monitoring.metricWriter",

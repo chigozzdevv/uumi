@@ -141,6 +141,8 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
             "agent_gateway": "projects/project-one/locations/us-central1/agentGateways/egress"
         },
     }
+    assert config["min_instances"] == 0
+    assert config["max_instances"] == 1
 
 
 def test_agent_runtime_pins_mtls_capable_genai_client() -> None:

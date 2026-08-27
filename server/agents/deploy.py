@@ -266,7 +266,7 @@ def _deployment_config(
             "agent_to_anywhere_config": {"agent_gateway": egress_gateway},
         },
         "min_instances": 0,
-        "max_instances": 10,
+        "max_instances": 1,
         "resource_limits": {"cpu": "2", "memory": "4Gi"},
         "container_concurrency": 5,
         "encryption_spec": {"kms_key_name": kms_key},
