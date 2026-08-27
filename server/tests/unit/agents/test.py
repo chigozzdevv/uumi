@@ -1036,6 +1036,7 @@ class ArmorGoogle:
                 "filterResults": {
                     "piAndJailbreak": {
                         "piAndJailbreakFilterResult": {
+                            "confidenceLevel": "LOW",
                             "executionState": "EXECUTION_SUCCESS",
                             "matchState": self.match_state,
                         }
@@ -1116,6 +1117,7 @@ async def test_model_armor_guard_stores_only_verdict_states_and_content_hash() -
             "decision": "ALLOW",
             "direction": "prompt",
             "filter_states": {
+                "piAndJailbreak.piAndJailbreakFilterResult.confidenceLevel": "LOW",
                 "piAndJailbreak.piAndJailbreakFilterResult.executionState": ("EXECUTION_SUCCESS"),
                 "piAndJailbreak.piAndJailbreakFilterResult.matchState": "NO_MATCH_FOUND",
             },

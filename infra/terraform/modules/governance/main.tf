@@ -88,7 +88,7 @@ resource "google_model_armor_template" "uumi" {
   filter_config {
     pi_and_jailbreak_filter_settings {
       filter_enforcement = "ENABLED"
-      confidence_level   = "MEDIUM_AND_ABOVE"
+      confidence_level   = "HIGH"
     }
 
     malicious_uri_filter_settings {

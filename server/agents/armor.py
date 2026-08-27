@@ -199,7 +199,9 @@ def _filter_states(value: Any, path: str = "") -> dict[str, str]:
     if isinstance(value, Mapping):
         for key, nested in value.items():
             current = f"{path}.{key}" if path else str(key)
-            if key in {"executionState", "matchState"} and isinstance(nested, str):
+            if key in {"confidenceLevel", "executionState", "matchState"} and isinstance(
+                nested, str
+            ):
                 states[current] = nested
             else:
                 states.update(_filter_states(nested, current))
