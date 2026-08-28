@@ -461,6 +461,7 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     assert config["env_vars"] == {
         "UUMI_GOOGLE_CLOUD_PROJECT": "project-one",
         "UUMI_GOOGLE_CLOUD_LOCATION": "us-central1",
+        "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
         "GOOGLE_API_USE_CLIENT_CERTIFICATE": "true",
         "GOOGLE_API_USE_MTLS_ENDPOINT": "always",
     }

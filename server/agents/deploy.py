@@ -263,6 +263,7 @@ def _deployment_config(
         "env_vars": {
             "UUMI_GOOGLE_CLOUD_PROJECT": project_id,
             "UUMI_GOOGLE_CLOUD_LOCATION": region,
+            "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
             "GOOGLE_API_USE_CLIENT_CERTIFICATE": "true",
             "GOOGLE_API_USE_MTLS_ENDPOINT": "always",
         },
