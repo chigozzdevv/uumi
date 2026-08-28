@@ -1126,12 +1126,9 @@ def test_playbook_uses_a_small_bound_tool_and_structured_output_schema() -> None
         "login_url_pattern",
     ]
     step_schema = output_schema["properties"]["steps"]["items"]
-    assert step_schema["discriminator"]["propertyName"] == "effect"
-    assert set(step_schema["discriminator"]["mapping"]) == {
-        "none",
-        "create-credential",
-        "revoke-credential",
-    }
+    assert len(step_schema["anyOf"]) == 3
+    assert "discriminator" not in step_schema
+    assert "oneOf" not in step_schema
     assert (
         output_schema["$defs"]["PlaybookAgentCreateStep"]["properties"]["effect"]["const"]
         == "create-credential"

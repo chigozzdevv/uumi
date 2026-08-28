@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from contracts import PageCheckpoint, PlaybookDraft, SecureField, Selector, StepOutput
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -42,10 +42,7 @@ class PlaybookAgentRevokeStep(PlaybookAgentStepBase):
     secure_field: None = None
 
 
-PlaybookAgentStep = Annotated[
-    PlaybookAgentBrowserStep | PlaybookAgentCreateStep | PlaybookAgentRevokeStep,
-    Field(discriminator="effect"),
-]
+PlaybookAgentStep = PlaybookAgentBrowserStep | PlaybookAgentCreateStep | PlaybookAgentRevokeStep
 
 
 class PlaybookAgentDraft(BaseModel):
