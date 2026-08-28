@@ -5,8 +5,6 @@ from agents.shared.app import managed_app
 from agents.shared.model import managed_model
 from agents.shared.models import PlannerOutput
 from agents.shared.tools import (
-    bind_playbook,
-    diagnose_failed_stage,
     plan_rotation,
     recommend_authorised_recovery,
     select_strategy,
@@ -27,8 +25,6 @@ add tools, change actions, or mutate resources. Return structured JSON.""",
     tools=[
         plan_rotation,
         select_strategy,
-        bind_playbook,
-        diagnose_failed_stage,
         recommend_authorised_recovery,
     ],
     output_schema=PlannerOutput,

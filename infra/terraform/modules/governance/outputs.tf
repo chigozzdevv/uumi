@@ -9,8 +9,13 @@ output "egress_gateway" {
 }
 
 output "model_armor_template" {
-  description = "Fail-closed Model Armor template bound to both gateways."
+  description = "Fail-closed Model Armor prompt template bound to both gateways."
   value       = google_model_armor_template.uumi.name
+}
+
+output "model_armor_response_template" {
+  description = "Fail-closed Model Armor response template bound to both gateways."
+  value       = google_model_armor_template.response.name
 }
 
 output "registered_endpoints" {

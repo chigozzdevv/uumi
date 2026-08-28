@@ -132,10 +132,17 @@ output "agent_egress_gateway" {
 }
 
 output "agent_model_armor" {
-  description = "Model Armor template applied to the managed agent fleet."
+  description = "Model Armor prompt template applied to the managed agent fleet."
   value = local.split_agent_project ? (
     try(module.agent_governance[0].model_armor_template, null)
   ) : try(module.governance[0].model_armor_template, null)
+}
+
+output "agent_model_armor_response" {
+  description = "Model Armor response template applied to the managed agent fleet."
+  value = local.split_agent_project ? (
+    try(module.agent_governance[0].model_armor_response_template, null)
+  ) : try(module.governance[0].model_armor_response_template, null)
 }
 
 output "agent_endpoints" {

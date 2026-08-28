@@ -25,6 +25,7 @@ class BrowserVmManager:
         region: str,
         worker_image: str,
         model_armor_template: str,
+        model_armor_response_template: str | None = None,
     ) -> None:
         self._client = client
         self._project = project_id
@@ -35,6 +36,7 @@ class BrowserVmManager:
         self._region = region
         self._image = worker_image
         self._model_armor_template = model_armor_template
+        self._model_armor_response_template = model_armor_response_template or model_armor_template
 
     async def create(
         self,
@@ -65,6 +67,10 @@ class BrowserVmManager:
             {
                 "key": "uumi-model-armor-template",
                 "value": self._model_armor_template,
+            },
+            {
+                "key": "uumi-model-armor-response-template",
+                "value": self._model_armor_response_template,
             },
         ]
         if setup_token_hash is not None:

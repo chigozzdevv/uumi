@@ -434,12 +434,22 @@ variable "browser_zone" {
 }
 
 variable "model_armor_template" {
-  description = "Model Armor template applied to agent and browser prompts and responses."
+  description = "Model Armor template applied to agent and browser prompts."
   type        = string
 
   validation {
     condition     = can(regex("^projects/[a-z0-9-]+/locations/[a-z0-9-]+/templates/[A-Za-z0-9_-]+$", var.model_armor_template))
     error_message = "model_armor_template must be a full Model Armor template resource name."
+  }
+}
+
+variable "model_armor_response_template" {
+  description = "Model Armor template applied to agent and browser responses."
+  type        = string
+
+  validation {
+    condition     = can(regex("^projects/[a-z0-9-]+/locations/[a-z0-9-]+/templates/[A-Za-z0-9_-]+$", var.model_armor_response_template))
+    error_message = "model_armor_response_template must be a full Model Armor template resource name."
   }
 }
 

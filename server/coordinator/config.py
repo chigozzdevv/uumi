@@ -16,6 +16,7 @@ class CoordinatorSettings(BaseSettings):
     oidc_audience: str = Field(default="", min_length=8)
     browser_image: str = Field(default="", min_length=20)
     model_armor_template: str = Field(default="", min_length=20)
+    model_armor_response_template: str = ""
 
     @model_validator(mode="after")
     def validate_runtime(self) -> "CoordinatorSettings":
@@ -39,4 +40,8 @@ class CoordinatorSettings(BaseSettings):
             raise ValueError("browser template must be a full Compute Engine resource")
         if not self.model_armor_template.startswith("projects/"):
             raise ValueError("Model Armor template must be a full resource name")
+        if self.model_armor_response_template and not self.model_armor_response_template.startswith(
+            "projects/"
+        ):
+            raise ValueError("Model Armor response template must be a full resource name")
         return self

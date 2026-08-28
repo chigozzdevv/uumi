@@ -30,6 +30,7 @@ class ComputerUseClient:
         client: GoogleRestClient,
         project_id: str,
         model_armor_template: str,
+        model_armor_response_template: str | None = None,
         model: str = "gemini-3.7-flash",
         location: str = "global",
     ) -> None:
@@ -38,6 +39,7 @@ class ComputerUseClient:
         self._model = model
         self._location = location
         self._model_armor_template = model_armor_template
+        self._model_armor_response_template = model_armor_response_template or model_armor_template
         self._contents: list[dict[str, Any]] = []
 
     @property
@@ -86,7 +88,7 @@ class ComputerUseClient:
             },
             "modelArmorConfig": {
                 "promptTemplateName": self._model_armor_template,
-                "responseTemplateName": self._model_armor_template,
+                "responseTemplateName": self._model_armor_response_template,
             },
             "tools": [
                 {

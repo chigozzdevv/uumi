@@ -148,7 +148,13 @@ def build_services(settings: Settings | None = None) -> ApiServices:
         else None
     )
     guard = (
-        ModelArmorGuard(google, configured.model_armor_template, evidence, _now)
+        ModelArmorGuard(
+            google,
+            configured.model_armor_template,
+            evidence,
+            _now,
+            configured.model_armor_response_template or configured.model_armor_template,
+        )
         if evidence is not None and configured.model_armor_template
         else None
     )
@@ -178,6 +184,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
                 configured.region,
                 configured.browser_worker_image,
                 configured.model_armor_template,
+                configured.model_armor_response_template or configured.model_armor_template,
             ),
             secret_manager,
             configured.browser_gateway_url,

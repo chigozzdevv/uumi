@@ -484,6 +484,7 @@ async def test_computer_use_enables_injection_detection_and_parses_supported_act
         cast(Any, google),
         "project-one",
         "projects/project-one/locations/us-east1/templates/uumi-guardrails",
+        "projects/project-one/locations/us-east1/templates/uumi-response-guardrails",
     )
 
     proposal = await client.propose("click the approved control", b"image")
@@ -497,7 +498,7 @@ async def test_computer_use_enables_injection_detection_and_parses_supported_act
     assert google.body["modelArmorConfig"] == {
         "promptTemplateName": ("projects/project-one/locations/us-east1/templates/uumi-guardrails"),
         "responseTemplateName": (
-            "projects/project-one/locations/us-east1/templates/uumi-guardrails"
+            "projects/project-one/locations/us-east1/templates/uumi-response-guardrails"
         ),
     }
     assert proposal.safety_explanation == "confirm the browser action"
@@ -1298,6 +1299,7 @@ async def test_setup_vm_metadata_contains_only_the_token_hash() -> None:
         "us-east1",
         "us-east1-docker.pkg.dev/project-one/uumi/browser@sha256:" + "a" * 64,
         "projects/project-one/locations/us-east1/templates/uumi-guardrails",
+        "projects/project-one/locations/us-east1/templates/uumi-response-guardrails",
     )
     raw = "setup-token-that-must-not-enter-metadata"
     token_hash = hashlib.sha256(raw.encode()).hexdigest()
@@ -1316,6 +1318,7 @@ async def test_setup_vm_metadata_contains_only_the_token_hash() -> None:
     assert raw not in encoded
     assert token_hash in encoded
     assert 'uumi-setup-token"' not in encoded
+    assert "uumi-model-armor-response-template" in encoded
 
 
 @pytest.mark.anyio

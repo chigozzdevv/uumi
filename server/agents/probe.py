@@ -134,6 +134,7 @@ async def _main() -> int:
     region = _required("UUMI_REGION")
     bucket = _required("UUMI_EVIDENCE_BUCKET")
     template = _required("UUMI_MODEL_ARMOR_TEMPLATE")
+    response_template = os.environ.get("UUMI_MODEL_ARMOR_RESPONSE_TEMPLATE", template)
     organisation_id = _required("UUMI_PROBE_ORGANISATION")
     run_id = _required("UUMI_PROBE_RUN_ID")
     firestore = AsyncClient(project=project_id, database=database)
@@ -144,7 +145,7 @@ async def _main() -> int:
         AgentFleetService(repository),
         AgentContinuityService(repository, google, project_id, database, _now),
         google,
-        ModelArmorGuard(google, template, evidence, _now),
+        ModelArmorGuard(google, template, evidence, _now, response_template),
         _now,
     )
     try:

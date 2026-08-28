@@ -18,6 +18,7 @@ evidence="$(get uumi-evidence)"
 region="$(get uumi-region)"
 image="$(get uumi-worker-image)"
 model_armor_template="$(get uumi-model-armor-template)"
+model_armor_response_template="$(get uumi-model-armor-response-template)"
 setup="$(maybe uumi-setup)"
 
 docker-credential-gcr configure-docker --registries="${region}-docker.pkg.dev"
@@ -34,6 +35,7 @@ args=(
   --env "UUMI_EVIDENCE_BUCKET=$evidence"
   --env "UUMI_REGION=$region"
   --env "UUMI_MODEL_ARMOR_TEMPLATE=$model_armor_template"
+  --env "UUMI_MODEL_ARMOR_RESPONSE_TEMPLATE=$model_armor_response_template"
   --env UUMI_TELEMETRY_ENABLED=true
 )
 if [[ "$setup" == "true" ]]; then

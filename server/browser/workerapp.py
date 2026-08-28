@@ -77,6 +77,7 @@ class WorkerSettings(BaseSettings):
     region: str = Field(min_length=3, max_length=32)
     model: str = "gemini-3.7-flash"
     model_armor_template: str = Field(min_length=20)
+    model_armor_response_template: str = ""
     setup: bool = False
     setup_token_hash: str = ""
     setup_domains: str = ""
@@ -254,6 +255,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             google,
             settings.project_id,
             settings.model_armor_template,
+            settings.model_armor_response_template or settings.model_armor_template,
             settings.model,
         ),
         driver,

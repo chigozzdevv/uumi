@@ -86,7 +86,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     with await secrets.access(settings.capability_secret) as secret:
         signer = CapabilitySigner(secret.bytes())
     evidence = GcsEvidenceSink(google, firestore, settings.evidence_bucket, settings.region)
-    guard = ModelArmorGuard(google, settings.model_armor_template, evidence, _now)
+    guard = ModelArmorGuard(
+        google,
+        settings.model_armor_template,
+        evidence,
+        _now,
+        settings.model_armor_response_template or settings.model_armor_template,
+    )
     connectors = ConnectorRegistry()
     connectors.register(
         ConnectionRole.SECRET_STORE,
@@ -148,6 +154,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             settings.region,
             settings.browser_image,
             settings.model_armor_template,
+            settings.model_armor_response_template or settings.model_armor_template,
         ),
         signer,
         secret_access=secret_access,

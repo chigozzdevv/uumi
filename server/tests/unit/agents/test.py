@@ -1456,6 +1456,7 @@ async def test_model_armor_response_includes_its_associated_prompt() -> None:
         "projects/agent-project/locations/us-central1/templates/uumi-agent-guardrails",
         ArmorEvidence(),
         lambda: NOW,
+        "projects/agent-project/locations/us-central1/templates/uumi-response-guardrails",
     )
 
     await guard.screen_response(
@@ -1467,6 +1468,22 @@ async def test_model_armor_response_includes_its_associated_prompt() -> None:
     assert google.body == {
         "modelResponseData": {"text": '{"decision":"plan"}'},
         "userPrompt": '{"objective":"Plan a safe rotation","skill":"plan_rotation"}',
+    }
+    assert google.url.endswith(
+        "/v1/projects/agent-project/locations/us-central1/templates/"
+        "uumi-response-guardrails:sanitizeModelResponse"
+    )
+
+
+def test_planner_exposes_only_skill_level_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
+    from agents.planner.agent import root_agent
+
+    assert {getattr(tool, "__name__", "") for tool in root_agent.tools} == {
+        "plan_rotation",
+        "select_strategy",
+        "recommend_authorised_recovery",
     }
 
 

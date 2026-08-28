@@ -390,18 +390,19 @@ module "runtime" {
   notification_email_secret_version = (
     var.notification_email_secret_version == null ? "" : var.notification_email_secret_version
   )
-  notification_email_sender = (var.notification_email_sender == null ? "" : var.notification_email_sender)
-  browser_image             = var.browser_image
-  browser_gateway_url       = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
-  evidence_bucket           = module.storage.evidence_bucket
-  walkthrough_bucket        = module.storage.walkthrough_bucket
-  capability_secret_version = local.capability_secret_version
-  capability_public_key     = var.capability_public_key
-  browser_template          = module.browser.template
-  browser_zone              = var.zone
-  model_armor_template      = "projects/${local.agent_project_id}/locations/${var.region}/templates/uumi-agent-guardrails"
-  network                   = module.browser.network
-  subnetwork                = module.browser.runtime_subnetwork
+  notification_email_sender     = (var.notification_email_sender == null ? "" : var.notification_email_sender)
+  browser_image                 = var.browser_image
+  browser_gateway_url           = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
+  evidence_bucket               = module.storage.evidence_bucket
+  walkthrough_bucket            = module.storage.walkthrough_bucket
+  capability_secret_version     = local.capability_secret_version
+  capability_public_key         = var.capability_public_key
+  browser_template              = module.browser.template
+  browser_zone                  = var.zone
+  model_armor_template          = "projects/${local.agent_project_id}/locations/${var.region}/templates/uumi-agent-guardrails"
+  model_armor_response_template = "projects/${local.agent_project_id}/locations/${var.region}/templates/uumi-agent-response-guardrails"
+  network                       = module.browser.network
+  subnetwork                    = module.browser.runtime_subnetwork
 
   depends_on = [module.project, module.storage, module.browser, module.gateway]
 }

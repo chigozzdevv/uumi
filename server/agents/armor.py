@@ -51,20 +51,30 @@ class ModelArmorGuard:
     def __init__(
         self,
         client: GoogleRestClient,
-        template: str,
+        prompt_template: str,
         evidence: EvidenceSink,
         clock: Callable[[], datetime],
+        response_template: str | None = None,
     ) -> None:
-        match = re.fullmatch(
+        prompt_match = re.fullmatch(
             r"projects/[a-z0-9-]+/locations/(?P<region>[a-z0-9-]+)/"
             r"templates/[A-Za-z0-9_-]+",
-            template,
+            prompt_template,
         )
-        if match is None:
-            raise ValueError("Model Armor template must be a full regional resource name")
+        response_template = response_template or prompt_template
+        response_match = re.fullmatch(
+            r"projects/[a-z0-9-]+/locations/(?P<region>[a-z0-9-]+)/"
+            r"templates/[A-Za-z0-9_-]+",
+            response_template,
+        )
+        if prompt_match is None or response_match is None:
+            raise ValueError("Model Armor templates must be full regional resource names")
+        if prompt_match.group("region") != response_match.group("region"):
+            raise ValueError("Model Armor prompt and response templates must share a region")
         self._client = client
-        self._template = template
-        self._region = match.group("region")
+        self._prompt_template = prompt_template
+        self._response_template = response_template
+        self._region = prompt_match.group("region")
         self._evidence = evidence
         self._clock = clock
 
@@ -94,6 +104,7 @@ class ModelArmorGuard:
     ) -> str:
         method = "sanitizeUserPrompt" if direction == "prompt" else "sanitizeModelResponse"
         field = "userPromptData" if direction == "prompt" else "modelResponseData"
+        template = self._prompt_template if direction == "prompt" else self._response_template
         request_body: dict[str, Any] = {field: {"text": content}}
         if direction == "response":
             if not associated_prompt:
@@ -102,8 +113,7 @@ class ModelArmorGuard:
         try:
             response = await self._client.request(
                 "POST",
-                f"https://modelarmor.{self._region}.rep.googleapis.com/v1/"
-                f"{self._template}:{method}",
+                f"https://modelarmor.{self._region}.rep.googleapis.com/v1/{template}:{method}",
                 json=request_body,
             )
         except ConnectorError as error:
@@ -154,6 +164,7 @@ class ModelArmorGuard:
                 str(invocation or "INVOCATION_UNSPECIFIED"),
                 states,
                 str(match_state or "MATCH_STATE_UNSPECIFIED"),
+                template,
             )
             raise ModelArmorError(
                 "model-armor-invalid",
@@ -171,6 +182,7 @@ class ModelArmorGuard:
             invocation,
             states,
             match_state,
+            template,
         )
         if decision == "BLOCK":
             raise ModelArmorError(
@@ -190,6 +202,7 @@ class ModelArmorGuard:
         invocation: str,
         states: dict[str, str],
         outcome: str,
+        template: str | None = None,
     ) -> str:
         now = self._clock()
         payload = json.dumps(
@@ -204,7 +217,8 @@ class ModelArmorGuard:
                 "outcome": outcome,
                 "filter_states": states,
                 "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
-                "template": self._template,
+                "template": template
+                or (self._prompt_template if direction == "prompt" else self._response_template),
                 "recorded_at": now.isoformat(),
             },
             separators=(",", ":"),

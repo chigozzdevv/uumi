@@ -132,6 +132,54 @@ resource "google_model_armor_template" "uumi" {
   }
 }
 
+resource "google_model_armor_template" "response" {
+  project         = var.project_id
+  location        = var.region
+  template_id     = "uumi-agent-response-guardrails"
+  deletion_policy = "ENABLED"
+
+  filter_config {
+    malicious_uri_filter_settings {
+      filter_enforcement = "ENABLED"
+    }
+
+    sdp_settings {
+      basic_config {
+        filter_enforcement = "ENABLED"
+      }
+    }
+
+    rai_settings {
+      dynamic "rai_filters" {
+        for_each = toset(["DANGEROUS", "HARASSMENT", "HATE_SPEECH", "SEXUALLY_EXPLICIT"])
+        content {
+          filter_type      = rai_filters.value
+          confidence_level = "MEDIUM_AND_ABOVE"
+        }
+      }
+    }
+  }
+
+  template_metadata {
+    enforcement_type                         = "INSPECT_AND_BLOCK"
+    ignore_partial_invocation_failures       = false
+    log_sanitize_operations                  = true
+    log_template_operations                  = true
+    custom_prompt_safety_error_code          = 403
+    custom_prompt_safety_error_message       = "Uumi agent input was blocked by policy."
+    custom_llm_response_safety_error_code    = 403
+    custom_llm_response_safety_error_message = "Uumi agent output was blocked by policy."
+
+    filter_version_selector {
+      alias = "FILTER_VERSION_ALIAS_STABLE"
+    }
+
+    multi_language_detection {
+      enable_multi_language_detection = true
+    }
+  }
+}
+
 resource "google_network_services_agent_gateway" "ingress" {
   project         = var.project_id
   location        = var.region
@@ -169,7 +217,7 @@ resource "google_network_services_authz_extension" "armor" {
   metadata = {
     model_armor_settings = jsonencode([{
       request_template_id  = google_model_armor_template.uumi.name
-      response_template_id = google_model_armor_template.uumi.name
+      response_template_id = google_model_armor_template.response.name
     }])
   }
 }

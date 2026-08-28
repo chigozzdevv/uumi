@@ -578,6 +578,11 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
+        name  = "UUMI_MODEL_ARMOR_RESPONSE_TEMPLATE"
+        value = var.model_armor_response_template
+      }
+
+      env {
         name  = "UUMI_CAPABILITY_PUBLIC_KEY"
         value = var.capability_public_key
       }
@@ -962,6 +967,10 @@ resource "google_cloud_run_v2_service" "coordinator" {
       env {
         name  = "UUMI_MODEL_ARMOR_TEMPLATE"
         value = var.model_armor_template
+      }
+      env {
+        name  = "UUMI_MODEL_ARMOR_RESPONSE_TEMPLATE"
+        value = var.model_armor_response_template
       }
       env {
         name  = "UUMI_OIDC_AUDIENCE"
