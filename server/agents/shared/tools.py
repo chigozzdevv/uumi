@@ -54,8 +54,14 @@ async def plan_rotation(tool_context: ToolContext) -> dict[str, Any]:
     if not isinstance(definition, dict):
         raise ValueError("managed task controls have no definition")
     maximum = definition.get("maximum_observation_seconds")
-    if not isinstance(maximum, int) or maximum < 60:
+    if (
+        isinstance(maximum, bool)
+        or not isinstance(maximum, (int, float))
+        or maximum < 60
+        or not float(maximum).is_integer()
+    ):
         raise ValueError("managed task controls have no valid observation window")
+    maximum_seconds = int(maximum)
     consumer_ids = credential.get("consumer_ids")
     if not isinstance(consumer_ids, list) or not consumer_ids:
         raise ValueError("managed task credential has no declared consumers")
@@ -75,7 +81,7 @@ async def plan_rotation(tool_context: ToolContext) -> dict[str, Any]:
     return {
         "decision": "plan",
         "strategy": strategy,
-        "observation_seconds": min(maximum, 300),
+        "observation_seconds": min(maximum_seconds, 300),
         "ordered_stages": selected["ordered_stages"],
         "recovery_actions": recovery_actions,
         "recovery_id": None,

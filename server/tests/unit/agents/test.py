@@ -1177,7 +1177,7 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
                     "controls": {
                         "id": "controls_one",
                         "definition": {
-                            "maximum_observation_seconds": 300,
+                            "maximum_observation_seconds": 300.0,
                             "recovery": {
                                 "create": {
                                     "mode": "cleanup",
