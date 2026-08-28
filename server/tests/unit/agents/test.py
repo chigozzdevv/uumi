@@ -279,6 +279,7 @@ async def test_continuity_probe_proves_expiring_memory_across_two_invocations() 
     assert len(report["invocations"]) == 2
     assert all(item["retrieved_memory_count"] == 1 for item in report["invocations"])
     assert continuity.fact not in evidence.content.decode()
+    assert hashlib.sha256(b"run_continuity_one").hexdigest()[:12] in continuity.fact
     assert "fact_sha256" in report["memory"]
 
 

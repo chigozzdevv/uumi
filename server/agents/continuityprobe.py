@@ -70,7 +70,7 @@ async def run_continuity_probe(
     suffix = hashlib.sha256(run_id.encode()).hexdigest()[:12]
     fact = (
         "credential_evidence_demo is approved for service_evidence_demo during the "
-        "managed continuity evidence run."
+        f"managed continuity evidence run checkpoint {suffix}."
     )
     fact_digest = hashlib.sha256(fact.encode()).hexdigest()
     context_record = {
@@ -81,7 +81,6 @@ async def run_continuity_probe(
         "fact_sha256": fact_digest,
         "approved_by": "uumi_continuity_probe",
         "ttl_seconds": 86400,
-        "recorded_at": clock().isoformat(),
     }
     context_evidence = await evidence.store(
         organisation_id,
