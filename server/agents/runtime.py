@@ -64,7 +64,7 @@ class AgentRuntimeService:
                 evidence_ids.append(
                     await self._guard.screen_prompt(
                         task,
-                        _screening_payload(task, task_context, memories),
+                        _screening_payload(task, memories),
                     )
                 )
             except ModelArmorError as error:
@@ -170,13 +170,15 @@ def _prompt(task: AgentTask, memories: tuple[dict[str, Any], ...] = ()) -> str:
 
 def _screening_payload(
     task: AgentTask,
-    task_context: dict[str, Any],
     memories: tuple[dict[str, Any], ...],
 ) -> str:
+    # Typed task context reaches Gemini only through bound tools, where the
+    # Agent Gateway screens the resulting model call. The direct guard covers
+    # only text entering the A2A prompt so immutable playbook policy is not
+    # misclassified as an injected user instruction.
     return json.dumps(
         {
             "objective": task.objective,
-            "context": task_context,
             "approved_memory": memories,
         },
         separators=(",", ":"),

@@ -925,10 +925,6 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     }
     assert json.loads(guard.prompt) == {
         "objective": "Plan a safe rotation",
-        "context": {
-            "credential_id": "credential_one",
-            "api_key": "[REDACTED]",
-        },
         "approved_memory": [],
     }
     assert "task_one" not in guard.prompt

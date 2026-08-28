@@ -125,8 +125,9 @@ def _task(
             "walkthroughs": (),
         }
         objective = (
-            "Build and validate this exact sanitised Resend browser procedure, then return only "
-            f"the canonical draft: {json.dumps(_playbook_draft(), separators=(',', ':'))}"
+            "Build and validate a Resend browser procedure with one secure-capture create step "
+            "and one revocation step for resend.com. Use deterministic selectors and page "
+            "checkpoints."
         )
     elif kind is AgentKind.INVENTORY:
         context = {
