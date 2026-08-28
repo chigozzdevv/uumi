@@ -1,32 +1,45 @@
 from typing import Annotated, Any, Literal
 
-from contracts import PlaybookDraft, PlaybookEffect, PlaybookStep, SecureField, Stage
+from contracts import PageCheckpoint, PlaybookDraft, SecureField, Selector, StepOutput
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode
 
 
-class PlaybookAgentBrowserStep(PlaybookStep):
-    stage: Literal[Stage.CREATE, Stage.REVOKE]
+class PlaybookAgentStepBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=128)
+    operation: str = Field(min_length=1, max_length=96)
+    objective: str = Field(min_length=1, max_length=1024)
+    parameters: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
+    protected: Literal[False] = False
+    evidence_checks: list[str] = Field(min_length=1)
+    selectors: tuple[Selector, ...] = Field(min_length=1, max_length=1)
+    checkpoint: PageCheckpoint
+    outputs: tuple[StepOutput, ...] = ()
+    timeout_seconds: int = Field(default=30, ge=1, le=600)
+    retry_limit: int = Field(default=0, ge=0, le=5)
+
+
+class PlaybookAgentBrowserStep(PlaybookAgentStepBase):
+    stage: Literal["create", "revoke"]
     tool: Literal["browser.navigate", "browser.click", "browser.fill"]
-    effect: Literal[PlaybookEffect.NONE] = PlaybookEffect.NONE
+    effect: Literal["none"] = "none"
     secure_field: None = None
-    protected: Literal[False] = False
 
 
-class PlaybookAgentCreateStep(PlaybookStep):
-    stage: Literal[Stage.CREATE]
+class PlaybookAgentCreateStep(PlaybookAgentStepBase):
+    stage: Literal["create"]
     tool: Literal["browser.secure-capture"]
-    effect: Literal[PlaybookEffect.CREATE_CREDENTIAL]
+    effect: Literal["create-credential"]
     secure_field: SecureField
-    protected: Literal[False] = False
 
 
-class PlaybookAgentRevokeStep(PlaybookStep):
-    stage: Literal[Stage.REVOKE]
+class PlaybookAgentRevokeStep(PlaybookAgentStepBase):
+    stage: Literal["revoke"]
     tool: Literal["browser.revokeCredential"]
-    effect: Literal[PlaybookEffect.REVOKE_CREDENTIAL]
+    effect: Literal["revoke-credential"]
     secure_field: None = None
-    protected: Literal[False] = False
 
 
 PlaybookAgentStep = Annotated[
@@ -35,8 +48,19 @@ PlaybookAgentStep = Annotated[
 ]
 
 
-class PlaybookAgentDraft(PlaybookDraft):
+class PlaybookAgentDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=160)
+    platform: str = Field(min_length=1, max_length=64)
+    allowed_domains: tuple[str, ...] = Field(min_length=1)
     steps: tuple[PlaybookAgentStep, ...] = Field(min_length=1)
+    login_url_pattern: str = Field(min_length=1, max_length=1024)
+
+    @model_validator(mode="after")
+    def validate_browser_procedure(self) -> "PlaybookAgentDraft":
+        PlaybookDraft.model_validate(self.model_dump(mode="json"))
+        return self
 
     @classmethod
     def model_json_schema(

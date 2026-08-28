@@ -65,16 +65,16 @@ class PlaybookStep(OperationStep):
 
     @model_validator(mode="after")
     def validate_capture(self) -> "PlaybookStep":
-        if self.effect is PlaybookEffect.CREATE_CREDENTIAL and (
-            self.stage is not Stage.CREATE
+        if self.effect == PlaybookEffect.CREATE_CREDENTIAL and (
+            self.stage != Stage.CREATE
             or self.tool != "browser.secure-capture"
             or self.secure_field is None
         ):
             raise ValueError("credential creation must use secure capture in the create stage")
-        if self.secure_field is not None and self.effect is not PlaybookEffect.CREATE_CREDENTIAL:
+        if self.secure_field is not None and self.effect != PlaybookEffect.CREATE_CREDENTIAL:
             raise ValueError("secure fields require the create-credential effect")
         if (
-            self.effect is PlaybookEffect.CREATE_CREDENTIAL
+            self.effect == PlaybookEffect.CREATE_CREDENTIAL
             and self.secure_field is not None
             and self.selectors
             and self.selectors[0]
@@ -83,8 +83,8 @@ class PlaybookStep(OperationStep):
             raise ValueError(
                 "secure capture must target the credential creation control, not captured output"
             )
-        if self.effect is PlaybookEffect.REVOKE_CREDENTIAL and (
-            self.stage is not Stage.REVOKE
+        if self.effect == PlaybookEffect.REVOKE_CREDENTIAL and (
+            self.stage != Stage.REVOKE
             or self.tool != "browser.revokeCredential"
             or self.secure_field is not None
         ):
@@ -131,14 +131,14 @@ class PlaybookDraft(Contract):
         creation = tuple(
             index
             for index, step in enumerate(self.steps)
-            if step.effect is PlaybookEffect.CREATE_CREDENTIAL
+            if step.effect == PlaybookEffect.CREATE_CREDENTIAL
         )
         if len(creation) != 1:
             raise ValueError("browser playbooks require exactly one secure credential creation")
-        if any(step.stage is Stage.CREATE for step in self.steps[creation[0] + 1 :]):
+        if any(step.stage == Stage.CREATE for step in self.steps[creation[0] + 1 :]):
             raise ValueError("secure credential creation must be the final create-stage step")
         revocation = tuple(
-            step for step in self.steps if step.effect is PlaybookEffect.REVOKE_CREDENTIAL
+            step for step in self.steps if step.effect == PlaybookEffect.REVOKE_CREDENTIAL
         )
         if len(revocation) != 1:
             raise ValueError("browser playbooks require exactly one credential revocation")

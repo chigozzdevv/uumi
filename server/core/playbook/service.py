@@ -265,14 +265,14 @@ def validate_definition(definition: PlaybookDraft) -> None:
     creation = tuple(
         index
         for index, step in enumerate(definition.steps)
-        if step.effect is PlaybookEffect.CREATE_CREDENTIAL
+        if step.effect == PlaybookEffect.CREATE_CREDENTIAL
     )
     if len(creation) != 1:
         raise PlaybookError("browser playbook requires one secure credential creation")
-    if any(step.stage is Stage.CREATE for step in definition.steps[creation[0] + 1 :]):
+    if any(step.stage == Stage.CREATE for step in definition.steps[creation[0] + 1 :]):
         raise PlaybookError("secure credential creation must finish the create stage")
     revocation = tuple(
-        step for step in definition.steps if step.effect is PlaybookEffect.REVOKE_CREDENTIAL
+        step for step in definition.steps if step.effect == PlaybookEffect.REVOKE_CREDENTIAL
     )
     if len(revocation) != 1:
         raise PlaybookError("browser playbook requires one credential revocation")

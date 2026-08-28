@@ -1118,7 +1118,13 @@ def test_playbook_uses_a_small_bound_tool_and_structured_output_schema() -> None
     assert set(schema["properties"]) == {"source_id"}
 
     output_schema = PlaybookAgentDraft.model_json_schema()
-    assert output_schema["required"] == ["name", "platform", "steps"]
+    assert output_schema["required"] == [
+        "name",
+        "platform",
+        "allowed_domains",
+        "steps",
+        "login_url_pattern",
+    ]
     step_schema = output_schema["properties"]["steps"]["items"]
     assert step_schema["discriminator"]["propertyName"] == "effect"
     assert set(step_schema["discriminator"]["mapping"]) == {
@@ -1126,6 +1132,10 @@ def test_playbook_uses_a_small_bound_tool_and_structured_output_schema() -> None
         "create-credential",
         "revoke-credential",
     }
+    assert (
+        output_schema["$defs"]["PlaybookAgentCreateStep"]["properties"]["effect"]["const"]
+        == "create-credential"
+    )
     assert "uniqueItems" not in json.dumps(output_schema)
 
 
