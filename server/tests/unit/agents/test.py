@@ -23,7 +23,13 @@ from agents.fleet import _SKILLS, AgentFleetService
 from agents.fleetprobe import _playbook_draft, run_fleet_probe
 from agents.probe import _inventory_context, run_probe
 from agents.redact import redact
-from agents.runtime import AgentRuntimeService, _a2a_endpoint, _a2a_output, _prompt
+from agents.runtime import (
+    AgentRuntimeService,
+    _a2a_endpoint,
+    _a2a_output,
+    _prompt,
+    _validated_output,
+)
 from agents.shared.app import (
     RequestSessionService,
     UumiA2aAgent,
@@ -898,6 +904,15 @@ def test_a2a_response_rejects_terminal_failure_without_exposing_message() -> Non
     assert error.value.code == "agent-runtime-terminal"
 
 
+def test_agent_runtime_normalises_playbook_output_before_screening() -> None:
+    generated = _playbook_draft()
+    generated["steps"][-1]["protected"] = True
+
+    output = _validated_output(AgentKind.PLAYBOOK, generated)
+
+    assert all(step["protected"] is False for step in output["steps"])
+
+
 @pytest.mark.anyio
 async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPatch) -> None:
     del monkeypatch
@@ -927,7 +942,17 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     )
 
     assert result.succeeded
-    assert result.output == {"decision": "plan"}
+    assert result.output == {
+        "decision": "plan",
+        "strategy": "immediate",
+        "observation_seconds": 300,
+        "ordered_stages": [stage.value for stage in Stage],
+        "recovery_actions": ["discard-candidate"],
+        "recovery_id": None,
+        "recovery_mode": None,
+        "eligible": None,
+        "rationale": "The bound controls permit this rotation.",
+    }
     message = google.body["message"]
     assert isinstance(message, dict)
     assert message["contextId"] == "session-task-one"
@@ -1159,6 +1184,7 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
         "BoundToolContext",
         (),
         {
+            "actions": type("Actions", (), {"skip_summarization": None})(),
             "state": {
                 "organisation_id": "org_acme",
                 "run_id": "run_one",
@@ -1207,7 +1233,7 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
                         },
                     },
                 },
-            }
+            },
         },
     )()
 
@@ -1222,6 +1248,7 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
     assert selected["ordered_stages"] == [stage.value for stage in Stage]
     assert selected["recovery_actions"] == ["discard-candidate"]
     plan = await plan_rotation(tool_context)
+    assert tool_context.actions.skip_summarization is True
     assert plan == {
         "decision": "plan",
         "strategy": "parallel",
@@ -1329,7 +1356,22 @@ class RuntimeGoogle:
         headers = kwargs.get("headers")
         assert isinstance(headers, dict)
         self.headers = headers
-        return {"task": {"artifacts": [{"parts": [{"text": '{"decision":"plan"}'}]}]}}
+        output = {
+            "decision": "plan",
+            "strategy": "immediate",
+            "observation_seconds": 300,
+            "ordered_stages": [stage.value for stage in Stage],
+            "recovery_actions": ["discard-candidate"],
+            "recovery_id": None,
+            "recovery_mode": None,
+            "eligible": None,
+            "rationale": "The bound controls permit this rotation.",
+        }
+        return {
+            "task": {
+                "artifacts": [{"parts": [{"text": json.dumps(output, separators=(",", ":"))}]}]
+            }
+        }
 
 
 class RuntimeGuard:
@@ -1349,7 +1391,9 @@ class RuntimeGuard:
         associated_prompt: str,
     ) -> str:
         del task
-        assert content == '{"decision":"plan"}'
+        output = json.loads(content)
+        assert output["decision"] == "plan"
+        assert output["ordered_stages"] == [stage.value for stage in Stage]
         assert json.loads(associated_prompt)["objective"] == "Plan a safe rotation"
         return "evidence_response"
 

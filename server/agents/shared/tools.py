@@ -78,7 +78,7 @@ async def plan_rotation(tool_context: ToolContext) -> dict[str, Any]:
     recovery_actions = selected["recovery_actions"]
     if not recovery_actions:
         raise ValueError("managed task controls have no recovery actions")
-    return {
+    plan = {
         "decision": "plan",
         "strategy": strategy,
         "observation_seconds": min(maximum_seconds, 300),
@@ -89,6 +89,8 @@ async def plan_rotation(tool_context: ToolContext) -> dict[str, Any]:
         "eligible": None,
         "rationale": "The selected strategy follows the bound consumer count and controls.",
     }
+    tool_context.actions.skip_summarization = True
+    return plan
 
 
 async def select_strategy(tool_context: ToolContext) -> dict[str, Any]:

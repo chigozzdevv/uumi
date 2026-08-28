@@ -8,13 +8,20 @@ from typing import Any
 
 from connectors.base.errors import ConnectorError
 from connectors.google import GoogleRestClient
-from contracts import AgentRegistration, AgentResult, AgentTask
+from contracts import AgentKind, AgentRegistration, AgentResult, AgentTask
+from pydantic import BaseModel
 from telemetry import record
 
 from agents.armor import ContentGuard, ModelArmorError
 from agents.continuity import AgentContinuityService
 from agents.fleet import AgentFleetService
 from agents.redact import redact
+from agents.shared.models import (
+    InventoryAssessment,
+    OperatorDecision,
+    PlannerOutput,
+    PlaybookAgentDraft,
+)
 
 
 class AgentRuntimeService:
@@ -92,7 +99,7 @@ class AgentRuntimeService:
                 )
             except ConnectorError as error:
                 raise _stage_error(error, "a2a-send") from error
-            output = _a2a_output(_event(response))
+            output = _validated_output(task.agent, _a2a_output(_event(response)))
             try:
                 evidence_ids.append(
                     await self._guard.screen_response(
@@ -245,6 +252,16 @@ def _a2a_output(response: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
     raise ValueError("Agent Runtime returned no final structured A2A output")
+
+
+def _validated_output(kind: AgentKind, output: dict[str, Any]) -> dict[str, Any]:
+    schemas: dict[AgentKind, type[BaseModel]] = {
+        AgentKind.INVENTORY: InventoryAssessment,
+        AgentKind.PLANNER: PlannerOutput,
+        AgentKind.PLAYBOOK: PlaybookAgentDraft,
+        AgentKind.OPERATOR: OperatorDecision,
+    }
+    return schemas[kind].model_validate(output).model_dump(mode="json")
 
 
 def _collect_text(value: Any, output: list[str]) -> None:
