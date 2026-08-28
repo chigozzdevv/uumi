@@ -5,44 +5,50 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode
 
 
-class PlaybookAgentStepBase(BaseModel):
+class PlaybookAgentStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1, max_length=128)
+    stage: Literal["create", "revoke"]
+    tool: Literal[
+        "browser.navigate",
+        "browser.click",
+        "browser.fill",
+        "browser.secure-capture",
+        "browser.revokeCredential",
+    ] = Field(
+        description=(
+            "Use browser.secure-capture only with create-credential; use "
+            "browser.revokeCredential only with revoke-credential."
+        )
+    )
     operation: str = Field(min_length=1, max_length=96)
     objective: str = Field(min_length=1, max_length=1024)
     parameters: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
     protected: bool = False
     evidence_checks: list[str] = Field(min_length=1)
+    effect: Literal["none", "create-credential", "revoke-credential"] = Field(
+        description=(
+            "create-credential requires a create-stage secure-capture step; revoke-credential "
+            "requires a revoke-stage browser.revokeCredential step."
+        )
+    )
     selectors: tuple[Selector, ...] = Field(min_length=1, max_length=1)
     checkpoint: PageCheckpoint
+    secure_field: SecureField | None = Field(
+        default=None,
+        description="Required only for the create-credential secure-capture step.",
+    )
     outputs: tuple[StepOutput, ...] = ()
     timeout_seconds: int = Field(default=30, ge=1, le=600)
     retry_limit: int = Field(default=0, ge=0, le=5)
 
+    @model_validator(mode="after")
+    def validate_security_pairing(self) -> "PlaybookAgentStep":
+        from contracts import PlaybookStep
 
-class PlaybookAgentBrowserStep(PlaybookAgentStepBase):
-    stage: Literal["create", "revoke"]
-    tool: Literal["browser.navigate", "browser.click", "browser.fill"]
-    effect: Literal["none"] = "none"
-    secure_field: None = None
-
-
-class PlaybookAgentCreateStep(PlaybookAgentStepBase):
-    stage: Literal["create"]
-    tool: Literal["browser.secure-capture"]
-    effect: Literal["create-credential"]
-    secure_field: SecureField
-
-
-class PlaybookAgentRevokeStep(PlaybookAgentStepBase):
-    stage: Literal["revoke"]
-    tool: Literal["browser.revokeCredential"]
-    effect: Literal["revoke-credential"]
-    secure_field: None = None
-
-
-PlaybookAgentStep = PlaybookAgentBrowserStep | PlaybookAgentCreateStep | PlaybookAgentRevokeStep
+        PlaybookStep.model_validate(self.model_dump(mode="json"))
+        return self
 
 
 class PlaybookAgentDraft(BaseModel):

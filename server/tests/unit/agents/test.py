@@ -1125,14 +1125,14 @@ def test_playbook_uses_a_small_bound_tool_and_structured_output_schema() -> None
         "steps",
         "login_url_pattern",
     ]
-    step_schema = output_schema["properties"]["steps"]["items"]
-    assert len(step_schema["anyOf"]) == 3
-    assert "discriminator" not in step_schema
-    assert "oneOf" not in step_schema
-    assert (
-        output_schema["$defs"]["PlaybookAgentCreateStep"]["properties"]["effect"]["const"]
-        == "create-credential"
-    )
+    assert output_schema["properties"]["steps"]["items"] == {"$ref": "#/$defs/PlaybookAgentStep"}
+    step_schema = output_schema["$defs"]["PlaybookAgentStep"]
+    assert step_schema["type"] == "object"
+    assert step_schema["properties"]["effect"]["enum"] == [
+        "none",
+        "create-credential",
+        "revoke-credential",
+    ]
     serialised = json.dumps(output_schema)
     assert '"const": false' not in serialised
     assert "uniqueItems" not in serialised
