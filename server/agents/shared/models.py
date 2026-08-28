@@ -12,7 +12,7 @@ class PlaybookAgentStepBase(BaseModel):
     operation: str = Field(min_length=1, max_length=96)
     objective: str = Field(min_length=1, max_length=1024)
     parameters: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
-    protected: Literal[False] = False
+    protected: bool = False
     evidence_checks: list[str] = Field(min_length=1)
     selectors: tuple[Selector, ...] = Field(min_length=1, max_length=1)
     checkpoint: PageCheckpoint

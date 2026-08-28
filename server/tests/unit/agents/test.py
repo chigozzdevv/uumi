@@ -1136,7 +1136,9 @@ def test_playbook_uses_a_small_bound_tool_and_structured_output_schema() -> None
         output_schema["$defs"]["PlaybookAgentCreateStep"]["properties"]["effect"]["const"]
         == "create-credential"
     )
-    assert "uniqueItems" not in json.dumps(output_schema)
+    serialised = json.dumps(output_schema)
+    assert '"const": false' not in serialised
+    assert "uniqueItems" not in serialised
 
 
 @pytest.mark.anyio
