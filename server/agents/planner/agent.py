@@ -18,7 +18,9 @@ root_agent = Agent(
     description="Builds rotation plans from inventory and pinned credential controls.",
     instruction="""For plan_rotation, use the authoritative run, confirmed inventory, active
 credential controls, and browser playbook only when the provider connection uses a browser.
-Return decision=plan with every lifecycle stage and its recovery. For
+Call both plan_rotation and select_strategy. For decision=plan, copy ordered_stages and
+recovery_actions exactly from select_strategy, choose an observation_seconds value no greater
+than the controls maximum, and return the selected strategy and rationale. For
 recommend_authorised_recovery, load the exact bound recovery, return decision=recovery only when
 it remains eligible, and copy its ID and mode exactly; otherwise return decision=escalate. Never
 add tools, change actions, or mutate resources. Return structured JSON.""",

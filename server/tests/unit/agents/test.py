@@ -43,6 +43,7 @@ from contracts import (
     AgentStatus,
     AgentTask,
     Evidence,
+    Stage,
 )
 from vertexai import types
 
@@ -1168,7 +1169,18 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
                         "id": "connection_one",
                         "interface": "browser",
                     },
-                    "controls": {"id": "controls_one"},
+                    "controls": {
+                        "id": "controls_one",
+                        "definition": {
+                            "maximum_observation_seconds": 300,
+                            "recovery": {
+                                "create": {
+                                    "mode": "cleanup",
+                                    "actions": ["discard-candidate"],
+                                }
+                            },
+                        },
+                    },
                     "published_playbook": {
                         "id": "playbook_version_one",
                         "state": "published",
@@ -1195,6 +1207,8 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
     }
     selected = await select_strategy(tool_context)
     assert selected["provider_connection"]["id"] == "connection_one"
+    assert selected["ordered_stages"] == [stage.value for stage in Stage]
+    assert selected["recovery_actions"] == ["discard-candidate"]
     execution = await execute_console_playbook("open_keys", tool_context)
     assert execution["step"]["selector"] == "text=API Keys"
     assert execution["run"]["id"] == "run_one"
@@ -1304,9 +1318,15 @@ class RuntimeGuard:
         self.prompt = content
         return "evidence_prompt"
 
-    async def screen_response(self, task: object, content: str) -> str:
+    async def screen_response(
+        self,
+        task: object,
+        content: str,
+        associated_prompt: str,
+    ) -> str:
         del task
         assert content == '{"decision":"plan"}'
+        assert json.loads(associated_prompt)["objective"] == "Plan a safe rotation"
         return "evidence_response"
 
 
@@ -1426,6 +1446,28 @@ async def test_model_armor_guard_stores_only_verdict_states_and_content_hash() -
         }
     ]
     assert content not in json.dumps(evidence.values)
+
+
+@pytest.mark.anyio
+async def test_model_armor_response_includes_its_associated_prompt() -> None:
+    google = ArmorGoogle()
+    guard = ModelArmorGuard(
+        google,  # type: ignore[arg-type]
+        "projects/agent-project/locations/us-central1/templates/uumi-agent-guardrails",
+        ArmorEvidence(),
+        lambda: NOW,
+    )
+
+    await guard.screen_response(
+        runtime_task(),  # type: ignore[arg-type]
+        '{"decision":"plan"}',
+        '{"objective":"Plan a safe rotation","skill":"plan_rotation"}',
+    )
+
+    assert google.body == {
+        "modelResponseData": {"text": '{"decision":"plan"}'},
+        "userPrompt": '{"objective":"Plan a safe rotation","skill":"plan_rotation"}',
+    }
 
 
 @pytest.mark.anyio

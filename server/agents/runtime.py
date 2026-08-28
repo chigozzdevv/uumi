@@ -98,6 +98,7 @@ class AgentRuntimeService:
                     await self._guard.screen_response(
                         task,
                         json.dumps(output, separators=(",", ":"), sort_keys=True),
+                        prompt,
                     )
                 )
             except ModelArmorError as error:

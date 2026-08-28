@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from contracts import PageCheckpoint, PlaybookDraft, SecureField, Selector, StepOutput
+from contracts import PageCheckpoint, PlaybookDraft, SecureField, Selector, Stage, StepOutput
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode
 
@@ -127,8 +127,7 @@ class PlannerOutput(BaseModel):
             if (
                 self.strategy is None
                 or self.observation_seconds is None
-                or self.ordered_stages is None
-                or len(self.ordered_stages) < 12
+                or self.ordered_stages != [stage.value for stage in Stage]
                 or not self.recovery_actions
             ):
                 raise ValueError("planning output is incomplete")

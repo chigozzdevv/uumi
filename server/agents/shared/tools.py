@@ -1,5 +1,6 @@
 from typing import Any
 
+from contracts import Stage
 from google.adk.agents.context import Context as ToolContext
 
 from agents.shared.context import AgentContext
@@ -65,11 +66,22 @@ async def select_strategy(tool_context: ToolContext) -> dict[str, Any]:
         raise ValueError("managed task provider binding changed")
     controls = _object(context, "controls")
     version = context.object("published_playbook", required=False)
+    definition = controls.get("definition")
+    recovery = definition.get("recovery") if isinstance(definition, dict) else None
+    recovery_actions: list[str] = []
+    if isinstance(recovery, dict):
+        for stage in Stage:
+            branch = recovery.get(stage.value)
+            actions = branch.get("actions") if isinstance(branch, dict) else None
+            if isinstance(actions, list):
+                recovery_actions.extend(item for item in actions if isinstance(item, str))
     return {
         "credential": credential,
         "provider_connection": connection,
         "controls": controls,
         "browser_playbook": version,
+        "ordered_stages": [stage.value for stage in Stage],
+        "recovery_actions": list(dict.fromkeys(recovery_actions)),
     }
 
 

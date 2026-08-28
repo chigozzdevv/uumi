@@ -25,7 +25,12 @@ class EvidenceSink(Protocol):
 class ContentGuard(Protocol):
     async def screen_prompt(self, task: AgentTask, content: str) -> str: ...
 
-    async def screen_response(self, task: AgentTask, content: str) -> str: ...
+    async def screen_response(
+        self,
+        task: AgentTask,
+        content: str,
+        associated_prompt: str,
+    ) -> str: ...
 
 
 class ModelArmorError(ConnectorError):
@@ -66,18 +71,40 @@ class ModelArmorGuard:
     async def screen_prompt(self, task: AgentTask, content: str) -> str:
         return await self._screen(task, content, "prompt")
 
-    async def screen_response(self, task: AgentTask, content: str) -> str:
-        return await self._screen(task, content, "response")
+    async def screen_response(
+        self,
+        task: AgentTask,
+        content: str,
+        associated_prompt: str,
+    ) -> str:
+        return await self._screen(
+            task,
+            content,
+            "response",
+            associated_prompt=associated_prompt,
+        )
 
-    async def _screen(self, task: AgentTask, content: str, direction: str) -> str:
+    async def _screen(
+        self,
+        task: AgentTask,
+        content: str,
+        direction: str,
+        *,
+        associated_prompt: str | None = None,
+    ) -> str:
         method = "sanitizeUserPrompt" if direction == "prompt" else "sanitizeModelResponse"
         field = "userPromptData" if direction == "prompt" else "modelResponseData"
+        request_body: dict[str, Any] = {field: {"text": content}}
+        if direction == "response":
+            if not associated_prompt:
+                raise ValueError("Model Armor response screening requires its associated prompt")
+            request_body["userPrompt"] = associated_prompt
         try:
             response = await self._client.request(
                 "POST",
                 f"https://modelarmor.{self._region}.rep.googleapis.com/v1/"
                 f"{self._template}:{method}",
-                json={field: {"text": content}},
+                json=request_body,
             )
         except ConnectorError as error:
             evidence_id = await self._store(
