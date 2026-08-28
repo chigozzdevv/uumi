@@ -20,6 +20,7 @@ from agents.deploy import (
     _staged_agent_source,
 )
 from agents.fleet import _SKILLS, AgentFleetService
+from agents.fleetprobe import _playbook_draft, run_fleet_probe
 from agents.probe import _inventory_context, run_probe
 from agents.redact import redact
 from agents.runtime import AgentRuntimeService, _a2a_endpoint, _a2a_output, _prompt
@@ -281,6 +282,119 @@ async def test_continuity_probe_proves_expiring_memory_across_two_invocations() 
     assert continuity.fact not in evidence.content.decode()
     assert hashlib.sha256(b"run_continuity_one").hexdigest()[:12] in continuity.fact
     assert "fact_sha256" in report["memory"]
+
+
+class FleetProbeRuntime:
+    def __init__(self) -> None:
+        self.tasks: list[AgentTask] = []
+
+    async def execute(self, task: AgentTask) -> AgentResult:
+        self.tasks.append(task)
+        outputs: dict[AgentKind, dict[str, object]] = {
+            AgentKind.PLAYBOOK: _playbook_draft(),
+            AgentKind.INVENTORY: {
+                "credential_id": "credential_fleet_evidence",
+                "declared_consumers": ["service_fleet_evidence"],
+                "observed_consumers": ["service_fleet_evidence"],
+                "missing_inventory": [],
+                "stale_inventory": [],
+                "incident_ids": [],
+                "conclusion": "Inventory is aligned.",
+            },
+            AgentKind.PLANNER: {
+                "decision": "plan",
+                "strategy": "immediate",
+                "observation_seconds": 300,
+                "ordered_stages": [
+                    "trigger",
+                    "preflight",
+                    "plan",
+                    "create",
+                    "store",
+                    "deploy",
+                    "verify",
+                    "rollout",
+                    "observe",
+                    "approval",
+                    "revoke",
+                    "complete",
+                ],
+                "recovery_actions": ["discard-candidate"],
+                "recovery_id": None,
+                "recovery_mode": None,
+                "eligible": None,
+                "rationale": "One declared consumer supports immediate rotation.",
+            },
+            AgentKind.OPERATOR: {
+                "step_id": "create_key",
+                "ready": True,
+                "expected_checkpoint": "Resend API Keys",
+                "drift_detected": False,
+                "pause_reason": None,
+            },
+        }
+        return AgentResult(
+            task_id=task.id,
+            agent=task.agent,
+            skill=task.skill,
+            succeeded=True,
+            output=outputs[task.agent],
+            evidence_ids=(
+                *task.evidence_ids,
+                f"evidence_{task.agent.value}_prompt",
+                f"evidence_{task.agent.value}_response",
+            ),
+            completed_at=NOW,
+        )
+
+
+@pytest.mark.anyio
+async def test_fleet_probe_proves_distinct_agents_in_one_rotation_flow() -> None:
+    kinds = (
+        AgentKind.PLAYBOOK,
+        AgentKind.INVENTORY,
+        AgentKind.PLANNER,
+        AgentKind.OPERATOR,
+    )
+    registrations = {
+        kind: registration().model_copy(
+            update={
+                "id": f"{kind.value}_v1",
+                "kind": kind,
+                "skills": _SKILLS[kind],
+                "identity": f"principal://agents/{kind.value}",
+                "deployment": f"projects/test/locations/us-east1/reasoningEngines/{kind.value}",
+            }
+        )
+        for kind in kinds
+    }
+    runtime = FleetProbeRuntime()
+    evidence = ProbeEvidence()
+
+    report, passed = await run_fleet_probe(
+        runtime,  # type: ignore[arg-type]
+        registrations,
+        evidence,  # type: ignore[arg-type]
+        "org_acme",
+        "run_fleet_one",
+        lambda: NOW,
+        require_traces=False,
+    )
+
+    assert passed is True
+    assert evidence.kinds == ["fleet-context", "fleet-probe"]
+    assert [task.agent for task in runtime.tasks] == list(kinds)
+    assert [item["stage"] for item in report["agents"]] == [
+        "playbook",
+        "preflight",
+        "plan",
+        "create",
+    ]
+    assert len({item["identity"] for item in report["agents"]}) == 4
+    assert all(len(item["evidence_ids"]) == 3 for item in report["agents"])
+    stored = json.loads(evidence.content)
+    assert stored["passed"] is True
+    assert "secret_reference" not in stored
 
 
 @pytest.mark.anyio
