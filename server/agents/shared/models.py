@@ -1,11 +1,43 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from contracts import PlaybookDraft
+from contracts import PlaybookDraft, PlaybookEffect, PlaybookStep, SecureField, Stage
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode
 
 
+class PlaybookAgentBrowserStep(PlaybookStep):
+    stage: Literal[Stage.CREATE, Stage.REVOKE]
+    tool: Literal["browser.navigate", "browser.click", "browser.fill"]
+    effect: Literal[PlaybookEffect.NONE] = PlaybookEffect.NONE
+    secure_field: None = None
+    protected: Literal[False] = False
+
+
+class PlaybookAgentCreateStep(PlaybookStep):
+    stage: Literal[Stage.CREATE]
+    tool: Literal["browser.secure-capture"]
+    effect: Literal[PlaybookEffect.CREATE_CREDENTIAL]
+    secure_field: SecureField
+    protected: Literal[False] = False
+
+
+class PlaybookAgentRevokeStep(PlaybookStep):
+    stage: Literal[Stage.REVOKE]
+    tool: Literal["browser.revokeCredential"]
+    effect: Literal[PlaybookEffect.REVOKE_CREDENTIAL]
+    secure_field: None = None
+    protected: Literal[False] = False
+
+
+PlaybookAgentStep = Annotated[
+    PlaybookAgentBrowserStep | PlaybookAgentCreateStep | PlaybookAgentRevokeStep,
+    Field(discriminator="effect"),
+]
+
+
 class PlaybookAgentDraft(PlaybookDraft):
+    steps: tuple[PlaybookAgentStep, ...] = Field(min_length=1)
+
     @classmethod
     def model_json_schema(
         cls,

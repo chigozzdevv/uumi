@@ -467,6 +467,25 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     assert config["max_instances"] == 1
 
 
+@pytest.mark.anyio
+async def test_agent_deployment_rejects_duplicate_component_selection() -> None:
+    with pytest.raises(ValueError, match="unique agent kinds"):
+        await _deploy_fleet(
+            object(),  # type: ignore[arg-type]
+            "project-one",
+            "org_acme",
+            "us-central1",
+            "gs://staging",
+            "projects/project-one/locations/us-central1/keyRings/uumi/cryptoKeys/agents",
+            "projects/project-one/locations/us-central1/agentGateways/ingress",
+            "projects/project-one/locations/us-central1/agentGateways/egress",
+            "projects/project-one/roles/uumiAgentCaller",
+            frozenset({"serviceAccount:api@project-one.iam.gserviceaccount.com"}),
+            "1.2.3",
+            kinds=(AgentKind.PLAYBOOK, AgentKind.PLAYBOOK),
+        )
+
+
 def test_agent_runtime_pins_mtls_capable_genai_client() -> None:
     requirements = (Path(__file__).parents[3] / "agents" / "requirements.txt").read_text(
         encoding="utf-8"
@@ -1100,7 +1119,13 @@ def test_playbook_uses_a_small_bound_tool_and_structured_output_schema() -> None
 
     output_schema = PlaybookAgentDraft.model_json_schema()
     assert output_schema["required"] == ["name", "platform", "steps"]
-    assert output_schema["properties"]["steps"]["items"] == {"$ref": "#/$defs/PlaybookStep"}
+    step_schema = output_schema["properties"]["steps"]["items"]
+    assert step_schema["discriminator"]["propertyName"] == "effect"
+    assert set(step_schema["discriminator"]["mapping"]) == {
+        "none",
+        "create-credential",
+        "revoke-credential",
+    }
     assert "uniqueItems" not in json.dumps(output_schema)
 
 

@@ -18,11 +18,13 @@ orchestration. Write each objective as the exact visible browser action, such as
 credential creation form" or "Submit the credential creation form". Secure Capture is step
 metadata, not part of the objective. The secure-capture action selector must target the control
 that creates the credential; the secure field and provider ID selectors identify the resulting
-output. The one irreversible revocation step must use browser.revokeCredential; ordinary setup
-clicks use browser.click. When evidence IDs are present, call analyse_walkthrough once for each
-ID and use only the returned sanitised observations. Return the final playbook directly through
-the required structured output schema; do not submit the playbook through a function tool. Never
-put secret values in a playbook or response.""",
+output. Exactly one final create-stage step must pair effect=create-credential with
+tool=browser.secure-capture and a secure_field. Exactly one revoke-stage step must pair
+effect=revoke-credential with tool=browser.revokeCredential and no secure_field. All other
+browser steps must use effect=none. When evidence IDs are present, call analyse_walkthrough once
+for each ID and use only the returned sanitised observations. Return the final playbook directly
+through the required structured output schema; do not submit the playbook through a function
+tool. Never put secret values in a playbook or response.""",
     tools=[analyse_walkthrough],
     output_schema=PlaybookAgentDraft,
     output_key="playbook_draft",

@@ -54,6 +54,7 @@ async def deploy(
     credentials: Credentials | None = None,
     catalog_credentials: Credentials | None = None,
     catalog_project_id: str | None = None,
+    kinds: tuple[AgentKind, ...] | None = None,
 ) -> tuple[AgentRegistration, ...]:
     google = GoogleRestClient(credentials=credentials)
     try:
@@ -72,6 +73,7 @@ async def deploy(
             credentials,
             catalog_credentials,
             catalog_project_id,
+            kinds,
         )
     finally:
         await google.close()
@@ -92,7 +94,11 @@ async def _deploy_fleet(
     credentials: Credentials | None = None,
     catalog_credentials: Credentials | None = None,
     catalog_project_id: str | None = None,
+    kinds: tuple[AgentKind, ...] | None = None,
 ) -> tuple[AgentRegistration, ...]:
+    selected = tuple(AgentKind) if kinds is None else kinds
+    if kinds is not None and (not selected or len(set(selected)) != len(selected)):
+        raise ValueError("agent deployment selection must contain unique agent kinds")
     os.environ["UUMI_GOOGLE_CLOUD_PROJECT"] = project_id
     os.environ["UUMI_GOOGLE_CLOUD_LOCATION"] = region
     vertexai.init(
@@ -116,7 +122,7 @@ async def _deploy_fleet(
     )
     fleet = AgentFleetService(repository)
     registrations = []
-    for kind in AgentKind:
+    for kind in selected:
         registration_id = f"{kind.value}_{version.replace('.', '_')}"
         try:
             current = await repository.get(organisation_id, registration_id)
@@ -457,6 +463,7 @@ def main() -> None:
     parser.add_argument("--caller-role", required=True)
     parser.add_argument("--approved-caller", required=True, action="append")
     parser.add_argument("--version", required=True)
+    parser.add_argument("--agent", choices=[kind.value for kind in AgentKind], action="append")
     parser.add_argument("--impersonate-service-account")
     args = parser.parse_args()
     import asyncio
@@ -479,6 +486,7 @@ def main() -> None:
             _deployment_credentials(args.impersonate_service_account, source_credentials),
             source_credentials,
             args.catalog_project,
+            tuple(AgentKind(value) for value in args.agent) if args.agent else None,
         )
     )
     print(json.dumps([value.model_dump(mode="json") for value in values]))
