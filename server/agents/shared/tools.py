@@ -1,10 +1,10 @@
 from typing import Any
 
-from contracts import PlaybookDraft
 from core.playbook import validate_definition
 from google.adk.agents.context import Context as ToolContext
 
 from agents.shared.context import AgentContext
+from agents.shared.models import PlaybookToolDefinition
 
 
 async def correlate_exposure(incident_id: str, tool_context: ToolContext) -> dict[str, Any]:
@@ -115,27 +115,27 @@ async def recommend_authorised_recovery(tool_context: ToolContext) -> dict[str, 
     }
 
 
-async def build_playbook(definition: dict[str, Any], tool_context: ToolContext) -> dict[str, Any]:
+async def build_playbook(
+    definition: PlaybookToolDefinition, tool_context: ToolContext
+) -> dict[str, Any]:
     """Canonicalise one versioned browser procedure from sanitised source evidence."""
     AgentContext(tool_context)
-    draft = PlaybookDraft.model_validate(definition)
-    validate_definition(draft)
-    return draft.model_dump(mode="json")
+    validate_definition(definition)
+    return definition.model_dump(mode="json")
 
 
 async def validate_playbook(
-    definition: dict[str, Any], tool_context: ToolContext
+    definition: PlaybookToolDefinition, tool_context: ToolContext
 ) -> dict[str, Any]:
     """Validate browser-only actions, checkpoints, domains, and secure capture declarations."""
     AgentContext(tool_context)
-    draft = PlaybookDraft.model_validate(definition)
-    validate_definition(draft)
+    validate_definition(definition)
     return {
         "valid": True,
-        "actions": len(draft.steps),
-        "create_actions": sum(step.stage.value == "create" for step in draft.steps),
-        "revoke_actions": sum(step.stage.value == "revoke" for step in draft.steps),
-        "secure_capture_declared": any(step.secure_field is not None for step in draft.steps),
+        "actions": len(definition.steps),
+        "create_actions": sum(step.stage.value == "create" for step in definition.steps),
+        "revoke_actions": sum(step.stage.value == "revoke" for step in definition.steps),
+        "secure_capture_declared": any(step.secure_field is not None for step in definition.steps),
     }
 
 

@@ -1087,6 +1087,23 @@ def test_managed_agent_executor_uses_no_remote_session_service() -> None:
     assert executor._runner.memory_service is None
 
 
+def test_playbook_tools_publish_the_complete_typed_definition_schema() -> None:
+    from agents.shared.tools import build_playbook, validate_playbook
+    from google.adk.tools.function_tool import FunctionTool
+
+    for tool in (build_playbook, validate_playbook):
+        declaration = FunctionTool(tool)._get_declaration()
+        assert declaration is not None
+        schema = declaration.parameters_json_schema
+        assert schema is not None
+        definition = schema["properties"]["definition"]
+        assert definition == {"$ref": "#/$defs/PlaybookToolDefinition"}
+        draft = schema["$defs"]["PlaybookToolDefinition"]
+        assert draft["required"] == ["name", "platform", "steps"]
+        assert draft["properties"]["steps"]["items"] == {"$ref": "#/$defs/PlaybookToolStep"}
+        assert "uniqueItems" not in json.dumps(schema)
+
+
 @pytest.mark.anyio
 async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
     from agents.shared.tools import detect_stale_mapping, execute_console_playbook, select_strategy
