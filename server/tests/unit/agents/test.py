@@ -1594,6 +1594,109 @@ async def test_memory_id_rejects_changed_local_approval_binding(field: str, valu
         await repository.save_memory(current.model_copy(update={field: value}))
 
 
+class RetrievalRepository:
+    def __init__(self, memories: tuple[AgentMemory, ...]) -> None:
+        self.memories = memories
+
+    async def list_memories(
+        self, organisation_id: str, agent: AgentKind
+    ) -> tuple[AgentMemory, ...]:
+        return self.memories
+
+
+class RetrievalGoogle:
+    def __init__(self, fact: str, scope: dict[str, str]) -> None:
+        self.fact = fact
+        self.scope = scope
+
+    async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
+        return {
+            "retrievedMemories": [
+                {
+                    "memory": {
+                        "name": (
+                            "projects/project-one/locations/us-central1/reasoningEngines/planner/"
+                            "memories/1770561716149551104"
+                        ),
+                        "fact": self.fact,
+                        "scope": self.scope,
+                    }
+                }
+            ]
+        }
+
+
+@pytest.mark.anyio
+async def test_memory_retrieval_reconciles_generated_revision_to_local_approval() -> None:
+    fact = "Provider key names may take ten seconds to appear."
+    memory = AgentMemory(
+        id="memory_one",
+        organisation_id="org_acme",
+        agent=AgentKind.PLANNER,
+        remote_memory="projects/test/locations/us-central1/memories/memory-one",
+        fact=fact,
+        provenance=("evidence_one",),
+        approved_by="administrator_one",
+        region="us-central1",
+        created_at=NOW,
+        expires_at=datetime(2026, 9, 12, tzinfo=UTC),
+    )
+    continuity = AgentContinuityService(
+        RetrievalRepository((memory,)),  # type: ignore[arg-type]
+        RetrievalGoogle(fact, {"organisation": "org_acme", "agent": "planner"}),  # type: ignore[arg-type]
+        "project-one",
+        "(default)",
+        lambda: NOW,
+    )
+
+    retrieved = await continuity.retrieve(registration(), fact)
+
+    assert retrieved == (
+        {
+            "fact": fact,
+            "provenance": ("evidence_one",),
+            "approved_by": "administrator_one",
+        },
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("change", ("scope", "duplicate"))
+async def test_memory_retrieval_rejects_unbound_remote_fact(change: str) -> None:
+    fact = "Provider key names may take ten seconds to appear."
+    memory = AgentMemory(
+        id="memory_one",
+        organisation_id="org_acme",
+        agent=AgentKind.PLANNER,
+        remote_memory="projects/test/locations/us-central1/memories/memory-one",
+        fact=fact,
+        provenance=("evidence_one",),
+        approved_by="administrator_one",
+        region="us-central1",
+        created_at=NOW,
+        expires_at=datetime(2026, 9, 12, tzinfo=UTC),
+    )
+    memories = (
+        (memory, memory.model_copy(update={"id": "memory_two"}))
+        if change == "duplicate"
+        else (memory,)
+    )
+    scope = (
+        {"organisation": "org_other", "agent": "planner"}
+        if change == "scope"
+        else {"organisation": "org_acme", "agent": "planner"}
+    )
+    continuity = AgentContinuityService(
+        RetrievalRepository(memories),  # type: ignore[arg-type]
+        RetrievalGoogle(fact, scope),  # type: ignore[arg-type]
+        "project-one",
+        "(default)",
+        lambda: NOW,
+    )
+
+    assert await continuity.retrieve(registration(), fact) == ()
+
+
 class ContinuityRepository:
     def __init__(self) -> None:
         self.session: AgentSession | None = None

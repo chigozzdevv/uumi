@@ -183,25 +183,37 @@ class AgentContinuityService:
         memories = result.get("retrievedMemories", [])
         if not isinstance(memories, list):
             raise ValueError("Memory Bank returned an invalid response")
-        approved = {
-            item.remote_memory: item
-            for item in await self._repository.list_memories(
-                registration.organisation_id, registration.kind
-            )
-            if item.expires_at > self._clock()
+        approved: dict[str, list[AgentMemory]] = {}
+        for item in await self._repository.list_memories(
+            registration.organisation_id, registration.kind
+        ):
+            if item.expires_at > self._clock():
+                approved.setdefault(item.fact, []).append(item)
+        expected_scope = {
+            "organisation": registration.organisation_id,
+            "agent": registration.kind.value,
         }
         values = []
+        included: set[str] = set()
         for item in memories:
             if not isinstance(item, dict):
                 continue
             raw = item.get("memory", item)
             if not isinstance(raw, dict):
                 continue
-            name = raw.get("name")
             fact = raw.get("fact")
-            local = approved.get(name) if isinstance(name, str) else None
-            if local is None or fact != local.fact:
+            candidates = approved.get(fact, []) if isinstance(fact, str) else []
+            # Retrieval can return a generated revision name instead of the
+            # client-supplied memory ID. Exact fact and scope still bind the
+            # result to one unexpired local approval.
+            if (
+                raw.get("scope") != expected_scope
+                or len(candidates) != 1
+                or candidates[0].id in included
+            ):
                 continue
+            local = candidates[0]
+            included.add(local.id)
             values.append(
                 {
                     "fact": local.fact,
