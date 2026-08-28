@@ -125,9 +125,8 @@ def _task(
             "walkthroughs": (),
         }
         objective = (
-            "Build and validate a Resend browser procedure with one secure-capture create step "
-            "and one revocation step for resend.com. Use deterministic selectors and page "
-            "checkpoints."
+            "Resend browser procedure for resend.com: one secure-capture create step, one "
+            "revocation step, deterministic selectors, and page checkpoints."
         )
     elif kind is AgentKind.INVENTORY:
         context = {
@@ -136,8 +135,8 @@ def _task(
             "services": (),
         }
         objective = (
-            "Use detect_stale_mapping to confirm credential_fleet_evidence has exactly its "
-            "declared service_fleet_evidence consumer."
+            "Inventory alignment for credential_fleet_evidence and its declared "
+            "service_fleet_evidence consumer."
         )
     elif kind is AgentKind.PLANNER:
         context = {
@@ -155,9 +154,8 @@ def _task(
             "current_generation": scenario["generation"],
         }
         objective = (
-            "Use plan_rotation and select_strategy to plan the complete governed rotation for "
-            "credential_fleet_evidence. Return all twelve ordered lifecycle stages and the "
-            "declared rollback recovery action."
+            "Governed rotation plan for credential_fleet_evidence: all twelve ordered lifecycle "
+            "stages and the configured rollback recovery action."
         )
     else:
         context = {
@@ -173,10 +171,7 @@ def _task(
             "step_id": "create_key",
             "stage": stage,
         }
-        objective = (
-            "Use execute_console_playbook for immutable step create_key. Confirm it is ready for "
-            "the isolated browser worker without executing any browser action."
-        )
+        objective = "Readiness assessment for immutable create_key and the isolated browser worker."
     return AgentTask(
         id=f"task_{run_id.removeprefix('run_')}_{kind.value}",
         organisation_id=organisation_id,
