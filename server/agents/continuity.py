@@ -138,12 +138,11 @@ class AgentContinuityService:
                 )
             except ConnectorError as reconcile_error:
                 raise error from reconcile_error
-            expected = (fact, body["scope"], body["revisionLabels"])
-            actual = (
-                response.get("fact"),
-                response.get("scope"),
-                response.get("revisionLabels"),
-            )
+            # Revision labels are input-only in the Memory Bank API. The
+            # durable remote binding is the fact plus its exact tenant scope;
+            # Uumi keeps approval and provenance authoritative in Firestore.
+            expected = (fact, body["scope"])
+            actual = (response.get("fact"), response.get("scope"))
             if actual != expected:
                 raise ValueError("existing Memory Bank record has different bindings") from error
         now = self._clock()

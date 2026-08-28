@@ -96,7 +96,15 @@ class AgentRepository:
         except ResourceNotFoundError:
             await self._catalog.create(path, memory)
             return memory
-        if current.remote_memory != memory.remote_memory or current.fact != memory.fact:
+        immutable_binding = (
+            "remote_memory",
+            "fact",
+            "agent",
+            "provenance",
+            "approved_by",
+            "region",
+        )
+        if any(getattr(current, field) != getattr(memory, field) for field in immutable_binding):
             raise ValueError("agent memory ID is immutable")
         return current
 

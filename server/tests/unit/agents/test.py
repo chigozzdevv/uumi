@@ -7,6 +7,7 @@ import cloudpickle  # type: ignore[import-untyped]
 import pytest
 from agents.armor import ModelArmorError, ModelArmorGuard
 from agents.continuity import AgentContinuityService
+from agents.continuityprobe import run_continuity_probe
 from agents.deploy import (
     _canonical_deployment,
     _canonical_gateway,
@@ -30,6 +31,7 @@ from agents.shared.app import (
     _required_environment,
     managed_app,
 )
+from agents.storage import AgentRepository
 from connectors.base.errors import ConnectorError
 from contracts import (
     AgentKind,
@@ -119,6 +121,7 @@ class ProbeEvidence:
     def __init__(self) -> None:
         self.content = b""
         self.kind = ""
+        self.kinds: list[str] = []
 
     async def store(
         self,
@@ -131,6 +134,7 @@ class ProbeEvidence:
     ) -> Evidence:
         self.content = content
         self.kind = kind
+        self.kinds.append(kind)
         return Evidence(
             id="evidence_summary",
             organisation_id=organisation_id,
@@ -165,6 +169,117 @@ async def test_model_armor_probe_requires_block_and_end_to_end_allow() -> None:
     assert stored["passed"] is True
     assert "Ignore all previous" not in evidence.content.decode()
     assert all(task.context == _inventory_context() for task in runtime.tasks)
+
+
+class ContinuityProbe:
+    def __init__(self) -> None:
+        self.sessions: list[AgentSession] = []
+        self.retrievals: list[tuple[dict[str, object], ...]] = []
+        self.fact = ""
+        self.provenance: tuple[str, ...] = ()
+        self.approved_by = ""
+
+    async def remember(
+        self,
+        value: AgentRegistration,
+        memory_id: str,
+        fact: str,
+        provenance: tuple[str, ...],
+        approved_by: str,
+        ttl: object,
+    ) -> AgentMemory:
+        self.fact = fact
+        self.provenance = provenance
+        self.approved_by = approved_by
+        return AgentMemory(
+            id=memory_id,
+            organisation_id=value.organisation_id,
+            agent=value.kind,
+            remote_memory=f"{value.deployment}/memories/{memory_id.replace('_', '-')}",
+            fact=fact,
+            provenance=provenance,
+            approved_by=approved_by,
+            region=value.region,
+            created_at=NOW,
+            expires_at=datetime(2026, 8, 14, 12, tzinfo=UTC),
+        )
+
+    async def retrieve(
+        self, value: AgentRegistration, query: str, count: int
+    ) -> tuple[dict[str, object], ...]:
+        memories: tuple[dict[str, object], ...] = (
+            {
+                "fact": self.fact,
+                "provenance": self.provenance,
+                "approved_by": self.approved_by,
+            },
+        )
+        self.retrievals.append(memories)
+        return memories
+
+
+class ContinuityProbeRuntime:
+    def __init__(self, continuity: ContinuityProbe, value: AgentRegistration) -> None:
+        self.continuity = continuity
+        self.registration = value
+
+    async def execute(self, task: AgentTask) -> AgentResult:
+        index = len(self.continuity.sessions) + 1
+        self.continuity.sessions.append(
+            AgentSession(
+                id=f"session_{task.id}",
+                organisation_id=task.organisation_id,
+                run_id=task.run_id,
+                agent=task.agent,
+                remote_session=f"{self.registration.deployment}/sessions/session-{index}",
+                region=self.registration.region,
+                purpose="managed continuity probe",
+                created_at=NOW,
+                expires_at=datetime(2026, 8, 14, 12, tzinfo=UTC),
+            )
+        )
+        await self.continuity.retrieve(self.registration, task.objective, count=5)
+        return AgentResult(
+            task_id=task.id,
+            agent=task.agent,
+            skill=task.skill,
+            succeeded=True,
+            output={"credential_id": "credential_evidence_demo"},
+            evidence_ids=(f"evidence_prompt_{index}", f"evidence_response_{index}"),
+            completed_at=NOW,
+        )
+
+
+@pytest.mark.anyio
+async def test_continuity_probe_proves_expiring_memory_across_two_invocations() -> None:
+    value = registration().model_copy(
+        update={
+            "kind": AgentKind.INVENTORY,
+            "skills": frozenset({"detect_stale_mapping"}),
+        }
+    )
+    continuity = ContinuityProbe()
+    runtime = ContinuityProbeRuntime(continuity, value)
+    evidence = ProbeEvidence()
+
+    report, passed = await run_continuity_probe(
+        runtime,  # type: ignore[arg-type]
+        continuity,  # type: ignore[arg-type]
+        value,
+        evidence,  # type: ignore[arg-type]
+        "org_acme",
+        "run_continuity_one",
+        lambda: NOW,
+    )
+
+    assert passed is True
+    assert report["summary_evidence_id"] == "evidence_summary"
+    assert evidence.kind == "continuity-probe"
+    assert evidence.kinds == ["continuity-context", "continuity-probe"]
+    assert len(report["invocations"]) == 2
+    assert all(item["retrieved_memory_count"] == 1 for item in report["invocations"])
+    assert continuity.fact not in evidence.content.decode()
+    assert "fact_sha256" in report["memory"]
 
 
 @pytest.mark.anyio
@@ -1418,6 +1533,67 @@ async def test_memory_retry_reconciles_exact_approved_fact() -> None:
     assert repository.memory == memory
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("binding", ("fact", "scope"))
+async def test_memory_retry_rejects_different_remote_binding(binding: str) -> None:
+    repository = ContinuityRepository()
+    google = ExistingGoogle("memory", changed=binding)
+    continuity = AgentContinuityService(
+        repository,  # type: ignore[arg-type]
+        google,  # type: ignore[arg-type]
+        "project-one",
+        "(default)",
+        lambda: NOW,
+    )
+
+    with pytest.raises(ValueError, match="different bindings"):
+        await continuity.remember(
+            registration(),
+            "memory_one",
+            "Provider key names may take ten seconds to appear.",
+            ("evidence_one",),
+            "administrator_one",
+        )
+
+
+class ExistingMemoryCatalog:
+    def __init__(self, memory: AgentMemory) -> None:
+        self.memory = memory
+
+    async def get(self, path: str, model: object) -> AgentMemory:
+        return self.memory
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("agent", AgentKind.OPERATOR),
+        ("provenance", ("evidence_other",)),
+        ("approved_by", "administrator_other"),
+        ("region", "us-east1"),
+    ),
+)
+async def test_memory_id_rejects_changed_local_approval_binding(field: str, value: object) -> None:
+    current = AgentMemory(
+        id="memory_one",
+        organisation_id="org_acme",
+        agent=AgentKind.PLANNER,
+        remote_memory="projects/test/locations/us-central1/memories/memory-one",
+        fact="Provider key names may take ten seconds to appear.",
+        provenance=("evidence_one",),
+        approved_by="administrator_one",
+        region="us-central1",
+        created_at=NOW,
+        expires_at=datetime(2026, 9, 12, tzinfo=UTC),
+    )
+    repository = AgentRepository.__new__(AgentRepository)
+    repository._catalog = ExistingMemoryCatalog(current)  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="agent memory ID is immutable"):
+        await repository.save_memory(current.model_copy(update={field: value}))
+
+
 class ContinuityRepository:
     def __init__(self) -> None:
         self.session: AgentSession | None = None
@@ -1433,9 +1609,10 @@ class ContinuityRepository:
 
 
 class ExistingGoogle:
-    def __init__(self, resource: str, status: int = 409) -> None:
+    def __init__(self, resource: str, status: int = 409, changed: str | None = None) -> None:
         self.resource = resource
         self.status = status
+        self.changed = changed
         self.body: dict[str, object] = {}
 
     async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
@@ -1456,12 +1633,16 @@ class ExistingGoogle:
                 "sessionState": self.body["sessionState"],
                 "labels": self.body["labels"],
             }
-        return {
+        response = {
             "name": (
                 "projects/project-one/locations/us-central1/reasoningEngines/planner/"
                 "memories/memory-one"
             ),
             "fact": self.body["fact"],
             "scope": self.body["scope"],
-            "revisionLabels": self.body["revisionLabels"],
         }
+        if self.changed == "fact":
+            response["fact"] = "A different approved fact."
+        if self.changed == "scope":
+            response["scope"] = {"organisation": "org_other", "agent": "planner"}
+        return response
