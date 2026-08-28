@@ -1613,7 +1613,7 @@ def test_agent_context_recursively_redacts_secret_material() -> None:
     }
 
 
-def test_agent_prompt_exposes_only_the_objective_and_approved_memory() -> None:
+def test_agent_prompt_exposes_only_the_directive_and_approved_memory() -> None:
     from contracts import AgentTask
 
     prompt = _prompt(
@@ -1629,11 +1629,18 @@ def test_agent_prompt_exposes_only_the_objective_and_approved_memory() -> None:
                 "secret_reference": "projects/test/secrets/mail/versions/2",
                 "api_key": "must-not-escape",
             },
+            evidence_ids=("evidence_audit_only",),
             requested_at=NOW,
         )
     )
 
-    assert '"objective":"Plan a safe rotation"' in prompt
+    assert json.loads(prompt) == {
+        "skill": "plan_rotation",
+        "objective": "Plan a safe rotation",
+        "approved_memory": [],
+    }
+    assert "task_one" not in prompt
+    assert "evidence_audit_only" not in prompt
     assert "credential_one" not in prompt
     assert "projects/test/secrets/mail/versions/2" not in prompt
     assert "must-not-escape" not in prompt

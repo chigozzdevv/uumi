@@ -154,10 +154,8 @@ def _stage_error(error: ConnectorError, stage: str) -> ConnectorError:
 def _prompt(task: AgentTask, memories: tuple[dict[str, Any], ...] = ()) -> str:
     safe = redact(
         {
-            "task_id": task.id,
             "skill": task.skill,
             "objective": task.objective,
-            "evidence_ids": task.evidence_ids,
             "approved_memory": memories,
         }
     )

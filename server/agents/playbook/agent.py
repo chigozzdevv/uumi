@@ -21,10 +21,11 @@ that creates the credential; the secure field and provider ID selectors identify
 output. Exactly one final create-stage step must pair effect=create-credential with
 tool=browser.secure-capture and a secure_field. Exactly one revoke-stage step must pair
 effect=revoke-credential with tool=browser.revokeCredential and no secure_field. All other
-browser steps must use effect=none. When evidence IDs are present, call analyse_walkthrough once
-for each ID and use only the returned sanitised observations. Return the final playbook directly
-through the required structured output schema; do not submit the playbook through a function
-tool. Never put secret values in a playbook or response.""",
+browser steps must use effect=none. Evidence IDs are audit references, not walkthrough source IDs;
+never pass an evidence ID to analyse_walkthrough. Call analyse_walkthrough only when the objective
+explicitly names a sanitised walkthrough source ID, and use only its returned observations. Return
+the final playbook directly through the required structured output schema; do not submit the
+playbook through a function tool. Never put secret values in a playbook or response.""",
     tools=[analyse_walkthrough],
     output_schema=PlaybookAgentDraft,
     output_key="playbook_draft",
