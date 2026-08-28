@@ -57,6 +57,6 @@ _SKILLS: dict[AgentKind, frozenset[str]] = {
             "recommend_authorised_recovery",
         }
     ),
-    AgentKind.PLAYBOOK: frozenset({"build_playbook", "analyse_walkthrough", "validate_playbook"}),
+    AgentKind.PLAYBOOK: frozenset({"build_playbook"}),
     AgentKind.OPERATOR: frozenset({"execute_console_playbook", "detect_interface_drift"}),
 }

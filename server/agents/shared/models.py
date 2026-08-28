@@ -1,7 +1,7 @@
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from contracts import PlaybookDraft, PlaybookStep
-from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema, model_validator
+from contracts import PlaybookDraft
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode
 
 
@@ -35,23 +35,6 @@ def _remove_unique_items(value: Any) -> None:
     elif isinstance(value, list):
         for nested in value:
             _remove_unique_items(nested)
-
-
-class PlaybookToolStep(PlaybookStep):
-    evidence_checks: Annotated[
-        frozenset[str],
-        WithJsonSchema(
-            {
-                "type": "array",
-                "items": {"type": "string"},
-                "minItems": 1,
-            }
-        ),
-    ] = Field(min_length=1)
-
-
-class PlaybookToolDefinition(PlaybookDraft):
-    steps: tuple[PlaybookToolStep, ...] = Field(min_length=1)
 
 
 class InventoryAssessment(BaseModel):

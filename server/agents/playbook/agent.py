@@ -4,7 +4,7 @@ from google.adk.apps import App
 from agents.shared.app import managed_app
 from agents.shared.model import managed_model
 from agents.shared.models import PlaybookAgentDraft
-from agents.shared.tools import analyse_walkthrough, build_playbook, validate_playbook
+from agents.shared.tools import analyse_walkthrough
 
 root_agent = Agent(
     name="playbook_builder_agent",
@@ -19,10 +19,11 @@ credential creation form" or "Submit the credential creation form". Secure Captu
 metadata, not part of the objective. The secure-capture action selector must target the control
 that creates the credential; the secure field and provider ID selectors identify the resulting
 output. The one irreversible revocation step must use browser.revokeCredential; ordinary setup
-clicks use browser.click. Use build_playbook to canonicalise the candidate and validate_playbook
-before returning it. Never put
-secret values in a playbook or response.""",
-    tools=[analyse_walkthrough, build_playbook, validate_playbook],
+clicks use browser.click. When evidence IDs are present, call analyse_walkthrough once for each
+ID and use only the returned sanitised observations. Return the final playbook directly through
+the required structured output schema; do not submit the playbook through a function tool. Never
+put secret values in a playbook or response.""",
+    tools=[analyse_walkthrough],
     output_schema=PlaybookAgentDraft,
     output_key="playbook_draft",
     mode="chat",
@@ -30,4 +31,4 @@ secret values in a playbook or response.""",
     disallow_transfer_to_peers=True,
 )
 app = App(name="uumi_playbook", root_agent=root_agent)
-agent_app = managed_app(app, {"build_playbook", "analyse_walkthrough", "validate_playbook"})
+agent_app = managed_app(app, {"build_playbook"})

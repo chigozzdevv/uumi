@@ -1087,21 +1087,21 @@ def test_managed_agent_executor_uses_no_remote_session_service() -> None:
     assert executor._runner.memory_service is None
 
 
-def test_playbook_tools_publish_the_complete_typed_definition_schema() -> None:
-    from agents.shared.tools import build_playbook, validate_playbook
+def test_playbook_uses_a_small_bound_tool_and_structured_output_schema() -> None:
+    from agents.shared.models import PlaybookAgentDraft
+    from agents.shared.tools import analyse_walkthrough
     from google.adk.tools.function_tool import FunctionTool
 
-    for tool in (build_playbook, validate_playbook):
-        declaration = FunctionTool(tool)._get_declaration()
-        assert declaration is not None
-        schema = declaration.parameters_json_schema
-        assert schema is not None
-        definition = schema["properties"]["definition"]
-        assert definition == {"$ref": "#/$defs/PlaybookToolDefinition"}
-        draft = schema["$defs"]["PlaybookToolDefinition"]
-        assert draft["required"] == ["name", "platform", "steps"]
-        assert draft["properties"]["steps"]["items"] == {"$ref": "#/$defs/PlaybookToolStep"}
-        assert "uniqueItems" not in json.dumps(schema)
+    declaration = FunctionTool(analyse_walkthrough)._get_declaration()
+    assert declaration is not None
+    schema = declaration.parameters_json_schema
+    assert schema is not None
+    assert set(schema["properties"]) == {"source_id"}
+
+    output_schema = PlaybookAgentDraft.model_json_schema()
+    assert output_schema["required"] == ["name", "platform", "steps"]
+    assert output_schema["properties"]["steps"]["items"] == {"$ref": "#/$defs/PlaybookStep"}
+    assert "uniqueItems" not in json.dumps(output_schema)
 
 
 @pytest.mark.anyio

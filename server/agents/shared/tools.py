@@ -1,10 +1,8 @@
 from typing import Any
 
-from core.playbook import validate_definition
 from google.adk.agents.context import Context as ToolContext
 
 from agents.shared.context import AgentContext
-from agents.shared.models import PlaybookToolDefinition
 
 
 async def correlate_exposure(incident_id: str, tool_context: ToolContext) -> dict[str, Any]:
@@ -115,38 +113,11 @@ async def recommend_authorised_recovery(tool_context: ToolContext) -> dict[str, 
     }
 
 
-async def build_playbook(
-    definition: PlaybookToolDefinition, tool_context: ToolContext
-) -> dict[str, Any]:
-    """Canonicalise one versioned browser procedure from sanitised source evidence."""
-    AgentContext(tool_context)
-    validate_definition(definition)
-    return definition.model_dump(mode="json")
-
-
-async def validate_playbook(
-    definition: PlaybookToolDefinition, tool_context: ToolContext
-) -> dict[str, Any]:
-    """Validate browser-only actions, checkpoints, domains, and secure capture declarations."""
-    AgentContext(tool_context)
-    validate_definition(definition)
-    return {
-        "valid": True,
-        "actions": len(definition.steps),
-        "create_actions": sum(step.stage.value == "create" for step in definition.steps),
-        "revoke_actions": sum(step.stage.value == "revoke" for step in definition.steps),
-        "secure_capture_declared": any(step.secure_field is not None for step in definition.steps),
-    }
-
-
-async def analyse_walkthrough(
-    playbook_id: str, source_id: str, tool_context: ToolContext
-) -> dict[str, Any]:
+async def analyse_walkthrough(source_id: str, tool_context: ToolContext) -> dict[str, Any]:
     """Load one control-plane-bound sanitised walkthrough analysis."""
     context = AgentContext(tool_context)
-    expected = context.value("playbook_id")
-    if expected is not None and expected != playbook_id:
-        raise ValueError("requested playbook is not bound to the managed task")
+    if not isinstance(context.value("playbook_id"), str):
+        raise ValueError("managed task is missing its playbook binding")
     matches = [
         item for item in context.objects("walkthroughs") if item.get("source_id") == source_id
     ]
