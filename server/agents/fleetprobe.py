@@ -158,6 +158,7 @@ def _task(
             "stages and the configured rollback recovery action."
         )
     else:
+        step_id = _creation_step_id(playbook)
         context = {
             "run": scenario["run"],
             "inventory_item": scenario["credential"],
@@ -168,10 +169,10 @@ def _task(
                 if playbook is not None
                 else None
             ),
-            "step_id": "create_key",
+            "step_id": step_id,
             "stage": stage,
         }
-        objective = "Readiness assessment for immutable create_key and the isolated browser worker."
+        objective = f"Readiness assessment for immutable {step_id} and the isolated browser worker."
     return AgentTask(
         id=f"task_{run_id.removeprefix('run_')}_{kind.value}",
         organisation_id=organisation_id,
@@ -183,6 +184,20 @@ def _task(
         evidence_ids=(context_evidence_id,),
         requested_at=requested_at,
     )
+
+
+def _creation_step_id(playbook: dict[str, Any] | None) -> str:
+    if isinstance(playbook, dict):
+        steps = playbook.get("steps")
+        if isinstance(steps, (list, tuple)):
+            matches = [
+                step.get("id")
+                for step in steps
+                if isinstance(step, dict) and step.get("effect") == "create-credential"
+            ]
+            if len(matches) == 1 and isinstance(matches[0], str) and matches[0]:
+                return matches[0]
+    return "unavailable_create_step"
 
 
 def _passed(
@@ -379,7 +394,7 @@ def _playbook_draft() -> dict[str, Any]:
         "login_url_pattern": "https://resend.com/login*",
         "steps": [
             {
-                "id": "create_key",
+                "id": "create_resend_key",
                 "stage": "create",
                 "tool": "browser.secure-capture",
                 "operation": "click",

@@ -327,7 +327,7 @@ class FleetProbeRuntime:
                 "rationale": "One declared consumer supports immediate rotation.",
             },
             AgentKind.OPERATOR: {
-                "step_id": "create_key",
+                "step_id": "create_resend_key",
                 "ready": True,
                 "expected_checkpoint": "Resend API Keys",
                 "drift_detected": False,
@@ -385,6 +385,8 @@ async def test_fleet_probe_proves_distinct_agents_in_one_rotation_flow() -> None
     assert passed is True
     assert evidence.kinds == ["fleet-context", "fleet-probe"]
     assert [task.agent for task in runtime.tasks] == list(kinds)
+    assert runtime.tasks[-1].context["step_id"] == "create_resend_key"
+    assert "create_resend_key" in runtime.tasks[-1].objective
     assert [item["stage"] for item in report["agents"]] == [
         "playbook",
         "preflight",
