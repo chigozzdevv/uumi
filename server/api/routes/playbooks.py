@@ -251,7 +251,7 @@ async def _generate_definition(
     api: ApiServices,
     organisation_id: str,
     playbook_id: str,
-    objective: str,
+    _objective: str,
     source_ids: tuple[str, ...],
     identity: Identity,
     key: str,
@@ -270,8 +270,8 @@ async def _generate_definition(
             agent=AgentKind.PLAYBOOK,
             skill="build_playbook",
             objective=(
-                f"{objective}\nTarget playbook: {playbook_id}. Approved walkthrough sources: "
-                f"{', '.join(source_ids)}."
+                f"Credential rotation procedure. Playbook ID: {playbook_id}. "
+                f"Sanitised walkthrough source IDs: {', '.join(source_ids)}."
             ),
             evidence_ids=source_ids,
             context={
