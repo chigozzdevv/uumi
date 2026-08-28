@@ -61,7 +61,12 @@ class AgentRuntimeService:
                     safe_detail="prompt",
                 )
             try:
-                evidence_ids.append(await self._guard.screen_prompt(task, prompt))
+                evidence_ids.append(
+                    await self._guard.screen_prompt(
+                        task,
+                        _screening_payload(task, task_context, memories),
+                    )
+                )
             except ModelArmorError as error:
                 evidence_ids.append(error.evidence_id)
                 raise _stage_error(error, "model-armor-prompt") from error
@@ -158,6 +163,22 @@ def _prompt(task: AgentTask, memories: tuple[dict[str, Any], ...] = ()) -> str:
     )
     return json.dumps(
         safe,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _screening_payload(
+    task: AgentTask,
+    task_context: dict[str, Any],
+    memories: tuple[dict[str, Any], ...],
+) -> str:
+    return json.dumps(
+        {
+            "objective": task.objective,
+            "context": task_context,
+            "approved_memory": memories,
+        },
         separators=(",", ":"),
         sort_keys=True,
     )

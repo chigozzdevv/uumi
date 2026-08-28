@@ -651,11 +651,12 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     del monkeypatch
     google = RuntimeGoogle()
     continuity = RuntimeContinuity()
+    guard = RuntimeGuard()
     runtime = AgentRuntimeService(
         RuntimeFleet(),  # type: ignore[arg-type]
         continuity,  # type: ignore[arg-type]
         google,  # type: ignore[arg-type]
-        RuntimeGuard(),
+        guard,
         lambda: NOW,
     )
     from contracts import AgentTask
@@ -692,6 +693,17 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
         "credential_id": "credential_one",
         "api_key": "[REDACTED]",
     }
+    assert json.loads(guard.prompt) == {
+        "objective": "Plan a safe rotation",
+        "context": {
+            "credential_id": "credential_one",
+            "api_key": "[REDACTED]",
+        },
+        "approved_memory": [],
+    }
+    assert "task_one" not in guard.prompt
+    assert "plan_rotation" not in guard.prompt
+    assert "do-not-send" not in guard.prompt
     assert google.headers == {"A2A-Version": "0.3"}
     assert google.body["configuration"] == {"blocking": True}
     assert result.evidence_ids == ("evidence_prompt", "evidence_response")
@@ -1006,9 +1018,13 @@ class RuntimeGoogle:
 
 
 class RuntimeGuard:
+    def __init__(self) -> None:
+        self.prompt = ""
+
     async def screen_prompt(self, task: object, content: str) -> str:
         del task
         assert content
+        self.prompt = content
         return "evidence_prompt"
 
     async def screen_response(self, task: object, content: str) -> str:
