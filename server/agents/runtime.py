@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from collections.abc import Callable
@@ -71,11 +72,10 @@ class AgentRuntimeService:
                 evidence_ids.append(error.evidence_id)
                 raise _stage_error(error, "model-armor-prompt") from error
             try:
-                response = await self._google.request(
-                    "POST",
+                response = await _send_a2a(
+                    self._google,
                     _a2a_endpoint(registration),
-                    headers={"A2A-Version": "0.3"},
-                    json={
+                    {
                         "message": {
                             "messageId": task.id,
                             "contextId": session.remote_session.rsplit("/", 1)[-1],
@@ -140,6 +140,31 @@ class AgentRuntimeService:
             skill=task.skill,
         )
         return result
+
+
+async def _send_a2a(
+    google: GoogleRestClient,
+    endpoint: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    for attempt in range(3):
+        try:
+            return await google.request(
+                "POST",
+                endpoint,
+                headers={"A2A-Version": "0.3"},
+                json=body,
+            )
+        except ConnectorError as error:
+            rate_exceeded = error.code == "google-api-429" or (
+                error.code == "google-api-400"
+                and error.safe_detail is not None
+                and "rate-exceeded" in error.safe_detail.split(".")
+            )
+            if not rate_exceeded or attempt == 2:
+                raise
+            await asyncio.sleep(2**attempt)
+    raise AssertionError("A2A retry loop exhausted without returning or raising")
 
 
 def _stage_error(error: ConnectorError, stage: str) -> ConnectorError:

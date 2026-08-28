@@ -300,6 +300,11 @@ def _safe_error_detail(response: httpx.Response) -> str | None:
     status = error.get("status")
     if isinstance(status, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", status):
         values.append(status.lower().replace("_", "-"))
+    message = error.get("message")
+    if isinstance(message, str) and re.search(
+        r"(?:^|\n)Error Details:\s*Rate exceeded\.?\s*$", message, re.IGNORECASE
+    ):
+        values.append("rate-exceeded")
     details = error.get("details")
     if isinstance(details, list):
         for detail in details:

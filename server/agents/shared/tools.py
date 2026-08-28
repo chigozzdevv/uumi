@@ -45,13 +45,44 @@ async def detect_stale_mapping(credential_id: str, tool_context: ToolContext) ->
 
 
 async def plan_rotation(tool_context: ToolContext) -> dict[str, Any]:
-    """Return the bound run, inventory, and current generation."""
-    context = AgentContext(tool_context)
-    run = _object(context, "run")
-    credential_id = _string(run, "credential_id")
-    consumers = await resolve_consumers(credential_id, tool_context)
-    generation = context.object("current_generation", required=False)
-    return {"run": run, **consumers, "current_generation": generation}
+    """Return one complete plan derived from the immutable task snapshot."""
+    selected = await select_strategy(tool_context)
+    credential = selected["credential"]
+    connection = selected["provider_connection"]
+    controls = selected["controls"]
+    definition = controls.get("definition")
+    if not isinstance(definition, dict):
+        raise ValueError("managed task controls have no definition")
+    maximum = definition.get("maximum_observation_seconds")
+    if not isinstance(maximum, int) or maximum < 60:
+        raise ValueError("managed task controls have no valid observation window")
+    consumer_ids = credential.get("consumer_ids")
+    if not isinstance(consumer_ids, list) or not consumer_ids:
+        raise ValueError("managed task credential has no declared consumers")
+    capabilities = connection.get("capabilities")
+    capability_set = set(capabilities) if isinstance(capabilities, list) else set()
+    if len(consumer_ids) > 1:
+        strategy = "multi-consumer"
+    elif "dual-slot" in capability_set:
+        strategy = "dual-slot"
+    elif definition.get("preserve_old_generation") is not False:
+        strategy = "parallel"
+    else:
+        strategy = "immediate"
+    recovery_actions = selected["recovery_actions"]
+    if not recovery_actions:
+        raise ValueError("managed task controls have no recovery actions")
+    return {
+        "decision": "plan",
+        "strategy": strategy,
+        "observation_seconds": min(maximum, 300),
+        "ordered_stages": selected["ordered_stages"],
+        "recovery_actions": recovery_actions,
+        "recovery_id": None,
+        "recovery_mode": None,
+        "eligible": None,
+        "rationale": "The selected strategy follows the bound consumer count and controls.",
+    }
 
 
 async def select_strategy(tool_context: ToolContext) -> dict[str, Any]:

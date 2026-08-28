@@ -1141,7 +1141,12 @@ def test_playbook_uses_a_small_bound_tool_and_structured_output_schema() -> None
 
 @pytest.mark.anyio
 async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
-    from agents.shared.tools import detect_stale_mapping, execute_console_playbook, select_strategy
+    from agents.shared.tools import (
+        detect_stale_mapping,
+        execute_console_playbook,
+        plan_rotation,
+        select_strategy,
+    )
 
     tool_context = type(
         "BoundToolContext",
@@ -1209,6 +1214,18 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
     assert selected["provider_connection"]["id"] == "connection_one"
     assert selected["ordered_stages"] == [stage.value for stage in Stage]
     assert selected["recovery_actions"] == ["discard-candidate"]
+    plan = await plan_rotation(tool_context)
+    assert plan == {
+        "decision": "plan",
+        "strategy": "parallel",
+        "observation_seconds": 300,
+        "ordered_stages": [stage.value for stage in Stage],
+        "recovery_actions": ["discard-candidate"],
+        "recovery_id": None,
+        "recovery_mode": None,
+        "eligible": None,
+        "rationale": "The selected strategy follows the bound consumer count and controls.",
+    }
     execution = await execute_console_playbook("open_keys", tool_context)
     assert execution["step"]["selector"] == "text=API Keys"
     assert execution["run"]["id"] == "run_one"
@@ -1482,7 +1499,6 @@ def test_planner_exposes_only_skill_level_tools(monkeypatch: pytest.MonkeyPatch)
 
     assert {getattr(tool, "__name__", "") for tool in root_agent.tools} == {
         "plan_rotation",
-        "select_strategy",
         "recommend_authorised_recovery",
     }
 
@@ -1616,6 +1632,83 @@ async def test_agent_runtime_surfaces_safe_connector_error_code() -> None:
         "google-api-404.a2a-send.invalid-argument.field-message.messageId: agent execution failed"
     )
     assert "upstream details" not in result.error
+
+
+@pytest.mark.anyio
+async def test_agent_runtime_retries_only_recognised_a2a_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RateLimitedGoogle(RuntimeGoogle):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempts = 0
+
+        async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
+            self.attempts += 1
+            if self.attempts < 3:
+                raise ConnectorError(
+                    "google-api-400",
+                    "upstream details must not escape",
+                    safe_detail="failed-precondition.rate-exceeded",
+                )
+            return await super().request(method, url, **kwargs)
+
+    delays: list[int] = []
+
+    async def record_delay(seconds: int) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr("agents.runtime.asyncio.sleep", record_delay)
+    google = RateLimitedGoogle()
+    runtime = AgentRuntimeService(
+        RuntimeFleet(),  # type: ignore[arg-type]
+        RuntimeContinuity(),  # type: ignore[arg-type]
+        google,  # type: ignore[arg-type]
+        RuntimeGuard(),
+        lambda: NOW,
+    )
+
+    result = await runtime.execute(runtime_task())  # type: ignore[arg-type]
+
+    assert result.succeeded is True
+    assert google.attempts == 3
+    assert delays == [1, 2]
+
+
+@pytest.mark.anyio
+async def test_agent_runtime_does_not_retry_other_failed_preconditions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingGoogle:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
+            del method, url, kwargs
+            self.attempts += 1
+            raise ConnectorError(
+                "google-api-400",
+                "upstream details must not escape",
+                safe_detail="failed-precondition",
+            )
+
+    async def unexpected_delay(seconds: int) -> None:
+        raise AssertionError(f"unexpected retry delay {seconds}")
+
+    monkeypatch.setattr("agents.runtime.asyncio.sleep", unexpected_delay)
+    google = FailingGoogle()
+    runtime = AgentRuntimeService(
+        RuntimeFleet(),  # type: ignore[arg-type]
+        RuntimeContinuity(),  # type: ignore[arg-type]
+        google,  # type: ignore[arg-type]
+        RuntimeGuard(),
+        lambda: NOW,
+    )
+
+    result = await runtime.execute(runtime_task())  # type: ignore[arg-type]
+
+    assert result.succeeded is False
+    assert google.attempts == 1
 
 
 @pytest.mark.anyio

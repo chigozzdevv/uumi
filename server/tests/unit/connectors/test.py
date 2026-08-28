@@ -942,6 +942,28 @@ async def test_google_error_retains_only_machine_readable_safe_detail() -> None:
     await google.close()
 
 
+@pytest.mark.anyio
+async def test_google_error_recognises_only_exact_rate_exceeded_detail() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "status": "FAILED_PRECONDITION",
+                    "message": "Reasoning Engine Execution failed.\nError Details: Rate exceeded.",
+                }
+            },
+        )
+
+    google = _google(handler)
+    with pytest.raises(ConnectorError) as captured:
+        await google.request("POST", "https://aiplatform.googleapis.com/message:send")
+
+    assert captured.value.safe_detail == "failed-precondition.rate-exceeded"
+    await google.close()
+
+
 def _google(handler: Any) -> GoogleRestClient:
     return GoogleRestClient(
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]
