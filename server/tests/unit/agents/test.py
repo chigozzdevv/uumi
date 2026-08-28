@@ -1140,6 +1140,11 @@ def test_playbook_uses_a_small_bound_tool_and_structured_output_schema() -> None
     assert '"const": false' not in serialised
     assert "uniqueItems" not in serialised
 
+    generated = _playbook_draft()
+    generated["steps"][-1]["protected"] = True
+    validated = PlaybookAgentDraft.model_validate(generated)
+    assert all(step.protected is False for step in validated.steps)
+
 
 @pytest.mark.anyio
 async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:

@@ -43,6 +43,15 @@ class PlaybookAgentStep(BaseModel):
     timeout_seconds: int = Field(default=30, ge=1, le=600)
     retry_limit: int = Field(default=0, ge=0, le=5)
 
+    @model_validator(mode="before")
+    @classmethod
+    def keep_approvals_in_controls(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        normalised = dict(value)
+        normalised["protected"] = False
+        return normalised
+
     @model_validator(mode="after")
     def validate_security_pairing(self) -> "PlaybookAgentStep":
         from contracts import PlaybookStep
