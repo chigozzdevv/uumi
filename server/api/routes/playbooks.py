@@ -270,8 +270,8 @@ async def _generate_definition(
             agent=AgentKind.PLAYBOOK,
             skill="build_playbook",
             objective=(
-                f"{objective}\nBuild playbook {playbook_id} from the declared sanitised "
-                f"evidence IDs: {', '.join(source_ids)}."
+                f"{objective}\nTarget playbook: {playbook_id}. Approved walkthrough sources: "
+                f"{', '.join(source_ids)}."
             ),
             evidence_ids=source_ids,
             context={
