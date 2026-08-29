@@ -75,7 +75,8 @@ def compile_controls(
     by_id = {connection.id: connection for connection in connections}
     management = by_id[credential.connection_id]
     secret_store = by_id[credential.secret_store_connection_id]
-    verification = next(
+    browser_managed = management.interface is ConnectionInterface.BROWSER
+    verification = None if browser_managed else next(
         (
             connection
             for connection in connections
@@ -89,7 +90,7 @@ def compile_controls(
         ),
         None,
     )
-    if verification is None:
+    if verification is None and not browser_managed:
         raise ResourceConflictError(
             "credential automation requires a typed workload authentication test"
         )
@@ -117,30 +118,32 @@ def compile_controls(
         probes.append(version)
         assigned[stage].append(version.id)
 
-    add(
-        Stage.VERIFY,
-        _probe(
-            credential,
-            ProbeKind.PROVIDER,
-            management.id,
-            credential.provider_id or credential.id,
-            GenerationBinding.TARGET,
-            TargetBinding.PROVIDER_ID,
-        ),
-    )
-    add(
-        Stage.VERIFY,
-        _probe(
-            credential,
-            ProbeKind.CREDENTIAL,
-            verification.id,
-            credential.provider_id or credential.id,
-            GenerationBinding.TARGET,
-            TargetBinding.PROVIDER_ID,
-            secret_reference=credential.secret_reference,
-            secret_connection_id=secret_store.id,
-        ),
-    )
+    if not browser_managed:
+        assert verification is not None
+        add(
+            Stage.VERIFY,
+            _probe(
+                credential,
+                ProbeKind.PROVIDER,
+                management.id,
+                credential.provider_id or credential.id,
+                GenerationBinding.TARGET,
+                TargetBinding.PROVIDER_ID,
+            ),
+        )
+        add(
+            Stage.VERIFY,
+            _probe(
+                credential,
+                ProbeKind.CREDENTIAL,
+                verification.id,
+                credential.provider_id or credential.id,
+                GenerationBinding.TARGET,
+                TargetBinding.PROVIDER_ID,
+                secret_reference=credential.secret_reference,
+                secret_connection_id=secret_store.id,
+            ),
+        )
     add(
         Stage.VERIFY,
         _probe(
@@ -152,32 +155,34 @@ def compile_controls(
             TargetBinding.SECRET_REFERENCE,
         ),
     )
-    add(
-        Stage.REVOKE,
-        _probe(
-            credential,
-            ProbeKind.PROVIDER,
-            management.id,
-            credential.provider_id or credential.id,
-            GenerationBinding.CURRENT,
-            TargetBinding.PROVIDER_ID,
-            negative=True,
-        ),
-    )
-    add(
-        Stage.REVOKE,
-        _probe(
-            credential,
-            ProbeKind.CREDENTIAL,
-            verification.id,
-            credential.provider_id or credential.id,
-            GenerationBinding.CURRENT,
-            TargetBinding.PROVIDER_ID,
-            negative=True,
-            secret_reference=credential.secret_reference,
-            secret_connection_id=secret_store.id,
-        ),
-    )
+    if not browser_managed:
+        assert verification is not None
+        add(
+            Stage.REVOKE,
+            _probe(
+                credential,
+                ProbeKind.PROVIDER,
+                management.id,
+                credential.provider_id or credential.id,
+                GenerationBinding.CURRENT,
+                TargetBinding.PROVIDER_ID,
+                negative=True,
+            ),
+        )
+        add(
+            Stage.REVOKE,
+            _probe(
+                credential,
+                ProbeKind.CREDENTIAL,
+                verification.id,
+                credential.provider_id or credential.id,
+                GenerationBinding.CURRENT,
+                TargetBinding.PROVIDER_ID,
+                negative=True,
+                secret_reference=credential.secret_reference,
+                secret_connection_id=secret_store.id,
+            ),
+        )
     add(
         Stage.REVOKE,
         _probe(

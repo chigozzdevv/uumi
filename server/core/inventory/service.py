@@ -1,3 +1,4 @@
+import hashlib
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol
@@ -441,8 +442,6 @@ class InventoryService:
             management.playbook_id is None or management.playbook_version_id is None
         ):
             raise ResourceConflictError("browser-managed credentials require a connection playbook")
-        if management.interface is not ConnectionInterface.API:
-            raise ResourceConflictError("credential import requires an API provider connection")
         secret_store = await self._repository.get_connection(
             credential.organisation_id,
             credential.secret_store_connection_id,
@@ -679,19 +678,43 @@ class InventoryService:
         management: Connection,
         secret_store: Connection,
     ) -> None:
-        if credential.provider_id is None:
-            raise ResourceConflictError("credential import requires a provider credential ID")
         metadata = await self._resolve_credential(
             management,
             secret_store,
             credential.secret_reference,
         )
-        if metadata.provider_id != credential.provider_id:
-            raise ResourceConflictError("credential identity differs from provider metadata")
-        if metadata.kind != credential.kind:
-            raise ResourceConflictError("credential type differs from provider metadata")
-        if frozenset(metadata.scopes) != credential.scopes:
-            raise ResourceConflictError("credential scopes differ from provider metadata")
+        if management.interface is ConnectionInterface.BROWSER:
+            if credential.provider_id is not None:
+                raise ResourceConflictError(
+                    "browser credential identity is assigned by the first rotation"
+                )
+            if metadata.kind != credential.kind:
+                raise ResourceConflictError("credential type differs from browser metadata")
+            if credential.scopes:
+                raise ResourceConflictError(
+                    "browser credential scopes are assigned by the provider during rotation"
+                )
+        else:
+            if credential.provider_id is None:
+                raise ResourceConflictError("credential import requires a provider credential ID")
+            if metadata.provider_id != credential.provider_id:
+                raise ResourceConflictError("credential identity differs from provider metadata")
+            if metadata.kind != credential.kind:
+                raise ResourceConflictError("credential type differs from provider metadata")
+            if frozenset(metadata.scopes) != credential.scopes:
+                raise ResourceConflictError("credential scopes differ from provider metadata")
+        if management.interface is ConnectionInterface.BROWSER:
+            existing = await self._repository.credentials(credential.organisation_id)
+            if any(
+                item.archived_at is None
+                and item.connection_id == credential.connection_id
+                and item.secret_reference == credential.secret_reference
+                for item in existing
+            ):
+                raise ResourceConflictError(
+                    "secret version is already imported for this browser connection"
+                )
+            return
         existing = await self._repository.credentials(credential.organisation_id)
         if any(
             item.archived_at is None
@@ -712,11 +735,22 @@ class InventoryService:
         secret_store = await self._secret_connection(organisation_id, secret_store_connection_id)
         if (
             ConnectionRole.PROVIDER not in management.roles
-            or management.interface is not ConnectionInterface.API
             or management.status is not ConnectionStatus.READY
             or management.archived_at is not None
         ):
-            raise ResourceConflictError("credential resolution requires a ready API connection")
+            raise ResourceConflictError(
+                "credential resolution requires a ready provider connection"
+            )
+        if management.interface is ConnectionInterface.BROWSER and (
+            management.playbook_id is None or management.playbook_version_id is None
+        ):
+            raise ResourceConflictError(
+                "browser credential resolution requires a connection playbook"
+            )
+        if management.interface not in {ConnectionInterface.API, ConnectionInterface.BROWSER}:
+            raise ResourceConflictError(
+                "credential resolution requires a supported provider connection"
+            )
         if not _resource_covered(secret_reference, secret_store.allowed_resources):
             raise ResourceConflictError("credential secret reference escapes the secret store")
         if "/versions/" not in secret_reference:
@@ -735,6 +769,29 @@ class InventoryService:
         secret_store: Connection,
         secret_reference: str,
     ) -> ProviderCredentialMetadata:
+        if management.interface is ConnectionInterface.BROWSER:
+            if management.playbook_id is None or management.playbook_version_id is None:
+                raise ResourceConflictError(
+                    "browser credential resolution requires a connection playbook"
+                )
+            if self._secret_metadata is None:
+                raise ResourceConflictError("browser credential verification is unavailable")
+            secret_resource = secret_reference.partition("/versions/")[0]
+            versions = await self._secret_metadata.versions_for(secret_store, secret_resource)
+            selected = tuple(
+                item
+                for item in versions
+                if item.get("name") == secret_reference and item.get("state") == "ENABLED"
+            )
+            if len(selected) != 1:
+                raise ResourceConflictError("selected credential secret version is not enabled")
+            return ProviderCredentialMetadata(
+                provider_id=f"browser-secret-{hashlib.sha256(secret_reference.encode()).hexdigest()[:48]}",
+                kind="api-key",
+                scopes=(),
+                status="unknown",
+                disabled=False,
+            )
         if self._provider_metadata is None or self._credential_verifier is None:
             raise ResourceConflictError("credential import verification is unavailable")
         discovered = tuple(

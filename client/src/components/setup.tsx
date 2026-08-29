@@ -65,7 +65,10 @@ export function CredentialSetup({
   const [error, setError] = useState("")
   const [dependency, setDependency] = useState<"connection" | "secret-location" | "runtime" | "incident" | null>(null)
 
-  const managementConnections = useMemo(() => connections.filter((item) => item.roles.includes("provider") && item.interface === "api" && item.status === "ready" && item.capabilities.includes("provider.listCredentialMetadata")), [connections])
+  const managementConnections = useMemo(() => connections.filter((item) => item.roles.includes("provider") && item.status === "ready" && (
+    (item.interface === "api" && item.capabilities.includes("provider.listCredentialMetadata"))
+    || (item.interface === "browser" && item.playbook_id !== null && item.playbook_version_id !== null)
+  )), [connections])
   const secretStores = useMemo(() => connections.filter((item) => item.roles.includes("secret-store") && item.interface === "api" && item.status === "ready"), [connections])
   const runtimeConnections = useMemo(() => connections.filter((item) => item.roles.includes("runtime") && item.interface === "api" && item.status === "ready" && item.capabilities.includes("runtime.listServices")), [connections])
   const connection = connections.find((item) => item.id === connectionId)
@@ -106,10 +109,12 @@ export function CredentialSetup({
   const resolvedEnvironmentName = existingEnvironment?.display_name ?? selectedRuntimeResource?.environment_name ?? environmentName
   const selectedSecret = secretResourcesQuery.data?.find((item) => item.reference === secretResource)
   const name = resolvedCredential?.name ?? selectedSecret?.display_name ?? ""
-  const providerId = resolvedCredential?.provider_id ?? ""
+  const providerId = connection?.interface === "browser" ? "" : resolvedCredential?.provider_id ?? ""
   const kind = resolvedCredential?.kind ?? ""
   const scopes = resolvedCredential?.scopes ?? []
-  const alreadyImported = Boolean(providerId && graph.credentials.some((credential) => credential.connection_id === connectionId && credential.provider_id === providerId && !credential.archived_at))
+  const alreadyImported = connection?.interface === "browser"
+    ? Boolean(secretReference && graph.credentials.some((credential) => credential.connection_id === connectionId && credential.secret_reference === secretReference && !credential.archived_at))
+    : Boolean(providerId && graph.credentials.some((credential) => credential.connection_id === connectionId && credential.provider_id === providerId && !credential.archived_at))
   const credentialMessage = alreadyImported ? "This credential has already been added" : credentialResolutionQuery.error?.message
 
   useEffect(() => {
@@ -141,7 +146,7 @@ export function CredentialSetup({
   }, [error])
 
   function canContinue() {
-    if (step === 0) return Boolean(connectionId && secretStoreId && secretReference && resolvedCredential && providerId && name && kind && !alreadyImported && connection?.status === "ready" && selectedRuntimeResource && selectedRuntimeBinding && resolvedEnvironmentName)
+    if (step === 0) return Boolean(connectionId && secretStoreId && secretReference && resolvedCredential && (connection?.interface === "browser" || providerId) && name && kind && !alreadyImported && connection?.status === "ready" && selectedRuntimeResource && selectedRuntimeBinding && resolvedEnvironmentName)
     if (step === 1) return controlsAreValid(controls)
     return true
   }
@@ -152,7 +157,7 @@ export function CredentialSetup({
   }
 
   async function submit() {
-    if (!connection || !providerId || !selectedRuntimeResource || !selectedRuntimeBinding || !resolvedEnvironmentName || !controlsAreValid(controls) || !secretStoreId || !secretReference) return
+    if (!connection || (connection.interface !== "browser" && !providerId) || !selectedRuntimeResource || !selectedRuntimeBinding || !resolvedEnvironmentName || !controlsAreValid(controls) || !secretStoreId || !secretReference) return
     const credentialId = identifier("cred")
     const generationId = identifier("gen")
     const controlVersionId = identifier("control_version")
@@ -252,7 +257,7 @@ export function CredentialSetup({
           <ResourceSelect label="Provider connection" value={connectionId} onChange={(value) => { setError(""); setConnectionId(value); setSecretResource(""); setSecretReference(""); setRuntimeResource(""); setRuntimeSecretName(""); setRuntimeContainerName(null) }} addLabel="Add connection" onAdd={() => setDependency("connection")} className={field}><option value="">Select connection</option>{managementConnections.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect>
           <ResourceSelect label="Secret store" value={secretStoreId} onChange={(value) => { setError(""); setSecretStoreId(value); setSecretResource(""); setSecretReference(""); setRuntimeResource(""); setRuntimeSecretName(""); setRuntimeContainerName(null) }} addLabel="Add connection" onAdd={() => setDependency("secret-location")} className={field}><option value="">Select secret store</option>{secretStores.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect>
           <Label title="Stored secret"><SelectControl className={field} value={secretResource} onChange={(event) => { setError(""); setSecretResource(event.target.value); setSecretReference(""); setRuntimeResource(""); setRuntimeSecretName(""); setRuntimeContainerName(null) }} disabled={!secretStoreId || secretResourcesQuery.isLoading}><option value="">{secretResourcesQuery.isLoading ? "Loading secrets…" : "Select secret"}</option>{secretResourcesQuery.data?.map((item) => <option key={item.reference} value={item.reference}>{item.display_name}</option>)}</SelectControl></Label>
-          <Label title="Current version" message={credentialMessage}><SelectControl className={field} value={secretReference} onChange={(event) => { setError(""); setSecretReference(event.target.value); setRuntimeResource(""); setRuntimeSecretName(""); setRuntimeContainerName(null) }} disabled={!secretResource || secretVersionsQuery.isLoading}><option value="">{secretVersionsQuery.isLoading ? "Loading versions…" : "Select enabled version"}</option>{secretVersionsQuery.data?.map((item) => <option key={item.reference} value={item.reference}>{item.reference.split("/").at(-1)}</option>)}</SelectControl></Label>
+          <Label title="Current version" message={credentialMessage}><SelectControl className={field} value={secretReference} onChange={(event) => { setError(""); setSecretReference(event.target.value); setRuntimeResource(""); setRuntimeSecretName(""); setRuntimeContainerName(null) }} disabled={!secretResource || secretVersionsQuery.isLoading}><option value="">{secretVersionsQuery.isLoading ? "Loading versions…" : "Select enabled version"}</option>{secretVersionsQuery.data?.filter((item) => item.state === "ENABLED").map((item) => <option key={item.reference} value={item.reference}>{item.reference.split("/").at(-1)}</option>)}</SelectControl></Label>
           <ResourceSelect label="Runtime connection" value={runtimeConnectionId} onChange={(value) => { setError(""); setRuntimeConnectionId(value); setRuntimeResource(""); setEnvironmentName(""); setRuntimeSecretName(""); setRuntimeContainerName(null) }} addLabel="Add connection" onAdd={() => setDependency("runtime")} className={field}><option value="">Select connection</option>{runtimeConnections.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</ResourceSelect>
           <Label title="Runtime service"><SelectControl className={field} value={runtimeResource} onChange={(event) => { setError(""); const reference = event.target.value; setRuntimeResource(reference); setEnvironmentName(compatibleRuntimeResources.find((item) => item.reference === reference)?.environment_name ?? ""); setRuntimeSecretName(""); setRuntimeContainerName(null) }} disabled={!runtimeConnectionId || !secretReference || runtimeResourcesQuery.isLoading}><option value="">{runtimeResourcesQuery.isLoading ? "Loading services…" : compatibleRuntimeResources.length ? "Select service" : "No service uses this version"}</option>{compatibleRuntimeResources.map((item) => <option key={item.reference} value={item.reference}>{item.display_name}{item.environment_name ? ` · ${item.environment_name}` : ""}</option>)}</SelectControl></Label>
           {selectedRuntimeResource && !selectedRuntimeResource.environment_name && !existingEnvironment && <Label title="Environment"><SelectControl className={field} value={environmentName} onChange={(event) => { setError(""); setEnvironmentName(event.target.value) }}><option value="">Select environment</option><option value="Production">Production</option><option value="Staging">Staging</option></SelectControl></Label>}

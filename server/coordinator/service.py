@@ -434,7 +434,7 @@ class StageCoordinator:
         credential = context.credential
         if (
             credential.active_generation_id is None
-            or not credential.scopes
+            or (context.provider.interface is ConnectionInterface.API and not credential.scopes)
             or not credential.consumer_ids
         ):
             raise ValueError("credential inventory is incomplete")
@@ -1047,6 +1047,13 @@ class StageCoordinator:
         )
         if rejection_report.status is not VerificationStatus.PASSED:
             raise ValueError("old credential still works after provider revocation")
+        browser_revoked = context.browser_playbook is not None and any(
+            output.get("outcome") == "Step completed"
+            for output in outputs
+            if isinstance(output, dict)
+        )
+        if context.browser_playbook is not None and not browser_revoked:
+            raise ValueError("browser playbook did not prove credential revocation")
         old = await self._catalog.get(
             FirestorePaths.generation(
                 run.organisation_id, _required(run.current_generation_id, "old generation")
@@ -1080,7 +1087,12 @@ class StageCoordinator:
         )
         await self._incidents.advance_run(run.organisation_id, run.id, IncidentStatus.CONTAINED)
         await self._verification_checks(run, replacement_report, Stage.VERIFY)
-        checks = _revocation_checks(replacement_report, rejection_report, old.secret_reference)
+        checks = _revocation_checks(
+            replacement_report,
+            rejection_report,
+            old.secret_reference,
+            browser_managed=context.browser_playbook is not None,
+        )
         return (
             checks,
             tuple(
@@ -1120,7 +1132,10 @@ class StageCoordinator:
         replacement_report = await self._latest_report(run, run.target_generation_id, Stage.VERIFY)
         rejection_report = await self._latest_report(run, run.current_generation_id, Stage.REVOKE)
         await self._verification_checks(run, replacement_report, Stage.VERIFY)
-        if "credential-rejected" not in rejection_report.checks:
+        browser_managed = (
+            (await self._rotation_context(run)).provider.interface is ConnectionInterface.BROWSER
+        )
+        if not browser_managed and "credential-rejected" not in rejection_report.checks:
             raise ValueError("completion has no proof that the old credential is rejected")
         await self._incidents.advance_run(run.organisation_id, run.id, IncidentStatus.RESOLVED)
         return (
@@ -1560,7 +1575,14 @@ class StageCoordinator:
                 raise ValueError(
                     "verification probes are not generation-bound: " + ", ".join(unbound)
                 )
-        expected_negative = {ProbeKind.PROVIDER, ProbeKind.CREDENTIAL} if negative else set()
+        browser_managed = not any(
+            item.kind in {ProbeKind.PROVIDER, ProbeKind.CREDENTIAL} for item in values
+        )
+        expected_negative = (
+            set()
+            if browser_managed
+            else {ProbeKind.PROVIDER, ProbeKind.CREDENTIAL} if negative else set()
+        )
         if negative and not expected_negative.issubset(
             {item.kind for item in values if item.negative}
         ):
@@ -1575,13 +1597,9 @@ class StageCoordinator:
         ):
             raise ValueError("observation requires target-health and old-use telemetry probes")
         if probe_stage is Stage.VERIFY:
-            required = {
-                ProbeKind.PROVIDER,
-                ProbeKind.CREDENTIAL,
-                ProbeKind.SECRET,
-                ProbeKind.RUNTIME,
-                ProbeKind.TELEMETRY,
-            }
+            required = {ProbeKind.SECRET, ProbeKind.RUNTIME, ProbeKind.TELEMETRY}
+            if not browser_managed:
+                required.update({ProbeKind.PROVIDER, ProbeKind.CREDENTIAL})
             if not control_version.definition.require_generation_telemetry:
                 required.remove(ProbeKind.TELEMETRY)
             kinds = {item.kind for item in values}
@@ -1846,9 +1864,14 @@ class StageCoordinator:
                 polarity = " negative" if negative else ""
                 raise ValueError(f"{stage.value} lacks{polarity} {kind.value} evidence")
 
+        browser_managed = not any(
+            version.definition.kind in {ProbeKind.PROVIDER, ProbeKind.CREDENTIAL}
+            for version in versions
+        )
         if stage is Stage.VERIFY:
-            require(ProbeKind.PROVIDER, frozenset({"provider-credential-exists"}))
-            require(ProbeKind.CREDENTIAL, frozenset({"credential-accepted"}))
+            if not browser_managed:
+                require(ProbeKind.PROVIDER, frozenset({"provider-credential-exists"}))
+                require(ProbeKind.CREDENTIAL, frozenset({"credential-accepted"}))
             require(ProbeKind.SECRET, frozenset({"secret-version-enabled"}))
             require(
                 ProbeKind.RUNTIME,
@@ -2042,14 +2065,14 @@ def _revocation_checks(
     replacement: VerificationReport,
     rejection: VerificationReport,
     old_secret_reference: str | None,
+    *,
+    browser_managed: bool = False,
 ) -> frozenset[str]:
-    if "credential-accepted" not in replacement.checks:
+    if not browser_managed and "credential-accepted" not in replacement.checks:
         raise ValueError("revocation has no replacement credential authentication proof")
-    required_rejection = {
-        "provider-credential-revoked",
-        "credential-rejected",
-        "secret-version-enabled",
-    }
+    required_rejection = {"secret-version-enabled"}
+    if not browser_managed:
+        required_rejection.update({"provider-credential-revoked", "credential-rejected"})
     if not required_rejection.issubset(rejection.checks):
         raise ValueError("revocation has incomplete old-credential rejection proof")
     if old_secret_reference is None:

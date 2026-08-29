@@ -69,6 +69,21 @@ class ImportVerifier:
         return self.identity
 
 
+class BrowserSecretMetadata:
+    async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+        return ()
+
+    async def versions_for(
+        self, connection: Connection, secret: str
+    ) -> tuple[dict[str, object], ...]:
+        return (
+            {
+                "name": f"{secret}/versions/1",
+                "state": "ENABLED",
+            },
+        )
+
+
 class ImportRuntimeMetadata:
     async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
         return (
@@ -847,6 +862,142 @@ async def test_inventory_resolves_provider_credential_from_stored_secret() -> No
     assert metadata.provider_id == "provider_key_one"
     assert metadata.kind == "api-key"
     assert metadata.scopes == ("messages.write",)
+
+
+@pytest.mark.anyio
+async def test_inventory_resolves_browser_credential_from_enabled_secret_version() -> None:
+    repository = Catalog()
+    repository.connection_values["browser_one"] = _browser_connection().model_copy(
+        update={
+            "status": ConnectionStatus.READY,
+            "playbook_id": "playbook_one",
+            "playbook_version_id": "version_one",
+            "authorization_reference": "projects/project-one/secrets/browser-session/versions/1",
+        }
+    )
+    service = InventoryService(repository, secret_metadata=BrowserSecretMetadata())
+
+    metadata = await service.resolve_credential(
+        "org_one",
+        "browser_one",
+        "secret_one",
+        "projects/project-one/secrets/key/versions/1",
+    )
+
+    assert metadata.provider_id.startswith("browser-secret-")
+    assert metadata.kind == "api-key"
+    assert metadata.scopes == ()
+    assert "secret" not in metadata.model_dump()
+
+
+@pytest.mark.anyio
+async def test_inventory_rejects_disabled_browser_credential_version() -> None:
+    class DisabledSecretMetadata(BrowserSecretMetadata):
+        async def versions_for(
+            self, connection: Connection, secret: str
+        ) -> tuple[dict[str, object], ...]:
+            return ({"name": f"{secret}/versions/1", "state": "DISABLED"},)
+
+    repository = Catalog()
+    repository.connection_values["browser_one"] = _browser_connection().model_copy(
+        update={
+            "status": ConnectionStatus.READY,
+            "playbook_id": "playbook_one",
+            "playbook_version_id": "version_one",
+            "authorization_reference": "projects/project-one/secrets/browser-session/versions/1",
+        }
+    )
+    service = InventoryService(repository, secret_metadata=DisabledSecretMetadata())
+
+    with pytest.raises(ResourceConflictError, match="not enabled"):
+        await service.resolve_credential(
+            "org_one",
+            "browser_one",
+            "secret_one",
+            "projects/project-one/secrets/key/versions/1",
+        )
+
+
+@pytest.mark.anyio
+async def test_inventory_imports_existing_browser_credential_without_provider_id() -> None:
+    repository = Catalog()
+    repository.connection_values["browser_one"] = _browser_connection().model_copy(
+        update={
+            "status": ConnectionStatus.READY,
+            "playbook_id": "playbook_one",
+            "playbook_version_id": "version_one",
+            "authorization_reference": "projects/project-one/secrets/browser-session/versions/1",
+        }
+    )
+    service = InventoryService(
+        repository,
+        clock=lambda: NOW,
+        secret_metadata=BrowserSecretMetadata(),
+        runtime_metadata=ImportRuntimeMetadata(),
+    )
+    credential = ManagedCredential(
+        id="credential_browser",
+        organisation_id="org_one",
+        connection_id="browser_one",
+        secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
+        secret_reference="projects/project-one/secrets/key/versions/1",
+        provider="vendor",
+        kind="api-key",
+        display_name="Production key",
+        provider_id=None,
+        scopes=frozenset(),
+        consumer_ids=("service_one",),
+        active_generation_id="generation_browser",
+        control_version="control_browser",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    generation = CredentialGeneration(
+        id="generation_browser",
+        organisation_id="org_one",
+        credential_id=credential.id,
+        provider_id=None,
+        scopes=frozenset(),
+        state=GenerationState.ACTIVE,
+        attempt_id="attempt_browser",
+        secret_reference=credential.secret_reference,
+        created_at=NOW,
+    )
+    consumer = RuntimeConsumerSetup(
+        application_id="application_browser",
+        environment_id="environment_browser",
+        service_id="service_one",
+        binding_id="binding_browser",
+        runtime_connection_id="runtime_one",
+        runtime_resource="projects/project-one/locations/us-east1/services/service-one",
+        runtime_secret_name="PROVIDER_KEY",
+        environment_name="Production",
+    )
+
+    imported = await service.import_discovered_credential(
+        credential,
+        generation,
+        consumer,
+        ControlPreferences(
+            automatic_triggers=frozenset({"expiry"}),
+            rotate_before_expiry_seconds=604800,
+            maximum_observation_seconds=1800,
+        ),
+        "actor_one",
+    )
+
+    assert imported == credential
+    assert repository.imported_controls is not None
+    assert repository.imported_controls.definition.allowed_tools.intersection(
+        {"browser.secure-capture", "browser.revokeCredential"}
+    ) == {"browser.secure-capture", "browser.revokeCredential"}
+    verify_kinds = {
+        probe.definition.kind
+        for probe in repository.imported_probes
+        if probe.id in repository.imported_controls.definition.probe_versions[Stage.VERIFY]
+    }
+    assert verify_kinds == {ProbeKind.SECRET, ProbeKind.RUNTIME}
 
 
 @pytest.mark.anyio
