@@ -101,6 +101,7 @@ class BeginSetupRequest(Contract):
 class BeginSetupResponse(Contract):
     session: SetupSession
     token: str = Field(min_length=32)
+    setup_url: str = Field(min_length=12)
     gateway_url: str = Field(min_length=12)
     expires_at: AwareDatetime
 
@@ -923,6 +924,7 @@ async def begin_setup(
     return BeginSetupResponse(
         session=session,
         token=token,
+        setup_url=setup.setup_url,
         gateway_url=setup.gateway_url,
         expires_at=session.expires_at,
     )

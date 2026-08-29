@@ -175,6 +175,8 @@ async def reap_runs(
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.RUN_WRITE)
     result = await api.workflow.reap_expired(organisation_id, identity.actor_id)
+    if api.browser_setup is not None:
+        await api.browser_setup.reap_expired(organisation_id)
     return ReapResponse(
         scanned=result.scanned,
         restarted=result.restarted,

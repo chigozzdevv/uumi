@@ -187,6 +187,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
                 configured.model_armor_response_template or configured.model_armor_template,
             ),
             secret_manager,
+            configured.browser_setup_url,
             configured.browser_gateway_url,
             configured.project_id,
             _now,

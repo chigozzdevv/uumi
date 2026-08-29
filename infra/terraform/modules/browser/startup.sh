@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-metadata="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
+metadata_root="http://metadata.google.internal/computeMetadata/v1"
+metadata="$metadata_root/instance/attributes"
 header="Metadata-Flavor: Google"
 get() {
   curl --fail --silent --show-error --header "$header" "$metadata/$1"
@@ -17,15 +18,26 @@ capability_public="$(get uumi-capability-public)"
 evidence="$(get uumi-evidence)"
 region="$(get uumi-region)"
 image="$(get uumi-worker-image)"
+runtime_cidr="$(get uumi-runtime-cidr)"
 model_armor_template="$(get uumi-model-armor-template)"
 model_armor_response_template="$(get uumi-model-armor-response-template)"
 setup="$(maybe uumi-setup)"
 
+iptables -I INPUT -p tcp -s "$runtime_cidr" --dport 8080 -j ACCEPT
+
+export DOCKER_CONFIG="/mnt/stateful_partition/uumi-docker"
+mkdir -p "$DOCKER_CONFIG"
 docker-credential-gcr configure-docker --registries="${region}-docker.pkg.dev"
 docker pull "$image"
 
+if ! curl --fail --silent --show-error --header "$header" \
+  "$metadata_root/instance/service-accounts/default/token" >/dev/null; then
+  echo "Uumi browser worker cannot obtain an attached service-account token." >/dev/console
+  exit 1
+fi
+
 args=(
-  --detach --restart=no --init --network=host --name=uumi-browser
+  --restart=no --init --network=host --name=uumi-browser
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=512m --shm-size=1g
   --security-opt=no-new-privileges --cap-drop=ALL
   --env "UUMI_PROJECT_ID=$project"
@@ -48,4 +60,6 @@ if [[ "$setup" == "true" ]]; then
   )
 fi
 
-docker run "${args[@]}" "$image"
+
+docker run "${args[@]}" "$image" \
+  uvicorn browser.workerapp:app --host 0.0.0.0 --port 8080 --no-access-log

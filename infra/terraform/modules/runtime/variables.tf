@@ -393,6 +393,12 @@ variable "browser_gateway_url" {
   default     = "https://browser-gateway.disabled.invalid"
 }
 
+variable "browser_setup_url" {
+  description = "Uumi frontend route that completes a short-lived browser setup session."
+  type        = string
+  default     = "https://uumi.web.app/browser/setup"
+}
+
 variable "evidence_bucket" {
   description = "Locked evidence bucket name."
   type        = string

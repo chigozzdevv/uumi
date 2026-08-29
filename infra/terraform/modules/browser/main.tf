@@ -245,11 +245,11 @@ resource "google_compute_instance_template" "browser" {
 
   scheduling {
     automatic_restart   = false
-    on_host_maintenance = "TERMINATE"
+    on_host_maintenance = "MIGRATE"
     preemptible         = false
 
     max_run_duration {
-      seconds = 7200
+      seconds = 1800
     }
 
     instance_termination_action = "DELETE"
@@ -258,6 +258,7 @@ resource "google_compute_instance_template" "browser" {
   metadata = {
     enable-oslogin         = "TRUE"
     block-project-ssh-keys = "TRUE"
+    uumi-runtime-cidr      = google_compute_subnetwork.runtime.ip_cidr_range
     startup-script         = file("${path.module}/startup.sh")
   }
 
@@ -302,8 +303,20 @@ resource "google_project_iam_member" "coordinator_compute" {
   member  = var.coordinator_member
 }
 
+resource "google_project_iam_member" "setup_compute" {
+  project = var.project_id
+  role    = "roles/compute.instanceAdmin.v1"
+  member  = var.setup_member
+}
+
 resource "google_service_account_iam_member" "coordinator_worker" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${var.worker_service_account}"
   role               = "roles/iam.serviceAccountUser"
   member             = var.coordinator_member
+}
+
+resource "google_service_account_iam_member" "setup_worker" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${var.worker_service_account}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = var.setup_member
 }

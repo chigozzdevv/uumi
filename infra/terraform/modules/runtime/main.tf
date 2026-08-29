@@ -76,7 +76,6 @@ resource "google_cloud_run_v2_service" "auditlog" {
         name  = "UUMI_TRUSTED_PUSH_SERVICE_ACCOUNT"
         value = var.scc_push_service_account
       }
-
       resources {
         limits = {
           cpu    = "1"
@@ -420,6 +419,7 @@ resource "google_cloud_run_v2_service" "web" {
         value = google_cloud_run_v2_service.api["api"].uri
       }
 
+
       resources {
         limits = {
           cpu    = "1"
@@ -555,6 +555,11 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "UUMI_BROWSER_GATEWAY_URL"
         value = var.browser_gateway_url
+      }
+
+      env {
+        name  = "UUMI_BROWSER_SETUP_URL"
+        value = var.browser_setup_url
       }
 
       env {

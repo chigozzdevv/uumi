@@ -109,3 +109,12 @@ def test_strips_private_upstream_headers(app: FastAPI) -> None:
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["content-type"].startswith("application/json")
     assert "x-private" not in response.headers
+
+
+def test_settings_use_a_short_upstream_timeout() -> None:
+    settings = WebSettings(
+        project_id="useuumi",
+        api_url="https://uumi-api.example.run.app",
+    )
+
+    assert settings.upstream_timeout_seconds == 50.0

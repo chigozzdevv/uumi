@@ -547,6 +547,12 @@ variable "identity_platform_domains" {
   default     = []
 }
 
+variable "browser_setup_url" {
+  description = "Uumi frontend route that completes a short-lived browser setup session."
+  type        = string
+  default     = "https://uumi.web.app/browser/setup"
+}
+
 variable "oidc_audience" {
   description = "Stable audience used by Cloud Run and Uumi token verification."
   type        = string

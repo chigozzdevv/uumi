@@ -220,6 +220,7 @@ module "browser" {
   zone                   = var.zone
   worker_service_account = module.identity.emails["uumi-browser"]
   coordinator_member     = module.identity.members["uumi-coordinator"]
+  setup_member           = module.identity.members["uumi-api"]
   allowed_domains        = var.browser_allowed_domains
   connector_domains      = var.runtime_connector_domains
 
@@ -393,6 +394,7 @@ module "runtime" {
   notification_email_sender     = (var.notification_email_sender == null ? "" : var.notification_email_sender)
   browser_image                 = var.browser_image
   browser_gateway_url           = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
+  browser_setup_url             = var.browser_setup_url
   evidence_bucket               = module.storage.evidence_bucket
   walkthrough_bucket            = module.storage.walkthrough_bucket
   capability_secret_version     = local.capability_secret_version

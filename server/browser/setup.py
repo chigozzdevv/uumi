@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import re
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime, timedelta
@@ -30,6 +31,8 @@ from browser.compute import BrowserVm
 T = TypeVar("T", bound=Contract)
 
 _SETUP_MINUTES = 30
+_READINESS_PROBE_TIMEOUT_SECONDS = 2.0
+_PROVISIONING_TIMEOUT = timedelta(minutes=5)
 
 
 class SetupCatalog(Protocol):
@@ -44,6 +47,8 @@ class SetupCatalog(Protocol):
         expected_revision: int,
         update: Callable[[T], T],
     ) -> T: ...
+
+    async def list(self, path: str, model: type[T], limit: int = 200) -> tuple[T, ...]: ...
 
 
 class SetupConnections(Protocol):
@@ -82,6 +87,8 @@ class SetupVms(Protocol):
 
     async def delete(self, instance: str) -> None: ...
 
+    async def exists(self, instance: str) -> bool: ...
+
 
 class SetupSecrets(Protocol):
     async def versions(self, secret: str) -> tuple[dict[str, Any], ...]: ...
@@ -99,6 +106,9 @@ class WaitingRunResumer(Protocol):
 
 
 class BrowserSetupApi(Protocol):
+    @property
+    def setup_url(self) -> str: ...
+
     @property
     def gateway_url(self) -> str: ...
 
@@ -130,6 +140,8 @@ class BrowserSetupApi(Protocol):
 
     async def get(self, organisation_id: str, setup_id: str) -> SetupSession: ...
 
+    async def reap_expired(self, organisation_id: str) -> tuple[SetupSession, ...]: ...
+
 
 class BrowserSetupService:
     def __init__(
@@ -138,6 +150,7 @@ class BrowserSetupService:
         connections: SetupConnections,
         vms: SetupVms,
         secrets: SetupSecrets,
+        setup_url: str,
         gateway_url: str,
         session_project: str,
         clock: Callable[[], datetime],
@@ -148,11 +161,16 @@ class BrowserSetupService:
         self._connections = connections
         self._vms = vms
         self._secrets = secrets
+        self._setup_url = setup_url.rstrip("/")
         self._gateway_url = gateway_url.rstrip("/")
         self._session_project = session_project
         self._clock = clock
         self._http = http or httpx.AsyncClient(timeout=60)
         self._runs = runs
+
+    @property
+    def setup_url(self) -> str:
+        return self._setup_url
 
     @property
     def gateway_url(self) -> str:
@@ -221,7 +239,6 @@ class BrowserSetupService:
                 session.revision,
                 lambda current: current.model_copy(
                     update={
-                        "status": SetupStatus.READY,
                         "worker_instance": instance,
                         "internal_address": address,
                         "updated_at": self._clock(),
@@ -229,26 +246,12 @@ class BrowserSetupService:
                     }
                 ),
             )
-            await self._wait_ready(session)
             return session, token
+        except asyncio.CancelledError:
+            await asyncio.shield(self._terminate_failed_begin(path, session, created))
+            raise
         except Exception:
-            if created is not None:
-                with suppress(Exception):
-                    await self._vms.delete(created.instance)
-            with suppress(Exception):
-                await self._catalog.replace(
-                    path,
-                    SetupSession,
-                    session.revision,
-                    lambda current: current.model_copy(
-                        update={
-                            "status": SetupStatus.TERMINATED,
-                            "terminated_at": self._clock(),
-                            "updated_at": self._clock(),
-                            "revision": current.revision + 1,
-                        }
-                    ),
-                )
+            await self._terminate_failed_begin(path, session, created)
             raise
 
     async def complete(
@@ -302,10 +305,10 @@ class BrowserSetupService:
             before = _version_names(await self._secrets.versions(session.secret_container))
             baseline_loaded = True
             result = await self._store(session, token)
-            auth_reference = result.get("secret_reference")
-            if not isinstance(auth_reference, str) or not auth_reference.startswith(
-                f"{session.secret_container}/versions/"
-            ):
+            auth_reference = _canonical_secret_reference(
+                session.secret_container, result.get("secret_reference")
+            )
+            if auth_reference is None:
                 raise ResourceConflictError("setup worker returned no secret version reference")
             previous_connection = await self._connections.get_connection(
                 organisation_id, session.connection_id
@@ -392,9 +395,79 @@ class BrowserSetupService:
         return session
 
     async def get(self, organisation_id: str, setup_id: str) -> SetupSession:
-        return await self._catalog.get(
-            FirestorePaths.setup(organisation_id, setup_id), SetupSession
+        path = FirestorePaths.setup(organisation_id, setup_id)
+        session = await self._catalog.get(path, SetupSession)
+        if self._must_terminate(session):
+            return await self._terminate(path, session)
+        if session.status is not SetupStatus.PROVISIONING or session.internal_address is None:
+            return session
+        if not await self._is_ready(session):
+            return session
+        try:
+            return await self._catalog.replace(
+                path,
+                SetupSession,
+                session.revision,
+                lambda current: current.model_copy(
+                    update={
+                        "status": SetupStatus.READY,
+                        "updated_at": self._clock(),
+                        "revision": current.revision + 1,
+                    }
+                ),
+            )
+        except ResourceConflictError:
+            return await self._catalog.get(path, SetupSession)
+
+    async def reap_expired(self, organisation_id: str) -> tuple[SetupSession, ...]:
+        path = f"{FirestorePaths.organisation(organisation_id)}/setups"
+        sessions = await self._catalog.list(path, SetupSession)
+        terminated: list[SetupSession] = []
+        for session in sessions:
+            if not self._must_terminate(session):
+                continue
+            ended = await self._terminate(
+                FirestorePaths.setup(organisation_id, session.id), session
+            )
+            if ended.status is SetupStatus.TERMINATED:
+                terminated.append(ended)
+        return tuple(terminated)
+
+    def _must_terminate(self, session: SetupSession) -> bool:
+        now = self._clock()
+        if session.status not in {
+            SetupStatus.PROVISIONING,
+            SetupStatus.READY,
+            SetupStatus.CAPTURING,
+        }:
+            return False
+        if session.expires_at <= now:
+            return True
+        return (
+            session.status is SetupStatus.PROVISIONING
+            and session.created_at + _PROVISIONING_TIMEOUT <= now
         )
+
+    async def _terminate(self, path: str, session: SetupSession) -> SetupSession:
+        try:
+            expired = await self._catalog.replace(
+                path,
+                SetupSession,
+                session.revision,
+                lambda current: current.model_copy(
+                    update={
+                        "status": SetupStatus.TERMINATED,
+                        "terminated_at": self._clock(),
+                        "updated_at": self._clock(),
+                        "revision": current.revision + 1,
+                    }
+                ),
+            )
+        except ResourceConflictError:
+            return await self._catalog.get(path, SetupSession)
+        with suppress(Exception):
+            await self._delete_vm(expired)
+        return expired
 
     async def _replace_or_create(self, path: str, session: SetupSession) -> SetupSession:
         try:
@@ -402,11 +475,14 @@ class BrowserSetupService:
         except ResourceNotFoundError:
             await self._catalog.create(path, session)
             return session
-        if existing.status in {
+        active = existing.status in {
             SetupStatus.PROVISIONING,
             SetupStatus.READY,
             SetupStatus.CAPTURING,
-        } and (existing.expires_at > session.created_at):
+        } and (existing.expires_at > session.created_at)
+        if active and (
+            existing.worker_instance is None or await self._vms.exists(existing.worker_instance)
+        ):
             raise ResourceConflictError("a setup session is already active for this connection")
         if existing.worker_instance is not None:
             await self._vms.delete(existing.worker_instance)
@@ -416,6 +492,30 @@ class BrowserSetupService:
             existing.revision,
             lambda current: session.model_copy(update={"revision": current.revision + 1}),
         )
+
+    async def _terminate_failed_begin(
+        self,
+        path: str,
+        session: SetupSession,
+        created: BrowserVm | None,
+    ) -> None:
+        if created is not None:
+            with suppress(Exception):
+                await self._vms.delete(created.instance)
+        with suppress(Exception):
+            await self._catalog.replace(
+                path,
+                SetupSession,
+                session.revision,
+                lambda current: current.model_copy(
+                    update={
+                        "status": SetupStatus.TERMINATED,
+                        "terminated_at": self._clock(),
+                        "updated_at": self._clock(),
+                        "revision": current.revision + 1,
+                    }
+                ),
+            )
 
     async def _require_secret(self, secret_container: str) -> None:
         try:
@@ -464,8 +564,15 @@ class BrowserSetupService:
         if response.status_code == 403:
             raise ResourceConflictError("setup worker rejected the token")
         if response.status_code == 409:
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
+            message = body.get("message") if isinstance(body, dict) else None
             raise ResourceConflictError(
-                "no provider session was captured on the connection domains"
+                message
+                if isinstance(message, str) and message
+                else "no provider session was captured on the connection domains"
             )
         if response.status_code != 200:
             raise ResourceConflictError(f"setup worker returned HTTP {response.status_code}")
@@ -548,20 +655,17 @@ class BrowserSetupService:
             return stored_session, stored_connection
         return None
 
-    async def _wait_ready(self, session: SetupSession) -> None:
+    async def _is_ready(self, session: SetupSession) -> bool:
         if session.internal_address is None:
-            raise ResourceConflictError("setup worker has no internal address")
-        for _ in range(60):
-            try:
-                response = await self._http.get(
-                    f"http://{session.internal_address}:8080/health/live"
-                )
-                if response.status_code == 200:
-                    return
-            except httpx.HTTPError:
-                pass
-            await asyncio.sleep(2)
-        raise ResourceConflictError("setup worker did not become ready")
+            return False
+        try:
+            response = await self._http.get(
+                f"http://{session.internal_address}:8080/health/live",
+                timeout=_READINESS_PROBE_TIMEOUT_SECONDS,
+            )
+        except httpx.HTTPError:
+            return False
+        return response.status_code == 200
 
     async def _delete_vm(self, session: SetupSession) -> None:
         if session.worker_instance is None:
@@ -590,6 +694,30 @@ def _setup_id(connection_id: str) -> str:
 
 def _version_names(values: tuple[dict[str, Any], ...]) -> frozenset[str]:
     return frozenset(item["name"] for item in values if isinstance(item.get("name"), str))
+
+
+def _canonical_secret_reference(container: str, value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    expected_project, separator, expected_secret = container.partition("/secrets/")
+    candidate_project, candidate_separator, candidate_secret_and_version = value.partition(
+        "/secrets/"
+    )
+    if not separator or not candidate_separator:
+        return None
+    if candidate_project != expected_project and (
+        not candidate_project.startswith("projects/")
+        or not candidate_project.removeprefix("projects/").isdigit()
+    ):
+        return None
+    secret, version_separator, version = candidate_secret_and_version.partition("/versions/")
+    if (
+        secret != expected_secret
+        or not version_separator
+        or re.fullmatch(r"[1-9][0-9]{0,18}", version) is None
+    ):
+        return None
+    return f"{container}/versions/{version}"
 
 
 class WorkflowRunResumer:

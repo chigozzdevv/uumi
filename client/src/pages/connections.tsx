@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ChevronRight, ExternalLink, PlugZap, Plus, Upload } from "lucide-react"
+import { ChevronRight, PlugZap, Plus, Upload } from "lucide-react"
 import { Detail, DetailCard, DetailList, DetailTabs, Section } from "../components/detail"
 import { PageHeader } from "../components/header"
 import { IntegrationGrid, IntegrationMark, type IntegrationKind } from "../components/integration"
@@ -15,11 +15,12 @@ import { Modal } from "../components/ui/modal"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table"
 import { ConnectPage, Field, FormGrid, ResourceSelect, SelectControl, SetupPage, SuccessPage, formControl } from "../components/workspace"
 import type { Connection, ConnectionRole, HttpProviderApi, Playbook } from "../types"
-import { activeOrganisationId, ApiError, api, type CreateConnectionInput, type GitHubDiscoveryResponse, type GitHubOnboardingResponse, type GoogleCloudOnboardingResponse, type GoogleCloudProject } from "../lib/api"
+import { activeOrganisationId, ApiError, api, type BrowserSetupResponse, type CreateConnectionInput, type GitHubDiscoveryResponse, type GitHubOnboardingResponse, type GoogleCloudOnboardingResponse, type GoogleCloudProject } from "../lib/api"
 import { parseProviderAdapter } from "../lib/adapter"
 import { connectionCallbackIntegration } from "../lib/callback"
 import { connectionAction, connectionStatus, formatDate, titleCase } from "../lib/format"
 import { PlaybookSetup } from "./playbooks"
+import { BrowserSetupSession, type BrowserSetupCapability } from "./browsersetup"
 
 function identifier(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`
@@ -27,6 +28,52 @@ function identifier(prefix: string) {
 
 function slug(value: string) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 64)
+}
+
+async function waitForBrowserSetup(setup: BrowserSetupResponse): Promise<BrowserSetupResponse> {
+  let session = setup.session
+  const expiresAt = Date.parse(setup.expires_at)
+  while (session.status === "provisioning") {
+    if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
+      throw new Error("The browser setup session expired before it became ready.")
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 2000))
+    session = await api.getBrowserSetup(session.id)
+  }
+  if (session.status !== "ready") {
+    throw new Error("The browser setup did not become available. Try again.")
+  }
+  return { ...setup, session }
+}
+
+function openGatewayRefreshWindow(): Window {
+  const popup = window.open("/iap-session.html", "uumi-iap-session", "popup,width=420,height=220")
+  if (!popup) throw new Error("Your browser blocked the secure sign-in window. Allow pop-ups for Uumi and try again.")
+  return popup
+}
+
+function startGatewaySessionRefresh(setup: BrowserSetupResponse, popup: Window) {
+  const target = new URL(setup.gateway_url)
+  target.searchParams.set("gcp-iap-mode", "DO_SESSION_REFRESH")
+  popup.location.assign(target.toString())
+}
+
+function browserSetupCapability(connection: Connection, setup: BrowserSetupResponse, gatewayRefreshWindow: Window | null = null): BrowserSetupCapability {
+  return {
+    gatewayUrl: setup.gateway_url,
+    gatewayRefreshWindow,
+    organisationId: connection.organisation_id,
+    revision: setup.session.revision,
+    setupId: setup.session.id,
+    token: setup.token,
+    providerUrl: connection.platform.toLowerCase() === "resend" ? "https://resend.com/login" : "",
+  }
+}
+
+function BrowserSetupModal({ connection, setup, gatewayRefreshWindow, onClose, onComplete }: { connection: Connection; setup: BrowserSetupResponse; gatewayRefreshWindow?: Window | null; onClose: () => void; onComplete: () => void }) {
+  return <Modal isOpen onClose={onClose} title={`Connect ${connection.display_name}`} size="wide" showClose={false} footerStart={<span />} cancelLabel="Close">
+    <BrowserSetupSession capability={browserSetupCapability(connection, setup, gatewayRefreshWindow)} onComplete={onComplete} />
+  </Modal>
 }
 
 function roleLabel(connection: Connection) {
@@ -55,6 +102,8 @@ export function ConnectionsPage({ initialConnectionId = "", onSelectConnection }
   const [creatingPlaybook, setCreatingPlaybook] = useState(false)
   const [initialSelectionHandled, setInitialSelectionHandled] = useState(false)
   const [editName, setEditName] = useState("")
+  const [browserSetup, setBrowserSetup] = useState<BrowserSetupResponse | null>(null)
+  const [gatewayRefreshWindow, setGatewayRefreshWindow] = useState<Window | null>(null)
   const [connections, playbooks, graph] = useQueries({ queries: [
     { queryKey: ["connections"], queryFn: () => api.getConnections() },
     { queryKey: ["playbooks"], queryFn: () => api.getPlaybooks() },
@@ -71,7 +120,7 @@ export function ConnectionsPage({ initialConnectionId = "", onSelectConnection }
       await queryClient.invalidateQueries({ queryKey: ["connections"] })
     },
   })
-  const open = useMutation({ mutationFn: (id: string) => api.beginBrowserSetup(id) })
+  const open = useMutation({ mutationFn: async (id: string) => waitForBrowserSetup(await api.beginBrowserSetup(id)) })
   const updateConnection = useMutation({
     mutationFn: () => api.updateConnection(currentSelected!.id, { expected_revision: currentSelected!.revision, display_name: editName.trim() }),
     onSuccess: async (connection) => {
@@ -108,15 +157,29 @@ export function ConnectionsPage({ initialConnectionId = "", onSelectConnection }
   }, [currentSelected?.id, currentSelected?.interface]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    gatewayRefreshWindow?.close()
+    setGatewayRefreshWindow(null)
+    setBrowserSetup(null)
+  }, [currentSelected?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["connections"] }) }
     window.addEventListener("focus", refresh)
     return () => window.removeEventListener("focus", refresh)
   }, [queryClient])
 
   async function openBrowser(connection: Connection) {
-    const setup = await open.mutateAsync(connection.id)
-    const fragment = new URLSearchParams({ organisation_id: connection.organisation_id, setup_id: setup.session.id, token: setup.token })
-    window.open(`${setup.gateway_url}#${fragment}`, "_blank", "noopener,noreferrer")
+    const refreshWindow = openGatewayRefreshWindow()
+    setGatewayRefreshWindow(refreshWindow)
+    try {
+      const setup = await open.mutateAsync(connection.id)
+      startGatewaySessionRefresh(setup, refreshWindow)
+      setBrowserSetup(setup)
+    } catch (error) {
+      refreshWindow.close()
+      setGatewayRefreshWindow(null)
+      throw error
+    }
   }
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -135,7 +198,7 @@ export function ConnectionsPage({ initialConnectionId = "", onSelectConnection }
   }} />
 
   if (currentSelected) return <div className="page">
-    <PageHeader eyebrow="Inventory / Connections" title={currentSelected.display_name} onBack={() => { setSelected(null); onSelectConnection("") }} actions={<>{currentSelected.interface === "browser" && currentSelected.playbook_version_id && <Button onClick={() => openBrowser(currentSelected)} disabled={open.isPending}>Open browser <ExternalLink className="size-3.5" /></Button>}<Button variant="secondary" onClick={() => { setEditName(currentSelected.display_name); updateConnection.reset(); archiveConnection.reset(); setEditing(true) }}>Edit</Button></>} />
+    <PageHeader eyebrow="Inventory / Connections" title={currentSelected.display_name} onBack={() => { setSelected(null); onSelectConnection("") }} actions={<>{currentSelected.interface === "browser" && currentSelected.playbook_version_id && currentSelected.status !== "ready" && <Button onClick={() => openBrowser(currentSelected)} disabled={open.isPending}>{open.isPending ? "Provisioning…" : "Connect"}</Button>}<Button variant="secondary" onClick={() => { setEditName(currentSelected.display_name); updateConnection.reset(); archiveConnection.reset(); setEditing(true) }}>Edit</Button></>} />
     <DetailTabs items={[{ id: "overview", label: "Overview" }, { id: "access", label: currentSelected.interface === "browser" ? "Browser access" : "Access" }]} value={tab} onChange={setTab} />
     <DetailCard>
       {tab === "overview" && <DetailList><Detail label="Platform"><Provider value={currentSelected.platform} /></Detail><Detail label="Roles">{roleLabel(currentSelected)}</Detail><Detail label="Interface">{titleCase(currentSelected.interface)}</Detail><Detail label="Authorization">{titleCase(currentSelected.authorization)}</Detail><Detail label="Status"><Badge variant={connectionStatus(currentSelected.status).variant}>{connectionStatus(currentSelected.status).label}</Badge></Detail><Detail label="Updated">{formatDate(currentSelected.updated_at, true)}</Detail></DetailList>}
@@ -148,6 +211,17 @@ export function ConnectionsPage({ initialConnectionId = "", onSelectConnection }
     ]} saveDisabled={!editName.trim() || editName.trim() === currentSelected.display_name} saving={updateConnection.isPending} deleting={archiveConnection.isPending} error={(updateConnection.error ?? archiveConnection.error)?.message}>
       <Field label="Connection name"><input className={formControl} value={editName} onChange={(event) => setEditName(event.target.value)} /></Field>
     </ManageResourceModal>
+    {browserSetup && <BrowserSetupModal connection={currentSelected} setup={browserSetup} gatewayRefreshWindow={gatewayRefreshWindow} onClose={() => {
+      gatewayRefreshWindow?.close()
+      setGatewayRefreshWindow(null)
+      setBrowserSetup(null)
+    }} onComplete={() => {
+      gatewayRefreshWindow?.close()
+      setGatewayRefreshWindow(null)
+      setBrowserSetup(null)
+      void queryClient.invalidateQueries({ queryKey: ["connections"] })
+      void queryClient.invalidateQueries({ queryKey: ["connections", currentSelected.id] })
+    }} />}
   </div>
 
   return <div className="page">
@@ -349,10 +423,12 @@ function ComputerUseSetup({ onClose, onBack, onChanged, onCreated, playbooks }: 
   const [playbookVersion, setPlaybookVersion] = useState(playbooks.find((item) => item.active_version_id)?.active_version_id ?? "")
   const [created, setCreated] = useState<Connection | null>(null)
   const [creatingPlaybook, setCreatingPlaybook] = useState(false)
+  const [browserSetup, setBrowserSetup] = useState<BrowserSetupResponse | null>(null)
+  const [gatewayRefreshWindow, setGatewayRefreshWindow] = useState<Window | null>(null)
   const chosenPlaybook = playbooks.find((item) => item.active_version_id === playbookVersion)
   const playbookDetail = useQuery({ queryKey: ["playbooks", chosenPlaybook?.id], queryFn: () => api.getPlaybook(chosenPlaybook!.id), enabled: Boolean(chosenPlaybook) })
   const create = useMutation({ mutationFn: (input: CreateConnectionInput) => api.createConnection(input) })
-  const open = useMutation({ mutationFn: (id: string) => api.beginBrowserSetup(id) })
+  const open = useMutation({ mutationFn: async (id: string) => waitForBrowserSetup(await api.beginBrowserSetup(id)) })
   const definition = playbookDetail.data?.active_version?.definition
 
   async function submit() {
@@ -369,9 +445,17 @@ function ComputerUseSetup({ onClose, onBack, onChanged, onCreated, playbooks }: 
 
   async function openBrowser() {
     if (!created) return
-    const setup = await open.mutateAsync(created.id)
-    const fragment = new URLSearchParams({ organisation_id: created.organisation_id, setup_id: setup.session.id, token: setup.token })
-    window.open(`${setup.gateway_url}#${fragment}`, "_blank", "noopener,noreferrer")
+    const refreshWindow = openGatewayRefreshWindow()
+    setGatewayRefreshWindow(refreshWindow)
+    try {
+      const setup = await open.mutateAsync(created.id)
+      startGatewaySessionRefresh(setup, refreshWindow)
+      setBrowserSetup(setup)
+    } catch (error) {
+      refreshWindow.close()
+      setGatewayRefreshWindow(null)
+      throw error
+    }
   }
 
   async function finish() {
@@ -382,7 +466,19 @@ function ComputerUseSetup({ onClose, onBack, onChanged, onCreated, playbooks }: 
   }
 
   if (creatingPlaybook) return <PlaybookSetup onClose={() => setCreatingPlaybook(false)} onCreated={async (playbook) => { await queryClient.invalidateQueries({ queryKey: ["playbooks"] }); setPlaybookVersion(playbook.active_version_id ?? ""); setCreatingPlaybook(false) }} />
-  if (created) return <SuccessPage eyebrow="Inventory / Connections" title="Computer Use ready" onBack={finish} actions={<><Button variant="secondary" onClick={finish}>Finish later</Button><Button onClick={openBrowser} disabled={open.isPending}>Open browser <ExternalLink className="size-3.5" /></Button></>}><DetailList><Detail label="Playbook">{chosenPlaybook?.name}</Detail><Detail label="Status">Authentication required</Detail></DetailList>{open.error && <div role="alert" className="mt-5 rounded-xl bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{open.error.message}</div>}</SuccessPage>
+  if (created) return <>
+    <SuccessPage eyebrow="Inventory / Connections" title="Computer Use ready" onBack={finish} actions={<><Button variant="secondary" onClick={finish}>Finish later</Button><Button onClick={openBrowser} disabled={open.isPending}>{open.isPending ? "Provisioning…" : "Connect"}</Button></>}><DetailList><Detail label="Playbook">{chosenPlaybook?.name}</Detail><Detail label="Status">Authentication required</Detail></DetailList>{open.error && <div role="alert" className="mt-5 rounded-xl bg-[var(--red-soft)] p-3 text-[10px] text-[var(--red)]">{open.error.message}</div>}</SuccessPage>
+    {browserSetup && <BrowserSetupModal connection={created} setup={browserSetup} gatewayRefreshWindow={gatewayRefreshWindow} onClose={() => {
+      gatewayRefreshWindow?.close()
+      setGatewayRefreshWindow(null)
+      setBrowserSetup(null)
+    }} onComplete={() => {
+      gatewayRefreshWindow?.close()
+      setGatewayRefreshWindow(null)
+      setBrowserSetup(null)
+      void finish()
+    }} />}
+  </>
 
   const canContinue = Boolean(playbookVersion && definition?.allowed_domains.length)
   return <SetupPage eyebrow="Inventory / Connections" title="Computer Use" steps={["Setup", "Review"]} current={step} onBack={() => setStep((value) => value - 1)} onExit={onBack} onCancel={onClose} error={create.error?.message || playbookDetail.error?.message} primary={step === 0 ? <Button onClick={() => setStep(1)} disabled={!canContinue}>Continue</Button> : <Button onClick={submit} disabled={create.isPending}>{create.isPending ? "Creating…" : "Create connection"}</Button>}>

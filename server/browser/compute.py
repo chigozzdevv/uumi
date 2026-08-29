@@ -90,6 +90,7 @@ class BrowserVmManager:
                     {"key": "uumi-setup-secret", "value": secret_container},
                 ]
             )
+        metadata = await self._merge_template_metadata(metadata)
         operation = await self._client.request(
             "POST",
             f"{base}/instances",
@@ -112,6 +113,39 @@ class BrowserVmManager:
             internal_address=address,
         )
 
+    async def _merge_template_metadata(
+        self, overrides: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
+        template_url = self._template
+        if not template_url.startswith("https://"):
+            template_url = f"https://compute.googleapis.com/compute/v1/{template_url}"
+        template = await self._client.request("GET", template_url)
+        properties = template.get("properties")
+        raw_metadata = properties.get("metadata") if isinstance(properties, dict) else None
+        raw_items = raw_metadata.get("items") if isinstance(raw_metadata, dict) else None
+        if not isinstance(raw_items, list):
+            raise ConnectorError("browser-template", "browser instance template has no metadata")
+        merged: dict[str, str] = {}
+        for item in raw_items:
+            if not isinstance(item, dict):
+                raise ConnectorError(
+                    "browser-template", "browser instance template metadata is invalid"
+                )
+            key = item.get("key")
+            value = item.get("value")
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise ConnectorError(
+                    "browser-template", "browser instance template metadata is invalid"
+                )
+            merged[key] = value
+        if not merged.get("startup-script"):
+            raise ConnectorError(
+                "browser-template", "browser instance template has no startup script"
+            )
+        for item in overrides:
+            merged[item["key"]] = item["value"]
+        return [{"key": key, "value": value} for key, value in merged.items()]
+
     async def delete(self, instance: str) -> None:
         expected = f"projects/{self._project}/zones/{self._zone}/instances/"
         if not instance.startswith(expected):
@@ -130,6 +164,22 @@ class BrowserVmManager:
             raise
         if operation:
             await self._client.wait_operation(_operation(operation), base_url=f"{base}/operations")
+
+    async def exists(self, instance: str) -> bool:
+        expected = f"projects/{self._project}/zones/{self._zone}/instances/"
+        if not instance.startswith(expected):
+            raise ConnectorError("browser-instance-scope", "browser VM is outside its zone")
+        name = instance.removeprefix(expected)
+        base = (
+            f"https://compute.googleapis.com/compute/v1/projects/{self._project}/zones/{self._zone}"
+        )
+        try:
+            await self._client.request("GET", f"{base}/instances/{name}")
+        except ConnectorError as error:
+            if error.code == "google-api-404":
+                return False
+            raise
+        return True
 
     def _validate(self, instance: dict[str, Any]) -> None:
         interfaces = instance.get("networkInterfaces")

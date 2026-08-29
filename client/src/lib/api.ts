@@ -175,10 +175,18 @@ export interface StartRotationInput {
 }
 
 export interface BrowserSetupResponse {
-  session: { id: Identifier; revision: number; expires_at: string }
+  session: BrowserSetupSession
   token: string
+  setup_url: string
   gateway_url: string
   expires_at: string
+}
+
+export interface BrowserSetupSession {
+  id: Identifier
+  revision: number
+  expires_at: string
+  status: "provisioning" | "ready" | "capturing" | "complete" | "terminated"
 }
 
 export interface GitHubOnboardingResponse {
@@ -455,6 +463,10 @@ class ApiClient {
     })
   }
 
+  async getBrowserSetup(setupId: Identifier): Promise<BrowserSetupSession> {
+    return this.request(`${ROOT}/inventory/setups/${setupId}`)
+  }
+
   async beginGitHubOnboarding(): Promise<GitHubOnboardingResponse> {
     return this.request(`${ROOT}/github/onboarding`, { method: "POST", body: JSON.stringify({}) })
   }
@@ -519,6 +531,13 @@ class ApiClient {
     return this.request(`${ROOT}/inventory/setups/${setupId}/complete`, {
       method: "POST",
       body: JSON.stringify({ expected_revision: expectedRevision, token }),
+    })
+  }
+
+  async abortBrowserSetup(setupId: Identifier, expectedRevision: number): Promise<void> {
+    await this.request(`${ROOT}/inventory/setups/${setupId}/abort`, {
+      method: "POST",
+      body: JSON.stringify({ expected_revision: expectedRevision }),
     })
   }
 

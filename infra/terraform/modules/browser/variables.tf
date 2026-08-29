@@ -33,6 +33,11 @@ variable "coordinator_member" {
   type        = string
 }
 
+variable "setup_member" {
+  description = "API IAM member allowed to create and delete short-lived browser setup VMs."
+  type        = string
+}
+
 variable "allowed_domains" {
   description = "Exact external provider domains allowed through browser Secure Web Proxy."
   type        = set(string)

@@ -2,7 +2,12 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from broker import CapabilityVerifier
-from core.auth import AccessControl, FirestoreAccessRepository, IapTokenVerifier
+from core.auth import (
+    AccessControl,
+    FirebaseTokenVerifier,
+    FirestoreAccessRepository,
+    IapTokenVerifier,
+)
 from fastapi import FastAPI, WebSocket
 from google.cloud.firestore_v1 import AsyncClient
 from pydantic import Field
@@ -32,6 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         AccessControl(FirestoreAccessRepository(firestore)),
         IapTokenVerifier(settings.iap_audience),
         verifier,
+        FirebaseTokenVerifier(settings.project_id),
     )
     yield
     firestore.close()  # type: ignore[no-untyped-call]

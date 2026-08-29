@@ -673,6 +673,7 @@ def app(
 
 class BrowserSetup:
     def __init__(self) -> None:
+        self.setup_url = "https://uumi.example/browser/setup"
         self.gateway_url = "https://gateway.uumi.example"
         self.session: SetupSession | None = None
         self.token = "t" * 43
@@ -708,6 +709,10 @@ class BrowserSetup:
         assert organisation_id == self.session.organisation_id
         assert setup_id == self.session.id
         return self.session
+
+    async def reap_expired(self, organisation_id: str) -> tuple[SetupSession, ...]:
+        del organisation_id
+        return ()
 
     async def complete(
         self,
@@ -1526,6 +1531,7 @@ async def test_administrator_can_run_browser_connection_setup() -> None:
         )
 
     assert begun.status_code == 201
+    assert begun.json()["setup_url"] == "https://uumi.example/browser/setup"
     assert begun.json()["gateway_url"] == "https://gateway.uumi.example"
     assert fetched.status_code == 200
     assert completed.status_code == 200

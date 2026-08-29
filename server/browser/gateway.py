@@ -29,11 +29,13 @@ class BrowserSessionGateway:
         access: AccessControl,
         identities: IdentityTokenVerifier,
         capabilities: CapabilityVerifier,
+        application_identities: IdentityTokenVerifier | None = None,
     ) -> None:
         self._repository = repository
         self._access = access
         self._identities = identities
         self._capabilities = capabilities
+        self._application_identities = application_identities
 
     async def bridge(self, websocket: WebSocket) -> None:
         assertion = websocket.headers.get("x-goog-iap-jwt-assertion")
@@ -48,8 +50,11 @@ class BrowserSessionGateway:
         await websocket.accept()
         try:
             initial = await websocket.receive_json()
-            organisation_id, session, mode, capability = await self._authorise(initial, identity)
-            await self._access.require(identity, organisation_id, Permission.RUN_READ)
+            application_identity = await self._application_identity(initial, identity)
+            organisation_id, session, mode, capability = await self._authorise(
+                initial, application_identity
+            )
+            await self._access.require(application_identity, organisation_id, Permission.RUN_READ)
             address = _private_address(session.internal_address)
             async with connect(
                 f"ws://{address}:8080/v1/live",
@@ -77,7 +82,10 @@ class BrowserSessionGateway:
         await websocket.accept()
         try:
             initial = await websocket.receive_json()
-            _organisation_id, session, token = await self._authorise_setup(initial, identity)
+            application_identity = await self._application_identity(initial, identity)
+            _organisation_id, session, token = await self._authorise_setup(
+                initial, application_identity
+            )
             address = _private_address(session.internal_address)
             async with connect(
                 f"ws://{address}:8080/v1/setup/live",
@@ -91,6 +99,19 @@ class BrowserSessionGateway:
                 )
         except Exception as error:
             await websocket.close(code=4403, reason=_safe_error(error))
+
+    async def _application_identity(
+        self, initial: Any, _iap_identity: AuthenticatedIdentity
+    ) -> AuthenticatedIdentity:
+        if self._application_identities is None:
+            raise CapabilityError("application identity verifier is unavailable")
+        if not isinstance(initial, dict):
+            raise CapabilityError("browser gateway handshake is invalid")
+        token = _string(initial, "identity_token")
+        application_identity = await self._application_identities.verify(token)
+        if not application_identity.email_verified or not application_identity.email:
+            raise CapabilityError("browser application identity is not verified")
+        return application_identity
 
     async def _authorise_setup(
         self, initial: Any, identity: AuthenticatedIdentity
@@ -179,11 +200,7 @@ class BrowserSessionGateway:
                 await worker.send(text)
             elif isinstance(text, str):
                 value = json.loads(text)
-                allowed = (
-                    {"frame", "action"}
-                    if mode == "setup"
-                    else {"frame", "action", "secure-key", "secure-input"}
-                )
+                allowed = {"frame", "status", "action", "secure-key", "secure-input"}
                 if not isinstance(value, dict) or value.get("type") not in allowed:
                     raise CapabilityError("browser message type is invalid")
                 await worker.send(text)

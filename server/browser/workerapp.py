@@ -86,8 +86,6 @@ class WorkerSettings(BaseSettings):
 
 
 class SetupRuntime:
-    # Setup VMs run no model and retain no model-input evidence; the human drives a fresh
-    # profile and only the exported session leaves the machine.
     def __init__(
         self,
         context: BrowserContext,
@@ -104,6 +102,25 @@ class SetupRuntime:
         self.secret = secret
         self.secrets = SecretManagerConnector(google)
         self.google = google
+        self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+        self._baseline_fingerprint: str | None = None
+        self._baseline_url: str | None = None
+
+    async def capture_authentication_baseline(self) -> None:
+        self._baseline_url = self.driver.url
+        self._baseline_fingerprint = _storage_fingerprint(
+            _filtered_setup_storage(await self.context.storage_state(), self.storage_domains)
+        )
+
+    async def authentication_captured(self) -> bool:
+        state = _filtered_setup_storage(await self.context.storage_state(), self.storage_domains)
+        if not state["cookies"] and not state["origins"]:
+            return False
+        if self._baseline_fingerprint is None or self._baseline_url is None:
+            return False
+        return self.driver.url != self._baseline_url and not hmac.compare_digest(
+            self._baseline_fingerprint, _storage_fingerprint(state)
+        )
 
 
 class ProposeRequest(Contract):
@@ -1154,11 +1171,9 @@ async def _secure_input(
 async def setup_store(request: Request, token: SetupToken) -> dict[str, Any]:
     setup = _setup(request)
     _authorise_setup(setup, token)
-    state = await setup.context.storage_state()
-    filtered = filter_storage_state(state, setup.storage_domains)
+    filtered = _filtered_setup_storage(await setup.context.storage_state(), setup.storage_domains)
     if not filtered["cookies"] and not filtered["origins"]:
         raise ResourceConflictError("no provider session was captured on the connection domains")
-    validate_storage_state(filtered, setup.storage_domains)
     encoded = bytearray(json.dumps(filtered, separators=(",", ":")).encode())
     secret = SecretValue(encoded)
     try:
@@ -1168,6 +1183,18 @@ async def setup_store(request: Request, token: SetupToken) -> dict[str, Any]:
         for index in range(len(encoded)):
             encoded[index] = 0
         await _clear_setup_state(setup.context)
+
+
+def _filtered_setup_storage(state: Any, domains: tuple[str, ...]) -> dict[str, Any]:
+    filtered = filter_storage_state(state, domains)
+    validate_storage_state(filtered, domains)
+    return filtered
+
+
+def _storage_fingerprint(state: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(state, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 async def _clear_setup_state(context: BrowserContext) -> None:
@@ -1197,18 +1224,99 @@ async def setup_live(websocket: WebSocket) -> None:
         kind = message.get("type")
         if kind == "frame":
             await websocket.send_bytes(await setup.driver.setup_screenshot())
+        elif kind == "status":
+            await websocket.send_json(
+                {"type": "status", "authenticated": await setup.authentication_captured()}
+            )
         elif kind == "action":
             raw = message.get("action")
             if not isinstance(raw, dict):
                 await websocket.close(code=4400, reason="setup action is invalid")
                 return
-            action = BrowserAction.model_validate({**raw, "fencing_token": 1})
             try:
-                await setup.driver.execute(action)
+                await _setup_action(setup, raw)
             except Exception:
                 await websocket.send_json({"type": "action", "succeeded": False})
             else:
                 await websocket.send_json({"type": "action", "succeeded": True})
+        elif kind == "secure-key":
+            public_key = setup.private_key.public_key().public_bytes(
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            await websocket.send_json(
+                {
+                    "type": "secure-key",
+                    "algorithm": "RSA-OAEP-256",
+                    "public_key": public_key.decode(),
+                }
+            )
+        elif kind == "secure-input":
+            try:
+                await _setup_secure_input(setup, message)
+            except Exception:
+                await websocket.send_json({"type": "secure-input", "succeeded": False})
+            else:
+                await websocket.send_json({"type": "secure-input", "succeeded": True})
         else:
             await websocket.close(code=4403, reason="setup message is not authorised")
             return
+
+
+async def _setup_action(setup: SetupRuntime, value: dict[str, Any]) -> None:
+    kind = value.get("kind")
+    if kind == "navigate":
+        url = value.get("url")
+        if not isinstance(url, str):
+            raise ResourceConflictError("browser setup navigation URL is invalid")
+        await setup.driver.setup_navigate(url)
+        await setup.capture_authentication_baseline()
+    elif kind == "click":
+        x, y = value.get("x"), value.get("y")
+        if (
+            isinstance(x, bool)
+            or isinstance(y, bool)
+            or not isinstance(x, int)
+            or not isinstance(y, int)
+        ):
+            raise ResourceConflictError("browser setup click coordinates are invalid")
+        await setup.driver.setup_click(x, y)
+    elif kind == "scroll":
+        delta_y = value.get("delta_y")
+        if isinstance(delta_y, bool) or not isinstance(delta_y, int):
+            raise ResourceConflictError("browser setup scroll offset is invalid")
+        await setup.driver.setup_scroll(delta_y)
+    elif kind == "key":
+        key = value.get("key")
+        if not isinstance(key, str):
+            raise ResourceConflictError("browser setup key is invalid")
+        await setup.driver.setup_key(key)
+    else:
+        raise ResourceConflictError("browser setup action is invalid")
+
+
+async def _setup_secure_input(setup: SetupRuntime, message: dict[str, Any]) -> None:
+    encoded = message.get("ciphertext")
+    if not isinstance(encoded, str):
+        raise ResourceConflictError("browser setup input envelope is invalid")
+    try:
+        ciphertext = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as error:
+        raise ResourceConflictError("browser setup input ciphertext is invalid") from error
+    if len(ciphertext) != 384:
+        raise ResourceConflictError("browser setup input ciphertext has an invalid length")
+    plaintext = bytearray(
+        setup.private_key.decrypt(
+            ciphertext,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+    )
+    try:
+        await setup.driver.setup_type(plaintext.decode())
+    finally:
+        for index in range(len(plaintext)):
+            plaintext[index] = 0

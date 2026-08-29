@@ -32,6 +32,15 @@
         ]
       },
       {
+        "source": "/browser/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store"
+          }
+        ]
+      },
+      {
         "source": "**/*.@(js|css|png|svg|woff2)",
         "headers": [
           {

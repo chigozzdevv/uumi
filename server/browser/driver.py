@@ -100,14 +100,41 @@ class BrowserDriver:
         return await self._page.screenshot(type="png", animations="disabled", mask=masks)
 
     async def setup_screenshot(self) -> bytes:
-        # Setup is human-driven, but frames still cross the VM boundary. Mask
-        # authentication and token controls before the gateway can stream them.
         sensitive = self._page.locator(_SETUP_SENSITIVE_SELECTOR)
         return await self._page.screenshot(
             type="png",
             animations="disabled",
             mask=[sensitive],
+            mask_color="#3b3f46",
         )
+
+    async def setup_navigate(self, url: str) -> None:
+        self.validate_url(url)
+        await self._page.goto(url, wait_until="domcontentloaded")
+
+    async def setup_click(self, x: int, y: int) -> None:
+        viewport = self._page.viewport_size
+        if viewport is None:
+            raise ResourceConflictError("browser setup has no viewport")
+        normalised_x = _bounded_integer(str(x), 0, 1000)
+        normalised_y = _bounded_integer(str(y), 0, 1000)
+        await self._page.mouse.click(
+            normalised_x / 1000 * viewport["width"],
+            normalised_y / 1000 * viewport["height"],
+        )
+
+    async def setup_scroll(self, value: int) -> None:
+        await self._page.mouse.wheel(0, _bounded_integer(str(value), -2000, 2000))
+
+    async def setup_key(self, value: str) -> None:
+        if value not in _KEYS:
+            raise ResourceConflictError("browser key is not in the safe key allowlist")
+        await self._page.keyboard.press(value)
+
+    async def setup_type(self, value: str) -> None:
+        if not value or len(value) > 256:
+            raise ResourceConflictError("browser setup input has an invalid length")
+        await self._page.keyboard.insert_text(value)
 
     async def validate_coordinate(self, selector: Selector, x: int, y: int) -> None:
         if not 0 <= x <= 999 or not 0 <= y <= 999:
