@@ -98,6 +98,11 @@ output "github_oauth_secret" {
   value       = module.storage.github_oauth_secret
 }
 
+output "google_cloud_oauth_secret" {
+  description = "Google Cloud OAuth client secret resource requiring an external version."
+  value       = module.storage.google_cloud_oauth_secret
+}
+
 output "image_repository" {
   description = "Artifact Registry repository prefix for Uumi images."
   value       = module.runtime.repository

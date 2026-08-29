@@ -43,6 +43,11 @@ output "github_oauth_secret" {
   value       = google_secret_manager_secret.github_oauth.id
 }
 
+output "google_cloud_oauth_secret" {
+  description = "Google Cloud OAuth client secret resource; add a version outside Terraform."
+  value       = google_secret_manager_secret.google_cloud_oauth.id
+}
+
 output "provider_secrets" {
   description = "Provider webhook secret resources keyed by configured source."
   value       = { for source, secret in google_secret_manager_secret.provider : source => secret.id }

@@ -188,6 +188,7 @@ module "storage" {
   browser_session_manager       = module.identity.members["uumi-api"]
   github_webhook_accessor       = module.identity.members["uumi-ingestion"]
   github_oauth_accessor         = module.identity.members["uumi-api"]
+  google_cloud_oauth_accessor   = module.identity.members["uumi-api"]
   provider_sources              = var.provider_sources
   provider_secret_accessor      = module.identity.members["uumi-ingestion"]
   principals = {

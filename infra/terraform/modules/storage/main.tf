@@ -576,6 +576,35 @@ resource "google_secret_manager_secret_iam_member" "github_oauth" {
   member    = var.github_oauth_accessor
 }
 
+resource "google_secret_manager_secret" "google_cloud_oauth" {
+  project   = var.project_id
+  secret_id = "uumi-google-cloud-oauth-client"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.location
+        customer_managed_encryption {
+          kms_key_name = google_kms_crypto_key.evidence.id
+        }
+      }
+    }
+  }
+
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["secretmanager"]]
+
+  deletion_protection = true
+}
+
+resource "google_secret_manager_secret_iam_member" "google_cloud_oauth" {
+  count = var.google_cloud_oauth_accessor == null ? 0 : 1
+
+  project   = google_secret_manager_secret.google_cloud_oauth.project
+  secret_id = google_secret_manager_secret.google_cloud_oauth.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = var.google_cloud_oauth_accessor
+}
+
 resource "google_secret_manager_secret" "provider" {
   for_each = var.provider_sources
 

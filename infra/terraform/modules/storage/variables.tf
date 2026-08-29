@@ -153,6 +153,13 @@ variable "github_oauth_accessor" {
   nullable    = true
 }
 
+variable "google_cloud_oauth_accessor" {
+  description = "IAM member allowed to exchange Google Cloud onboarding OAuth codes."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "provider_sources" {
   description = "Signed provider webhook sources keyed by an operator-owned label."
   type = map(object({

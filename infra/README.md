@@ -56,10 +56,12 @@ rejects timestamps outside the configured replay window. Do not
 place private or HMAC values in Terraform variables, plans, state, commands, or shell history.
 
 Register a Google OAuth web client with the Uumi callback URL ending in
-`?google_cloud=callback`. Add its client secret as an immutable Secret Manager version, then set
-the three `google_cloud_*` variables together. The short-lived user token is used only to discover
-visible projects, Cloud Run services, and service accounts during onboarding; it is cleared before
-the response and is never stored in Firestore or returned to the dashboard.
+`?google_cloud=callback`. Add its client secret as an immutable version of the managed
+`uumi-google-cloud-oauth-client` secret, then set the three `google_cloud_*` variables together.
+The short-lived user token is used only to discover visible projects, Cloud Run services, and
+service accounts during onboarding; it is cleared before the response and is never stored in
+Firestore or returned to the dashboard. The same Uumi OAuth client serves every customer; each
+authorization is isolated by the signed-in identity, PKCE-bound session, and Uumi organisation.
 
 For each Google Cloud connection, select a customer-managed service account with only the roles
 needed on that connection's declared resources. The connection journey gives the administrator
