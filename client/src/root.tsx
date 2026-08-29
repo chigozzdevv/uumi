@@ -8,9 +8,9 @@ import type { AccountSession, OrganisationMembership } from "./types"
 import { Button } from "./components/ui/button"
 import { OrganisationSetupPage } from "./pages/organisation"
 import { SignInPage } from "./pages/signin"
-import { LandingPage } from "./pages/landing"
 import { connectionCallbackIntegration, dashboardLocation } from "./lib/callback"
 
+const HomePage = lazy(() => import("./landing/pages/home").then((module) => ({ default: module.HomePage })))
 const Dashboard = lazy(() => import("./App.tsx"))
 const dashboardReturnKey = "uumi.dashboard-return"
 
@@ -62,7 +62,7 @@ export function AuthenticationBoundary() {
     window.location.replace(dashboardLocation())
     return <LoadingScreen />
   }
-  if (window.location.pathname === "/") return <LandingPage authenticated={Boolean(identity)} />
+  if (window.location.pathname === "/") return <Suspense fallback={<LoadingScreen />}><HomePage authenticated={Boolean(identity)} /></Suspense>
   if (window.location.pathname === "/auth") {
     if (identity) {
       const returnLocation = dashboardReturnLocation()
