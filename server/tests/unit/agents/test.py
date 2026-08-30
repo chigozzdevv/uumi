@@ -1,8 +1,10 @@
 import asyncio
 import hashlib
 import json
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import cloudpickle  # type: ignore[import-untyped]
 import pytest
@@ -877,11 +879,11 @@ def test_gateway_transport_keeps_multi_region_hosts_resolvable(
     async_session = object.__new__(AsyncAuthorizedSession)
     us_url = "https://aiplatform.us.rep.mtls.googleapis.com/v1/models"
     eu_url = "https://aiplatform.eu.rep.mtls.googleapis.com/v1/models"
+    sync_call = cast(Callable[[str, str], str], sync_session.request)
+    async_call = cast(Callable[[str, str], Coroutine[Any, Any, str]], async_session.request)
 
-    assert sync_session.request("POST", us_url) == (
-        "https://aiplatform.us.rep.googleapis.com/v1/models"
-    )
-    assert asyncio.run(async_session.request("POST", eu_url)) == (
+    assert sync_call("POST", us_url) == ("https://aiplatform.us.rep.googleapis.com/v1/models")
+    assert asyncio.run(async_call("POST", eu_url)) == (
         "https://aiplatform.eu.rep.googleapis.com/v1/models"
     )
     assert calls == [
@@ -904,8 +906,9 @@ def test_gateway_transport_leaves_other_mtls_hosts_unchanged(
 
     session = object.__new__(AuthorizedSession)
     url = "https://telemetry.mtls.googleapis.com/v1/traces"
+    call = cast(Callable[[str, str], str], session.request)
 
-    assert session.request("POST", url) == url
+    assert call("POST", url) == url
 
 
 def test_managed_model_requires_an_explicit_project(
