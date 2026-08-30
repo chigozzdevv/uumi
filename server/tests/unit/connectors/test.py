@@ -945,12 +945,24 @@ async def test_google_error_retains_only_machine_readable_safe_detail() -> None:
 @pytest.mark.anyio
 async def test_secret_manager_normalizes_numeric_project_resource_names() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/v1/projects/project-one/secrets"
+        if request.url.path == "/v1/projects/project-one/secrets":
+            return httpx.Response(
+                200,
+                json={
+                    "secrets": [
+                        {"name": "projects/123456789/secrets/uumi-resend-api-key"},
+                    ]
+                },
+            )
+        assert request.url.path == ("/v1/projects/project-one/secrets/uumi-resend-api-key/versions")
         return httpx.Response(
             200,
             json={
-                "secrets": [
-                    {"name": "projects/123456789/secrets/uumi-resend-api-key"},
+                "versions": [
+                    {
+                        "name": ("projects/123456789/secrets/uumi-resend-api-key/versions/1"),
+                        "state": "ENABLED",
+                    }
                 ]
             },
         )
@@ -969,8 +981,18 @@ async def test_secret_manager_normalizes_numeric_project_resource_names() -> Non
     )
 
     resources = await SecretManagerConnector(google).resources_for(connection)
+    versions = await SecretManagerConnector(google).versions_for(
+        connection,
+        "projects/project-one/secrets/uumi-resend-api-key",
+    )
 
     assert resources == ({"name": "projects/project-one/secrets/uumi-resend-api-key"},)
+    assert versions == (
+        {
+            "name": "projects/project-one/secrets/uumi-resend-api-key/versions/1",
+            "state": "ENABLED",
+        },
+    )
     await google.close()
 
 

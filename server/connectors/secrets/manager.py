@@ -220,7 +220,12 @@ class SecretManagerConnector:
             raise ConnectorError(
                 "secret-list-failed", "Secret Manager returned invalid version metadata"
             )
-        return tuple(_metadata(item) for item in values)
+        normalized = tuple(_secret_version(item, secret) for item in values)
+        if any(item is None for item in normalized):
+            raise ConnectorError(
+                "secret-list-failed", "Secret Manager returned invalid version metadata"
+            )
+        return tuple(_metadata(item) for item in normalized if item is not None)
 
     async def disable(self, version: str) -> dict[str, Any]:
         return await self._disable(version)
@@ -274,6 +279,25 @@ def _secret_resource(item: dict[str, Any], parent: str) -> dict[str, Any] | None
     ):
         return None
     return {**item, "name": f"{parent}/secrets/{parts[3]}"}
+
+
+def _secret_version(item: dict[str, Any], secret: str) -> dict[str, Any] | None:
+    name = item.get("name")
+    secret_name = secret.rsplit("/", 1)[-1]
+    if not isinstance(name, str):
+        return None
+    parts = name.split("/")
+    if (
+        len(parts) != 6
+        or parts[0] != "projects"
+        or not parts[1]
+        or parts[2] != "secrets"
+        or parts[3] != secret_name
+        or parts[4] != "versions"
+        or not parts[5]
+    ):
+        return None
+    return {**item, "name": f"{secret}/versions/{parts[5]}"}
 
 
 def _metadata(response: dict[str, Any]) -> dict[str, Any]:
