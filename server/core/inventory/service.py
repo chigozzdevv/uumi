@@ -3,6 +3,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol
 
+from connectors.base.errors import ConnectorError
 from contracts import (
     Application,
     Connection,
@@ -842,7 +843,10 @@ class InventoryService:
         connection = await self._secret_connection(organisation_id, connection_id)
         if self._secret_metadata is None:
             raise ResourceConflictError("secret metadata discovery is unavailable")
-        resources = await self._secret_metadata.resources_for(connection)
+        try:
+            resources = await self._secret_metadata.resources_for(connection)
+        except ConnectorError as error:
+            raise ResourceConflictError(f"Secret discovery unavailable: {error}") from None
         return tuple(
             SecretResourceMetadata(
                 reference=_required_text(item.get("name"), "secret resource"),
@@ -866,7 +870,10 @@ class InventoryService:
             raise ResourceConflictError("runtime connection cannot list services")
         if self._runtime_metadata is None:
             raise ResourceConflictError("runtime resource discovery is unavailable")
-        resources = await self._runtime_metadata.resources_for(connection)
+        try:
+            resources = await self._runtime_metadata.resources_for(connection)
+        except ConnectorError as error:
+            raise ResourceConflictError(f"Runtime discovery unavailable: {error}") from None
         metadata = tuple(RuntimeResourceMetadata.model_validate(item) for item in resources)
         if any(
             not _resource_covered(resource.reference, connection.allowed_resources)
@@ -883,7 +890,10 @@ class InventoryService:
             raise ResourceConflictError("secret resource escapes the connection boundary")
         if self._secret_metadata is None:
             raise ResourceConflictError("secret metadata discovery is unavailable")
-        versions = await self._secret_metadata.versions_for(connection, secret)
+        try:
+            versions = await self._secret_metadata.versions_for(connection, secret)
+        except ConnectorError as error:
+            raise ResourceConflictError(f"Secret discovery unavailable: {error}") from None
         return tuple(
             SecretVersionMetadata.model_validate(
                 {

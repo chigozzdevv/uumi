@@ -101,6 +101,7 @@ class GoogleCloudOnboardingService:
         validator: GoogleCloudConnectionValidator | None = None,
         broker_service_account: str = "",
         authorization_cipher: GoogleCloudAuthorizationCipher | None = None,
+        discovery_service_account: str = "",
     ) -> None:
         self._repository = repository
         self._connector = connector
@@ -111,6 +112,7 @@ class GoogleCloudOnboardingService:
         self._validator = validator
         self._broker_service_account = broker_service_account
         self._authorization_cipher = authorization_cipher
+        self._discovery_service_account = discovery_service_account
 
     async def begin(
         self, organisation_id: str, subject: str
@@ -303,8 +305,8 @@ class GoogleCloudOnboardingService:
             )
         if connection.status is not ConnectionStatus.SETUP_REQUIRED:
             raise ResourceConflictError("Google Cloud connection is not awaiting access")
-        if not self._broker_service_account:
-            raise ResourceConflictError("Google Cloud broker identity is unavailable")
+        if not self._broker_service_account or not self._discovery_service_account:
+            raise ResourceConflictError("Google Cloud service identities are unavailable")
         project, automation_identity = _selection(session, connection)
         token: SecretValue | None = None
         try:
@@ -321,6 +323,7 @@ class GoogleCloudOnboardingService:
                     )
                 ),
                 self._broker_service_account,
+                self._discovery_service_account,
             )
             await validator.validate(connection)
         except ConnectorError as error:

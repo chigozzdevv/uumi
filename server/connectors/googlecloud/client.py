@@ -104,11 +104,13 @@ class GoogleCloudOnboardingConnector:
         automation_identity: str,
         runtime_identities: tuple[str, ...],
         broker_service_account: str,
+        discovery_service_account: str = "",
     ) -> None:
+        token_creators = {f"serviceAccount:{broker_service_account}"}
+        if discovery_service_account:
+            token_creators.add(f"serviceAccount:{discovery_service_account}")
         account_access: dict[str, dict[str, set[str]]] = {
-            automation_identity: {
-                "roles/iam.serviceAccountTokenCreator": {f"serviceAccount:{broker_service_account}"}
-            }
+            automation_identity: {"roles/iam.serviceAccountTokenCreator": token_creators}
         }
         for identity in runtime_identities:
             roles = account_access.setdefault(identity, {})

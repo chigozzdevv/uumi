@@ -8,11 +8,12 @@ from typing import Any, cast
 import google.auth
 import httpx
 from contracts import Connection, ConnectionAuthorization, ConnectionInterface
+from google.auth import exceptions as google_auth_exceptions
 from google.auth import impersonated_credentials
 from google.auth.credentials import Credentials
 from google.auth.transport.requests import Request
 
-from connectors.base.errors import ConnectorError
+from connectors.base.errors import ConnectorAuthenticationError, ConnectorError
 from connectors.base.result import SecretValue
 
 
@@ -255,7 +256,12 @@ class GoogleRestClient:
 
     async def _token(self, credentials: Credentials) -> str:
         if not credentials.valid or not credentials.token:
-            await asyncio.to_thread(credentials.refresh, self._request)
+            try:
+                await asyncio.to_thread(credentials.refresh, self._request)
+            except google_auth_exceptions.RefreshError as error:
+                raise ConnectorAuthenticationError(
+                    "Google workload identity could not be authorized"
+                ) from error
         if not credentials.token:
             raise ConnectorError("google-authentication", "Google credentials returned no token")
         return cast(str, credentials.token)

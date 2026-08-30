@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
+from connectors.base.errors import ConnectorAuthenticationError
 from contracts import (
     Application,
     Connection,
@@ -1024,6 +1025,28 @@ async def test_inventory_lists_runtime_resources_inside_connection_boundary() ->
 
     assert resources[0].display_name == "service-two"
     assert resources[0].identity == "service-two@example.iam.gserviceaccount.com"
+
+
+@pytest.mark.anyio
+async def test_inventory_reports_google_impersonation_failure_as_connection_conflict() -> None:
+    class UnavailableSecretMetadata:
+        async def resources_for(self, connection: Connection) -> tuple[dict[str, object], ...]:
+            del connection
+            raise ConnectorAuthenticationError("Google workload identity could not be authorized")
+
+        async def versions_for(
+            self, connection: Connection, secret: str
+        ) -> tuple[dict[str, object], ...]:
+            del connection, secret
+            return ()
+
+    service = InventoryService(Catalog(), secret_metadata=UnavailableSecretMetadata())
+
+    with pytest.raises(
+        ResourceConflictError,
+        match="Secret discovery unavailable: Google workload identity could not be authorized",
+    ):
+        await service.list_secret_resources("org_one", "secret_one")
 
 
 @pytest.mark.anyio

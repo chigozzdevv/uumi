@@ -241,6 +241,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
                 google,
                 configured.google_cloud_onboarding_kms_key,
             ),
+            configured.google_cloud_discovery_service_account,
         )
     return ApiServices(
         workflow=workflow,

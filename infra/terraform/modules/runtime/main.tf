@@ -628,6 +628,11 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
+        name  = "UUMI_GOOGLE_CLOUD_DISCOVERY_SERVICE_ACCOUNT"
+        value = var.api_service_account
+      }
+
+      env {
         name  = "UUMI_BROWSER_GATEWAY_URL"
         value = var.browser_gateway_url
       }

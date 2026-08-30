@@ -67,11 +67,11 @@ For each Google Cloud connection, select a dedicated customer-managed service ac
 connection journey preserves existing IAM policies and grants that identity Cloud Run Developer,
 Secret Manager Viewer, and Secret Manager Secret Version Manager on the selected project. It also
 grants Service Account User on the discovered Cloud Run runtime identities and lets the Uumi broker
-mint short-lived tokens for the selected identities. Access is verified before the connection is
-marked ready. Customer identities are not Terraform inputs, so a new connection never requires a
-Uumi redeployment. A browser worker receives an encrypted, short-lived token for its selected
-secret-store connection only when Secure Capture or authorised takeover needs it; the worker never
-receives impersonation permission. Uumi stores
+and API metadata-discovery boundary mint short-lived tokens for the selected automation identity.
+Access is verified before the connection is marked ready. Customer identities are not Terraform
+inputs, so a new connection never requires a Uumi redeployment. A browser worker receives an
+encrypted, short-lived token for its selected secret-store connection only when Secure Capture or
+authorised takeover needs it; the worker never receives impersonation permission. Uumi stores
 `workload-identity://SERVICE_ACCOUNT_EMAIL` as the connection's authorisation reference; it is
 identity metadata, not a credential. Uumi uses that selected identity for runtime,
 secret-store, and connection-verification calls and rejects fallback to its own process identity.

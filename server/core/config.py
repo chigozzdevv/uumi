@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     google_cloud_client_secret: str = Field(default="", max_length=1024)
     google_cloud_callback_url: str = Field(default="", max_length=2048)
     google_cloud_onboarding_kms_key: str = Field(default="", max_length=1024)
+    google_cloud_discovery_service_account: str = Field(default="", max_length=320)
     broker_url: str = Field(default="", max_length=2048)
     broker_service_account: str = Field(default="", max_length=320)
     notification_email_secret_version: str = Field(default="", max_length=1024)
@@ -93,7 +94,13 @@ class Settings(BaseSettings):
         )
         if any(google_cloud) and not all(google_cloud):
             raise ValueError("Google Cloud onboarding configuration is incomplete")
-        if all(google_cloud) and not all((self.broker_url, self.broker_service_account)):
+        if all(google_cloud) and not all(
+            (
+                self.broker_url,
+                self.broker_service_account,
+                self.google_cloud_discovery_service_account,
+            )
+        ):
             raise ValueError("Google Cloud broker configuration is incomplete")
         if self.google_cloud_client_secret and not _secret_version(
             self.google_cloud_client_secret, self.project_id
@@ -131,6 +138,10 @@ class Settings(BaseSettings):
                 raise ValueError("broker URL must be an HTTPS origin without credentials")
         if self.broker_service_account and not _service_account(self.broker_service_account):
             raise ValueError("broker service account is invalid")
+        if self.google_cloud_discovery_service_account and not _service_account(
+            self.google_cloud_discovery_service_account
+        ):
+            raise ValueError("Google Cloud discovery service account is invalid")
         email_delivery = (
             self.notification_email_secret_version,
             self.notification_email_sender,

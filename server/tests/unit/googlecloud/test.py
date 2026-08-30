@@ -62,6 +62,7 @@ async def test_onboarding_discovers_google_resources_without_persisting_token() 
         validator,
         "uumi-broker@uumi-host.iam.gserviceaccount.com",
         Cipher(),  # type: ignore[arg-type]
+        "uumi-api@uumi-host.iam.gserviceaccount.com",
     )
     session, state, verifier, authorization_url = await service.begin("org_one", "user-one")
 
@@ -431,6 +432,7 @@ async def test_authorize_preserves_iam_policy_and_is_idempotent() -> None:
             "uumi-automation@project-one.iam.gserviceaccount.com",
             ("worker@project-one.iam.gserviceaccount.com",),
             "uumi-broker@uumi-host.iam.gserviceaccount.com",
+            "uumi-api@uumi-host.iam.gserviceaccount.com",
         )
 
     assert len(writes) == 3
@@ -446,7 +448,8 @@ async def test_authorize_preserves_iam_policy_and_is_idempotent() -> None:
     assert unconditional == {
         "roles/viewer": ["user:owner@example.com"],
         "roles/iam.serviceAccountTokenCreator": [
-            "serviceAccount:uumi-broker@uumi-host.iam.gserviceaccount.com"
+            "serviceAccount:uumi-api@uumi-host.iam.gserviceaccount.com",
+            "serviceAccount:uumi-broker@uumi-host.iam.gserviceaccount.com",
         ],
         "roles/iam.serviceAccountUser": [
             "serviceAccount:uumi-automation@project-one.iam.gserviceaccount.com"
@@ -607,12 +610,14 @@ class Connector:
         automation_identity: str,
         runtime_identities: tuple[str, ...],
         broker_service_account: str,
+        discovery_service_account: str,
     ) -> None:
         assert token.bytes() == b"temporary-google-token"
         assert project_id == "project-one"
         assert automation_identity == "uumi-automation@project-one.iam.gserviceaccount.com"
         assert runtime_identities == ("worker@project-one.iam.gserviceaccount.com",)
         assert broker_service_account == "uumi-broker@uumi-host.iam.gserviceaccount.com"
+        assert discovery_service_account == "uumi-api@uumi-host.iam.gserviceaccount.com"
         self.authorized = True
 
 
