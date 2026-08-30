@@ -186,16 +186,14 @@ class SecretManagerConnector:
                     raise ConnectorError(
                         "secret-list-failed", "Secret Manager returned invalid secret metadata"
                     )
-                values.extend(
-                    item
-                    for item in resources
-                    if isinstance(item.get("name"), str)
-                    and any(
-                        item["name"] == boundary
-                        or item["name"].startswith(boundary.rstrip("/") + "/")
+                for item in resources:
+                    resource = _secret_resource(item, parent)
+                    if resource is not None and any(
+                        resource["name"] == boundary
+                        or resource["name"].startswith(boundary.rstrip("/") + "/")
                         for boundary in connection.allowed_resources
-                    )
-                )
+                    ):
+                        values.append(resource)
                 next_token = response.get("nextPageToken")
                 if not isinstance(next_token, str) or not next_token:
                     break
@@ -260,6 +258,22 @@ def _version(payload: dict[str, Any]) -> str:
     if not isinstance(value, str) or not value.startswith("projects/") or "/versions/" not in value:
         raise ConnectorError("invalid-secret-version", "a full Secret Manager version is required")
     return value
+
+
+def _secret_resource(item: dict[str, Any], parent: str) -> dict[str, Any] | None:
+    name = item.get("name")
+    if not isinstance(name, str):
+        return None
+    parts = name.split("/")
+    if (
+        len(parts) != 4
+        or parts[0] != "projects"
+        or not parts[1]
+        or parts[2] != "secrets"
+        or not parts[3]
+    ):
+        return None
+    return {**item, "name": f"{parent}/secrets/{parts[3]}"}
 
 
 def _metadata(response: dict[str, Any]) -> dict[str, Any]:

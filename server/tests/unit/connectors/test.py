@@ -943,6 +943,38 @@ async def test_google_error_retains_only_machine_readable_safe_detail() -> None:
 
 
 @pytest.mark.anyio
+async def test_secret_manager_normalizes_numeric_project_resource_names() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/projects/project-one/secrets"
+        return httpx.Response(
+            200,
+            json={
+                "secrets": [
+                    {"name": "projects/123456789/secrets/uumi-resend-api-key"},
+                ]
+            },
+        )
+
+    google = _google(handler)
+    google._connection_credentials["runtime@project-one.iam.gserviceaccount.com"] = Credentials(
+        token="token"
+    )  # type: ignore[no-untyped-call]
+    connection = _runtime_context().connection.model_copy(
+        update={
+            "platform": "google-cloud",
+            "roles": frozenset({ConnectionRole.SECRET_STORE}),
+            "capabilities": SecretManagerConnector.tools,
+            "allowed_resources": ("projects/project-one/secrets",),
+        }
+    )
+
+    resources = await SecretManagerConnector(google).resources_for(connection)
+
+    assert resources == ({"name": "projects/project-one/secrets/uumi-resend-api-key"},)
+    await google.close()
+
+
+@pytest.mark.anyio
 async def test_google_error_recognises_only_exact_rate_exceeded_detail() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         del request
