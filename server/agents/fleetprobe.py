@@ -122,11 +122,16 @@ def _task(
     if kind is AgentKind.PLAYBOOK:
         context = {
             "playbook_id": "playbook_resend_evidence",
-            "walkthroughs": (),
+            "walkthroughs": (
+                {
+                    "source_id": "walkthrough_resend_api_keys_v1",
+                    "procedure": _playbook_draft(),
+                },
+            ),
         }
         objective = (
-            "Resend browser procedure for resend.com: one secure-capture create step, one "
-            "revocation step, deterministic selectors, and page checkpoints."
+            "Build the Resend browser procedure from sanitised walkthrough source "
+            "walkthrough_resend_api_keys_v1."
         )
     elif kind is AgentKind.INVENTORY:
         context = {

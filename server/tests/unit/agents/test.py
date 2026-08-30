@@ -392,6 +392,10 @@ async def test_fleet_probe_proves_distinct_agents_in_one_rotation_flow() -> None
     assert passed is True
     assert evidence.kinds == ["fleet-context", "fleet-probe"]
     assert [task.agent for task in runtime.tasks] == list(kinds)
+    assert runtime.tasks[0].context["walkthroughs"][0]["source_id"] == (
+        "walkthrough_resend_api_keys_v1"
+    )
+    assert "walkthrough_resend_api_keys_v1" in runtime.tasks[0].objective
     assert runtime.tasks[-1].context["step_id"] == "create_resend_key"
     assert "create_resend_key" in runtime.tasks[-1].objective
     assert [item["stage"] for item in report["agents"]] == [
