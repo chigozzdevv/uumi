@@ -13,6 +13,81 @@ locals {
     ? {}
     : { coordinator = var.coordinator_image }
   )
+  demo = var.demo_image == null || var.demo_secret == "" ? {} : { demo = var.demo_image }
+}
+
+resource "google_cloud_run_v2_service" "demo" {
+  for_each = local.demo
+
+  project             = var.project_id
+  location            = var.region
+  name                = "uumi-demo"
+  description         = "Scale-to-zero Resend credential rotation consumer."
+  deletion_protection = false
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+
+  template {
+    service_account                  = var.demo_service_account
+    timeout                          = "60s"
+    max_instance_request_concurrency = 1
+    execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 1
+    }
+
+    containers {
+      name  = "demo"
+      image = each.value
+
+      ports {
+        name           = "http1"
+        container_port = 8080
+      }
+
+      env {
+        name = "RESEND_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = var.demo_secret
+            version = "1"
+          }
+        }
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "256Mi"
+        }
+        cpu_idle          = true
+        startup_cpu_boost = true
+      }
+
+      startup_probe {
+        timeout_seconds   = 2
+        period_seconds    = 2
+        failure_threshold = 15
+        http_get {
+          path = "/health/live"
+          port = 8080
+        }
+      }
+    }
+  }
+
+  depends_on = [google_artifact_registry_repository.runtime]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "demo_coordinator" {
+  for_each = google_cloud_run_v2_service.demo
+
+  project  = each.value.project
+  location = each.value.location
+  name     = each.value.name
+  role     = "roles/run.invoker"
+  member   = var.coordinator_member
 }
 
 resource "google_cloud_run_v2_service" "auditlog" {

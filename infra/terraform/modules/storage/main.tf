@@ -616,6 +616,26 @@ resource "google_secret_manager_secret_iam_member" "google_cloud_oauth" {
   member    = var.google_cloud_oauth_accessor
 }
 
+resource "google_secret_manager_secret" "resend_demo" {
+  project   = var.project_id
+  secret_id = "uumi-resend-api-key"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.location
+        customer_managed_encryption {
+          kms_key_name = google_kms_crypto_key.evidence.id
+        }
+      }
+    }
+  }
+
+  depends_on = [google_kms_crypto_key_iam_member.service_crypto["secretmanager"]]
+
+  deletion_protection = true
+}
+
 resource "google_secret_manager_secret" "provider" {
   for_each = var.provider_sources
 

@@ -48,6 +48,11 @@ output "google_cloud_oauth_secret" {
   value       = google_secret_manager_secret.google_cloud_oauth.id
 }
 
+output "resend_demo_secret" {
+  description = "Dedicated Resend credential resource used by the rotation demo."
+  value       = google_secret_manager_secret.resend_demo.id
+}
+
 output "provider_secrets" {
   description = "Provider webhook secret resources keyed by configured source."
   value       = { for source, secret in google_secret_manager_secret.provider : source => secret.id }

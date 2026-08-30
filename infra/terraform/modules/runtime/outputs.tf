@@ -57,3 +57,8 @@ output "coordinator_uri" {
   description = "Private stage coordinator URI."
   value       = try(google_cloud_run_v2_service.coordinator["coordinator"].uri, null)
 }
+
+output "demo_uri" {
+  description = "Private scale-to-zero Resend demo consumer URI."
+  value       = try(google_cloud_run_v2_service.demo["demo"].uri, null)
+}

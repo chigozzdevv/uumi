@@ -48,6 +48,11 @@ variable "auditlog_service_account" {
   type        = string
 }
 
+variable "demo_service_account" {
+  description = "Service account email assigned to the Resend demo consumer."
+  type        = string
+}
+
 variable "scc_push_service_account" {
   description = "Service account email asserted on SCC Pub/Sub push requests."
   type        = string
@@ -206,6 +211,27 @@ variable "google_cloud_onboarding_kms_key" {
     )
     error_message = "google_cloud_onboarding_kms_key must be empty or a full KMS key resource name."
   }
+}
+
+variable "demo_image" {
+  description = "Immutable Resend demo image reference; null leaves the demo consumer disabled."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.demo_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.demo_image))
+    )
+    error_message = "demo_image must be null or an immutable sha256 image reference."
+  }
+}
+
+variable "demo_secret" {
+  description = "Secret Manager resource containing the current Resend demo key."
+  type        = string
+  default     = ""
 }
 
 variable "github_webhook_secret_version" {

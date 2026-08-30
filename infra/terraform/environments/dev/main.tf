@@ -128,6 +128,10 @@ module "identity" {
       display_name = "Uumi Audit Log Publisher"
       description  = "Delivers canonical hash-chained audit events to locked Cloud Logging."
     }
+    "uumi-demo" = {
+      display_name = "Uumi Resend Demo"
+      description  = "Consumes the Resend credential used by the end-to-end rotation demo."
+    }
   }
 
   depends_on = [module.project]
@@ -210,6 +214,13 @@ resource "google_secret_manager_secret_iam_member" "notification" {
   secret_id = each.value.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = module.identity.members["uumi-notification"]
+}
+
+resource "google_secret_manager_secret_iam_member" "resend_demo" {
+  project   = var.project_id
+  secret_id = module.storage.resend_demo_secret
+  role      = "roles/secretmanager.secretAccessor"
+  member    = module.identity.members["uumi-demo"]
 }
 
 module "browser" {
@@ -361,6 +372,7 @@ module "runtime" {
   coordinator_service_account  = module.identity.emails["uumi-coordinator"]
   notification_service_account = module.identity.emails["uumi-notification"]
   auditlog_service_account     = module.identity.emails["uumi-auditlog"]
+  demo_service_account         = module.identity.emails["uumi-demo"]
   api_member                   = module.identity.members["uumi-api"]
   web_member                   = module.identity.members["uumi-web"]
   coordinator_member           = module.identity.members["uumi-coordinator"]
@@ -389,6 +401,8 @@ module "runtime" {
   coordinator_image    = var.coordinator_image
   notification_image   = var.notification_image
   auditlog_image       = var.auditlog_image
+  demo_image           = var.demo_image
+  demo_secret          = module.storage.resend_demo_secret
   notification_app_url = var.notification_app_url
   notification_email_secret_version = (
     var.notification_email_secret_version == null ? "" : var.notification_email_secret_version

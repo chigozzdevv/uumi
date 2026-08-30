@@ -239,6 +239,21 @@ variable "auditlog_image" {
   }
 }
 
+variable "demo_image" {
+  description = "Immutable Uumi Resend demo image reference."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.demo_image == null ||
+      can(regex("^[^[:space:]]+@sha256:[a-f0-9]{64}$", var.demo_image))
+    )
+    error_message = "demo_image must be null or an immutable sha256 image reference."
+  }
+}
+
 variable "notification_app_url" {
   description = "Authenticated Uumi application origin used for safe notification links."
   type        = string
