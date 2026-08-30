@@ -130,8 +130,7 @@ def _task(
             ),
         }
         objective = (
-            "Build the Resend browser procedure from sanitised walkthrough source "
-            "walkthrough_resend_api_keys_v1."
+            "Sanitised Resend API key UI evidence: walkthrough_resend_api_keys_v1."
         )
     elif kind is AgentKind.INVENTORY:
         context = {
