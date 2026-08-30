@@ -21,6 +21,7 @@ from google.cloud.firestore_v1 import AsyncClient
 from vertexai import types
 
 from agents.fleet import _SKILLS, AgentFleetService
+from agents.shared.model import MODEL_ID, MODEL_LOCATIONS
 from agents.storage import AgentRepository
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -51,6 +52,7 @@ async def deploy(
     caller_role: str,
     approved_callers: frozenset[str],
     version: str,
+    model_location: str,
     credentials: Credentials | None = None,
     catalog_credentials: Credentials | None = None,
     catalog_project_id: str | None = None,
@@ -70,6 +72,7 @@ async def deploy(
             caller_role,
             approved_callers,
             version,
+            model_location,
             credentials,
             catalog_credentials,
             catalog_project_id,
@@ -91,6 +94,7 @@ async def _deploy_fleet(
     caller_role: str,
     approved_callers: frozenset[str],
     version: str,
+    model_location: str,
     credentials: Credentials | None = None,
     catalog_credentials: Credentials | None = None,
     catalog_project_id: str | None = None,
@@ -99,8 +103,11 @@ async def _deploy_fleet(
     selected = tuple(AgentKind) if kinds is None else kinds
     if kinds is not None and (not selected or len(set(selected)) != len(selected)):
         raise ValueError("agent deployment selection must contain unique agent kinds")
+    if model_location not in MODEL_LOCATIONS:
+        raise ValueError("model location must support Gemini 3.7 Flash")
     os.environ["UUMI_GOOGLE_CLOUD_PROJECT"] = project_id
     os.environ["UUMI_GOOGLE_CLOUD_LOCATION"] = region
+    os.environ["UUMI_GOOGLE_CLOUD_MODEL_LOCATION"] = model_location
     vertexai.init(
         project=project_id,
         location=region,
@@ -157,6 +164,7 @@ async def _deploy_fleet(
             client,
             kind,
             version,
+            model_location,
             kms_key,
             ingress_gateway,
             egress_gateway,
@@ -168,6 +176,7 @@ async def _deploy_fleet(
                     config=_deployment_config(
                         project_id,
                         region,
+                        model_location,
                         kind,
                         version,
                         staging_bucket,
@@ -246,6 +255,7 @@ def _matches_existing_registration(
 def _deployment_config(
     project_id: str,
     region: str,
+    model_location: str,
     kind: AgentKind,
     version: str,
     staging_bucket: str,
@@ -263,6 +273,7 @@ def _deployment_config(
         "env_vars": {
             "UUMI_GOOGLE_CLOUD_PROJECT": project_id,
             "UUMI_GOOGLE_CLOUD_LOCATION": region,
+            "UUMI_GOOGLE_CLOUD_MODEL_LOCATION": model_location,
             "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
             "GOOGLE_API_USE_CLIENT_CERTIFICATE": "true",
             "GOOGLE_API_USE_MTLS_ENDPOINT": "always",
@@ -279,6 +290,8 @@ def _deployment_config(
         "encryption_spec": {"kms_key_name": kms_key},
         "labels": {
             "uumi-agent": kind.value,
+            "uumi-model": MODEL_ID.replace(".", "-").replace("_", "-"),
+            "uumi-model-location": model_location,
             "uumi-version": version.replace(".", "-"),
         },
         "context_spec": {
@@ -345,6 +358,7 @@ def _matching_deployment(
     client: Any,
     kind: AgentKind,
     version: str,
+    model_location: str,
     kms_key: str,
     ingress_gateway: str,
     egress_gateway: str,
@@ -363,6 +377,8 @@ def _matching_deployment(
             getattr(resource, "display_name", None) == f"Uumi {kind.value.title()} Agent {version}"
             and isinstance(labels, dict)
             and labels.get("uumi-agent") == kind.value
+            and labels.get("uumi-model") == MODEL_ID.replace(".", "-").replace("_", "-")
+            and labels.get("uumi-model-location") == model_location
             and labels.get("uumi-version") == version.replace(".", "-")
             and getattr(encryption, "kms_key_name", None) == kms_key
             and getattr(ingress, "agent_gateway", None) == ingress_gateway
@@ -464,6 +480,7 @@ def main() -> None:
     parser.add_argument("--caller-role", required=True)
     parser.add_argument("--approved-caller", required=True, action="append")
     parser.add_argument("--version", required=True)
+    parser.add_argument("--model-location", required=True, choices=sorted(MODEL_LOCATIONS))
     parser.add_argument("--agent", choices=[kind.value for kind in AgentKind], action="append")
     parser.add_argument("--impersonate-service-account")
     args = parser.parse_args()
@@ -484,6 +501,7 @@ def main() -> None:
             args.caller_role,
             frozenset(args.approved_caller),
             args.version,
+            args.model_location,
             _deployment_credentials(args.impersonate_service_account, source_credentials),
             source_credentials,
             args.catalog_project,

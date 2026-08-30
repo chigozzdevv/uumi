@@ -8,6 +8,16 @@ variable "region" {
   type        = string
 }
 
+variable "model_location" {
+  description = "Gemini model endpoint location governed by Agent Gateway."
+  type        = string
+
+  validation {
+    condition     = contains(["global", "us", "eu"], var.model_location)
+    error_message = "model_location must be global, us, or eu."
+  }
+}
+
 variable "agent_principal_set" {
   description = "Project-scoped Agent Identity principal set."
   type        = string

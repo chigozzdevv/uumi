@@ -2,17 +2,19 @@ import os
 
 from google.adk.models import Gemini
 
-# Model calls use the regional endpoint registered with Agent Gateway.
-MODEL_ID = "gemini-2.5-flash"
+MODEL_ID = "gemini-3.7-flash"
+MODEL_LOCATIONS = frozenset({"global", "us", "eu"})
 
 
 def managed_model() -> Gemini:
     project = os.environ.get("UUMI_GOOGLE_CLOUD_PROJECT")
     if not project:
         raise RuntimeError("managed agent environment is missing UUMI_GOOGLE_CLOUD_PROJECT")
-    location = os.environ.get("UUMI_GOOGLE_CLOUD_LOCATION")
+    location = os.environ.get("UUMI_GOOGLE_CLOUD_MODEL_LOCATION")
     if not location:
-        raise RuntimeError("managed agent environment is missing UUMI_GOOGLE_CLOUD_LOCATION")
+        raise RuntimeError("managed agent environment is missing UUMI_GOOGLE_CLOUD_MODEL_LOCATION")
+    if location not in MODEL_LOCATIONS:
+        raise RuntimeError("managed agent environment has an unsupported model location")
     return Gemini(
         model=MODEL_ID,
         client_kwargs={

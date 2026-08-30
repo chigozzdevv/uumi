@@ -76,6 +76,13 @@ locals {
         url          = "https://telemetry.mtls.googleapis.com"
       }
     },
+    var.model_location == "global" ? {} : {
+      aiplatform_model = {
+        display_name = "Vertex AI ${upper(var.model_location)} multi-region API"
+        service_id   = "aiplatform-${var.model_location}-rep"
+        url          = "https://aiplatform.${var.model_location}.rep.googleapis.com"
+      }
+    },
   )
 }
 

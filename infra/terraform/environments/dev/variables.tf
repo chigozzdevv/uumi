@@ -90,6 +90,17 @@ variable "region" {
   }
 }
 
+variable "agent_model_location" {
+  description = "Gemini model endpoint location for the managed agent fleet."
+  type        = string
+  default     = "us"
+
+  validation {
+    condition     = contains(["global", "us", "eu"], var.agent_model_location)
+    error_message = "agent_model_location must be global, us, or eu."
+  }
+}
+
 variable "enable_gateway" {
   description = "Enable Agent Gateway and Agent Registry APIs."
   type        = bool

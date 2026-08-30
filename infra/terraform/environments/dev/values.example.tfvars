@@ -1,6 +1,7 @@
 project_id                = "replace-with-project-id"
 agent_project_id          = "replace-with-agent-project-id"
 region                    = "us-east1"
+agent_model_location      = "us"
 enable_gateway            = true
 enable_legacy_gateway     = false
 agent_broker_uri          = null

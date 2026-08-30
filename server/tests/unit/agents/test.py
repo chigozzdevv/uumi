@@ -448,6 +448,7 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     config = _deployment_config(
         "project-one",
         "us-central1",
+        "us",
         AgentKind.PLANNER,
         "1.2.3",
         "gs://staging",
@@ -461,6 +462,7 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     assert config["env_vars"] == {
         "UUMI_GOOGLE_CLOUD_PROJECT": "project-one",
         "UUMI_GOOGLE_CLOUD_LOCATION": "us-central1",
+        "UUMI_GOOGLE_CLOUD_MODEL_LOCATION": "us",
         "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
         "GOOGLE_API_USE_CLIENT_CERTIFICATE": "true",
         "GOOGLE_API_USE_MTLS_ENDPOINT": "always",
@@ -475,6 +477,12 @@ def test_agent_deployment_uses_identity_and_both_gateways() -> None:
     }
     assert config["min_instances"] == 0
     assert config["max_instances"] == 1
+    assert config["labels"] == {
+        "uumi-agent": "planner",
+        "uumi-model": "gemini-3-7-flash",
+        "uumi-model-location": "us",
+        "uumi-version": "1-2-3",
+    }
 
 
 @pytest.mark.anyio
@@ -492,6 +500,7 @@ async def test_agent_deployment_rejects_duplicate_component_selection() -> None:
             "projects/project-one/roles/uumiAgentCaller",
             frozenset({"serviceAccount:api@project-one.iam.gserviceaccount.com"}),
             "1.2.3",
+            "us",
             kinds=(AgentKind.PLAYBOOK, AgentKind.PLAYBOOK),
         )
 
@@ -635,6 +644,7 @@ async def test_agent_deployment_keeps_operator_identity_on_catalog(
         "projects/project-one/roles/uumiAgentCaller",
         frozenset({"serviceAccount:api@project-one.iam.gserviceaccount.com"}),
         "1.2.3",
+        "us",
         runtime_credentials,  # type: ignore[arg-type]
         catalog_credentials,  # type: ignore[arg-type]
         "catalog-project",
@@ -754,6 +764,7 @@ def test_managed_agents_publish_their_exact_a2a_skills(
 ) -> None:
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_MODEL_LOCATION", "us")
     from agents.inventory.agent import agent_app as inventory
     from agents.operator.agent import agent_app as operator
     from agents.planner.agent import agent_app as planner
@@ -772,11 +783,12 @@ def test_managed_agents_publish_their_exact_a2a_skills(
         assert "on_message_send" in application.register_operations()["a2a_extension"]
 
 
-def test_managed_agents_use_the_runtime_region_model_endpoint(
+def test_managed_agents_use_the_us_multiregion_model_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_MODEL_LOCATION", "us")
     from agents.inventory.agent import root_agent as inventory
     from agents.operator.agent import root_agent as operator
     from agents.planner.agent import root_agent as planner
@@ -784,14 +796,14 @@ def test_managed_agents_use_the_runtime_region_model_endpoint(
     from agents.shared.model import MODEL_ID
     from google.adk.models import Gemini
 
-    assert MODEL_ID == "gemini-2.5-flash"
+    assert MODEL_ID == "gemini-3.7-flash"
     for agent in (inventory, planner, playbook, operator):
         assert isinstance(agent.model, Gemini)
         assert agent.model.model == MODEL_ID
         assert agent.model.client_kwargs == {
             "vertexai": True,
             "project": "useuumi",
-            "location": "us-east1",
+            "location": "us",
         }
         assert type(agent.model) is Gemini
         assert agent.mode == "chat"
@@ -805,6 +817,7 @@ def test_managed_model_keeps_vertex_pickle_compatible_gemini(
 
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_MODEL_LOCATION", "us")
 
     original = managed_model()
     restored = cloudpickle.loads(cloudpickle.dumps(original))
@@ -823,6 +836,7 @@ def test_managed_model_does_not_patch_google_transports(
 
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_MODEL_LOCATION", "us")
     original_model_method = Gemini.generate_content_async
     original_request = AuthorizedSession.request
 
@@ -846,18 +860,30 @@ def test_managed_model_requires_an_explicit_project(
         managed_model()
 
 
-def test_managed_model_requires_an_explicit_location(
+def test_managed_model_requires_an_explicit_model_location(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from agents.shared.model import managed_model
 
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
-    monkeypatch.delenv("UUMI_GOOGLE_CLOUD_LOCATION", raising=False)
+    monkeypatch.delenv("UUMI_GOOGLE_CLOUD_MODEL_LOCATION", raising=False)
 
     with pytest.raises(
         RuntimeError,
-        match="managed agent environment is missing UUMI_GOOGLE_CLOUD_LOCATION",
+        match="managed agent environment is missing UUMI_GOOGLE_CLOUD_MODEL_LOCATION",
     ):
+        managed_model()
+
+
+def test_managed_model_rejects_an_unsupported_model_location(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents.shared.model import managed_model
+
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_MODEL_LOCATION", "us-east1")
+
+    with pytest.raises(RuntimeError, match="unsupported model location"):
         managed_model()
 
 
@@ -1038,7 +1064,7 @@ def test_managed_agent_enables_runtime_v03_compatibility() -> None:
             root_agent=LlmAgent(
                 name="test_agent",
                 description="Test agent",
-                model="gemini-2.5-flash",
+                model="gemini-3.7-flash",
             ),
         ),
         {"test_skill"},
@@ -1062,7 +1088,7 @@ def test_managed_agent_uses_a_request_local_task_store() -> None:
             root_agent=LlmAgent(
                 name="test_agent",
                 description="Test agent",
-                model="gemini-2.5-flash",
+                model="gemini-3.7-flash",
             ),
         ),
         {"test_skill"},
@@ -1126,7 +1152,7 @@ def test_managed_agent_executor_uses_no_remote_session_service() -> None:
             root_agent=LlmAgent(
                 name="test_agent",
                 description="Test agent",
-                model="gemini-2.5-flash",
+                model="gemini-3.7-flash",
             ),
         )
     )
@@ -1312,7 +1338,7 @@ def test_managed_agent_accepts_the_deployed_runtime_http_contract() -> None:
             root_agent=LlmAgent(
                 name="contract_agent",
                 description="Contract agent",
-                model="gemini-2.5-flash",
+                model="gemini-3.7-flash",
             ),
         ),
         {"contract_test"},
@@ -1547,6 +1573,7 @@ async def test_model_armor_response_includes_its_associated_prompt() -> None:
 def test_planner_exposes_only_skill_level_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_PROJECT", "useuumi")
     monkeypatch.setenv("UUMI_GOOGLE_CLOUD_LOCATION", "us-east1")
+    monkeypatch.setenv("UUMI_GOOGLE_CLOUD_MODEL_LOCATION", "us")
     from agents.planner.agent import root_agent
 
     assert {getattr(tool, "__name__", "") for tool in root_agent.tools} == {

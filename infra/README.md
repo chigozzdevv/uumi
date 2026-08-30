@@ -170,6 +170,7 @@ uv run --all-extras python -m agents.deploy \
   --catalog-project YOUR_UUMI_DATA_PROJECT \
   --organisation YOUR_UUMI_ORGANISATION \
   --region YOUR_REGION \
+  --model-location YOUR_MODEL_LOCATION \
   --staging-bucket AGENT_STAGING_BUCKET \
   --kms-key AGENT_KMS_KEY \
   --ingress-gateway AGENT_INGRESS_GATEWAY \

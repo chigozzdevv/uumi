@@ -477,6 +477,7 @@ module "governance" {
 
   project_id          = var.project_id
   region              = var.region
+  model_location      = var.agent_model_location
   agent_principal_set = local.legacy_agent_principal_set
   deployment_member   = module.identity.members["uumi-agents"]
   model_armor_callers = toset([
@@ -516,6 +517,7 @@ module "agent_governance" {
 
   project_id          = local.agent_project_id
   region              = var.region
+  model_location      = var.agent_model_location
   agent_principal_set = local.agent_principal_set
   deployment_member   = module.identity.members["uumi-agents"]
   model_armor_callers = toset([
