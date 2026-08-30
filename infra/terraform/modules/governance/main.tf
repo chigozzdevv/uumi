@@ -82,11 +82,6 @@ locals {
         service_id   = "aiplatform-${var.model_location}-rep"
         url          = "https://aiplatform.${var.model_location}.rep.googleapis.com"
       }
-      aiplatform_model_mtls = {
-        display_name = "Vertex AI ${upper(var.model_location)} multi-region mTLS API"
-        service_id   = "aiplatform-${var.model_location}-rep-mtls"
-        url          = "https://aiplatform.${var.model_location}.rep.mtls.googleapis.com"
-      }
     },
   )
 }
