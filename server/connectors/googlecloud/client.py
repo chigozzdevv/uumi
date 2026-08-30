@@ -414,9 +414,7 @@ def _with_access(
     if not isinstance(raw_bindings, list) or not all(
         isinstance(binding, dict) for binding in raw_bindings
     ):
-        raise ConnectorError(
-            "google-iam-policy-invalid", "Google returned an invalid IAM policy"
-        )
+        raise ConnectorError("google-iam-policy-invalid", "Google returned an invalid IAM policy")
     bindings = [dict(binding) for binding in raw_bindings]
     changed_policy = False
     for role, members_to_add in additions.items():

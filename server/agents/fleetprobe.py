@@ -129,9 +129,7 @@ def _task(
                 },
             ),
         }
-        objective = (
-            "Sanitised Resend API key UI evidence: walkthrough_resend_api_keys_v1."
-        )
+        objective = "Sanitised Resend API key UI evidence: walkthrough_resend_api_keys_v1."
     elif kind is AgentKind.INVENTORY:
         context = {
             "inventory_item": scenario["credential"],
