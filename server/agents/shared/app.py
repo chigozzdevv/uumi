@@ -10,6 +10,7 @@ from google.adk.sessions import BaseSessionService, InMemorySessionService
 from vertexai.agent_engines.templates.a2a import A2aAgent, create_agent_card
 
 from agents.redact import redact
+from agents.shared.transport import install_gateway_transport
 
 _request_session: ContextVar[InMemorySessionService | None] = ContextVar(
     "uumi_request_session", default=None
@@ -56,6 +57,7 @@ class UumiA2aAgent(A2aAgent):
         )
 
     def set_up(self) -> None:
+        install_gateway_transport()
         super().set_up()  # type: ignore[no-untyped-call]
         primary_url = self.agent_card.supported_interfaces[0].url
         for interface in self.agent_card.supported_interfaces:

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -844,6 +845,63 @@ def test_managed_model_does_not_patch_google_transports(
 
     assert Gemini.generate_content_async is original_model_method
     assert AuthorizedSession.request is original_request
+
+
+def test_gateway_transport_keeps_multi_region_hosts_resolvable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents.shared.transport import install_gateway_transport
+    from google.auth.aio.transport.sessions import AsyncAuthorizedSession
+    from google.auth.transport.requests import AuthorizedSession
+
+    calls: list[str] = []
+
+    def sync_request(self: object, method: str, url: str) -> str:
+        calls.append(url)
+        return url
+
+    async def async_request(self: object, method: str, url: str) -> str:
+        calls.append(url)
+        return url
+
+    monkeypatch.setattr(AuthorizedSession, "request", sync_request)
+    monkeypatch.setattr(AsyncAuthorizedSession, "request", async_request)
+
+    install_gateway_transport()
+
+    sync_session = object.__new__(AuthorizedSession)
+    async_session = object.__new__(AsyncAuthorizedSession)
+    us_url = "https://aiplatform.us.rep.mtls.googleapis.com/v1/models"
+    eu_url = "https://aiplatform.eu.rep.mtls.googleapis.com/v1/models"
+
+    assert sync_session.request("POST", us_url) == (
+        "https://aiplatform.us.rep.googleapis.com/v1/models"
+    )
+    assert asyncio.run(async_session.request("POST", eu_url)) == (
+        "https://aiplatform.eu.rep.googleapis.com/v1/models"
+    )
+    assert calls == [
+        "https://aiplatform.us.rep.googleapis.com/v1/models",
+        "https://aiplatform.eu.rep.googleapis.com/v1/models",
+    ]
+
+
+def test_gateway_transport_leaves_other_mtls_hosts_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents.shared.transport import install_gateway_transport
+    from google.auth.transport.requests import AuthorizedSession
+
+    def request(self: object, method: str, url: str) -> str:
+        return url
+
+    monkeypatch.setattr(AuthorizedSession, "request", request)
+    install_gateway_transport()
+
+    session = object.__new__(AuthorizedSession)
+    url = "https://telemetry.mtls.googleapis.com/v1/traces"
+
+    assert session.request("POST", url) == url
 
 
 def test_managed_model_requires_an_explicit_project(
