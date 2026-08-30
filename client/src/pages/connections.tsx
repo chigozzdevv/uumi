@@ -98,6 +98,7 @@ export function ConnectionsPage({ initialConnectionId = "", onSelectConnection }
   const [tab, setTab] = useState<"overview" | "access">("overview")
   const [selectedPlaybookVersion, setSelectedPlaybookVersion] = useState("")
   const [creating, setCreating] = useState(() => connectionCallbackIntegration() !== null)
+  const [setupIntegration, setSetupIntegration] = useState<IntegrationKind | null>(null)
   const [editing, setEditing] = useState(false)
   const [creatingPlaybook, setCreatingPlaybook] = useState(false)
   const [initialSelectionHandled, setInitialSelectionHandled] = useState(false)
@@ -189,7 +190,7 @@ export function ConnectionsPage({ initialConnectionId = "", onSelectConnection }
   const error = [connections, playbooks, graph].find((query) => query.error)?.error
   if (error) return <div className="page"><Failure error={error} /></div>
 
-  if (creating) return <ConnectionSetup onClose={() => setCreating(false)} playbooks={playbooks.data!} connections={connections.data!} onChanged={async () => { await queryClient.invalidateQueries({ queryKey: ["connections"] }) }} />
+  if (creating) return <ConnectionSetup initialIntegration={setupIntegration} onClose={() => { setCreating(false); setSetupIntegration(null) }} playbooks={playbooks.data!} connections={connections.data!} onChanged={async () => { await queryClient.invalidateQueries({ queryKey: ["connections"] }) }} />
 
   if (creatingPlaybook && currentSelected) return <PlaybookSetup initialPlatform={currentSelected.platform} onClose={() => setCreatingPlaybook(false)} onCreated={async (playbook) => {
     await queryClient.invalidateQueries({ queryKey: ["playbooks"] })
@@ -225,12 +226,15 @@ export function ConnectionsPage({ initialConnectionId = "", onSelectConnection }
   </div>
 
   return <div className="page">
-    <PageHeader eyebrow="Inventory" title="Connections" actions={<Button onClick={() => setCreating(true)}><Plus className="size-3.5" /> Add connection</Button>} />
+    <PageHeader eyebrow="Inventory" title="Connections" actions={<Button onClick={() => { setSetupIntegration(null); setCreating(true) }}><Plus className="size-3.5" /> Add connection</Button>} />
     <Toolbar value={search} onChange={setSearch} placeholder="Search connections or platforms" onClear={() => { setSearch(""); setRole("all") }} filters={[{ label: "Role", value: role, defaultValue: "all", onChange: (event) => setRole(event.target.value), children: <><option value="all">All roles</option>{[...new Set(connections.data!.flatMap((item) => item.roles))].map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}</> }]} />
     <Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Platform</TableHead><TableHead>Role</TableHead><TableHead>Interface</TableHead><TableHead>Status</TableHead><TableHead className="pr-0 text-right">Action</TableHead></TableRow></TableHeader><TableBody>{rows.map((connection) => {
       const status = connectionStatus(connection.status)
       const openDetails = () => { setSelected(connection); setTab("overview"); onSelectConnection(connection.id) }
-      return <TableRow key={connection.id}><TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left font-medium hover:underline" onClick={openDetails}><Marker icon={PlugZap} />{connection.display_name}</button></TableCell><TableCell><Provider value={connection.platform} /></TableCell><TableCell className="text-[var(--ink-soft)]">{roleLabel(connection)}</TableCell><TableCell>{titleCase(connection.interface)}</TableCell><TableCell><Badge variant={status.variant}>{status.label}</Badge></TableCell><TableCell className="pr-0"><div className="flex justify-end"><Button className="pr-1" variant="ghost" size="sm" onClick={openDetails}>{connectionAction(connection.status)} <ChevronRight className="size-3.5" /></Button></div></TableCell></TableRow>
+      const openAction = connection.platform === "google-cloud" && connection.status === "setup-required"
+        ? () => { setSetupIntegration("google-cloud"); setCreating(true) }
+        : openDetails
+      return <TableRow key={connection.id}><TableCell><button className="focus-ring flex items-center gap-3 rounded-lg text-left font-medium hover:underline" onClick={openDetails}><Marker icon={PlugZap} />{connection.display_name}</button></TableCell><TableCell><Provider value={connection.platform} /></TableCell><TableCell className="text-[var(--ink-soft)]">{roleLabel(connection)}</TableCell><TableCell>{titleCase(connection.interface)}</TableCell><TableCell><Badge variant={status.variant}>{status.label}</Badge></TableCell><TableCell className="pr-0"><div className="flex justify-end"><Button className="pr-1" variant="ghost" size="sm" onClick={openAction}>{connectionAction(connection.status)} <ChevronRight className="size-3.5" /></Button></div></TableCell></TableRow>
     })}</TableBody></Table>
   </div>
 }
@@ -242,11 +246,12 @@ type ConnectionSetupProps = {
   onChanged: () => Promise<void>
   onCreated?: (connection: Connection) => Promise<void>
   initialRoles?: ConnectionRole[]
+  initialIntegration?: IntegrationKind | null
 }
 
 const providerCapabilities = ["provider.listCredentialMetadata", "provider.createCredential", "provider.getCredentialStatus", "provider.revokeCredential", "provider.testCredential"]
-export function ConnectionSetup({ onClose, playbooks, connections, onChanged, onCreated, initialRoles = [] }: ConnectionSetupProps) {
-  const [integration, setIntegration] = useState<IntegrationKind | null>(() => connectionCallbackIntegration())
+export function ConnectionSetup({ onClose, playbooks, connections, onChanged, onCreated, initialRoles = [], initialIntegration = null }: ConnectionSetupProps) {
+  const [integration, setIntegration] = useState<IntegrationKind | null>(() => connectionCallbackIntegration() ?? initialIntegration)
   const requestedProvider = initialRoles.length === 1 && initialRoles[0] === "provider"
   const requestedGoogle = initialRoles.some((role) => role === "runtime" || role === "secret-store")
   const requestedIncident = initialRoles.length === 1 && initialRoles[0] === "incident"
@@ -350,7 +355,7 @@ function GoogleCloudSetup({ onClose, onBack, onChanged, onCreated }: Omit<Connec
   const [sessionId, setSessionId] = useState("")
   const [projectId, setProjectId] = useState("")
   const [automationIdentity, setAutomationIdentity] = useState("")
-  const [prepared, setPrepared] = useState<{ connection: Connection; grant_command: string } | null>(null)
+  const [prepared, setPrepared] = useState<Connection | null>(null)
   const selectedProject = projects.find((item) => item.project_id === projectId)
   const begin = useMutation({
     mutationFn: () => api.beginGoogleCloudOnboarding(),
@@ -365,9 +370,9 @@ function GoogleCloudSetup({ onClose, onBack, onChanged, onCreated }: Omit<Connec
     if (!sessionId) throw new Error("Google Cloud discovery session is unavailable")
     return api.prepareGoogleCloudConnection(sessionId, { project_id: selectedProject.project_id, automation_identity: automationIdentity })
   } })
-  const verify = useMutation({ mutationFn: () => {
-    if (!prepared || !sessionId) throw new Error("Google Cloud access is not ready to verify")
-    return api.verifyGoogleCloudConnection(sessionId, prepared.connection.revision)
+  const authorize = useMutation({ mutationFn: () => {
+    if (!prepared || !sessionId) throw new Error("Google Cloud access is not ready to authorize")
+    return api.authorizeGoogleCloudConnection(sessionId, prepared.revision)
   } })
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search)
@@ -398,12 +403,12 @@ function GoogleCloudSetup({ onClose, onBack, onChanged, onCreated }: Omit<Connec
 
   async function continueSetup() {
     const result = await prepare.mutateAsync()
-    setPrepared(result)
+    setPrepared(result.connection)
     setStep(1)
   }
 
   async function submit() {
-    const result = await verify.mutateAsync()
+    const result = await authorize.mutateAsync()
     await onChanged()
     if (onCreated) await onCreated(result)
     else onClose()
@@ -411,9 +416,9 @@ function GoogleCloudSetup({ onClose, onBack, onChanged, onCreated }: Omit<Connec
 
   if (!projects.length) return <ConnectPage eyebrow="Inventory / Connections" title="Google Cloud" onBack={onBack} onClose={onClose} error={(begin.error ?? discover.error)?.message} action={<Button onClick={() => begin.mutate()} disabled={begin.isPending || discover.isPending}>{begin.isPending || discover.isPending ? "Connecting…" : "Connect"}</Button>}><IntegrationMark kind="google-cloud" /></ConnectPage>
 
-  return <SetupPage eyebrow="Inventory / Connections" title="Google Cloud" steps={["Project", "Review"]} current={step} onBack={() => setStep((value) => value - 1)} onExit={onBack} onCancel={onClose} error={(prepare.error ?? verify.error)?.message} primary={step === 0 ? <Button onClick={continueSetup} disabled={!canContinue || prepare.isPending}>{prepare.isPending ? "Preparing…" : "Continue"}</Button> : <Button onClick={submit} disabled={verify.isPending}>{verify.isPending ? "Verifying…" : "Verify access"}</Button>}>
+  return <SetupPage eyebrow="Inventory / Connections" title="Google Cloud" steps={["Project", "Review"]} current={step} onBack={() => setStep((value) => value - 1)} onExit={onBack} onCancel={onClose} error={(prepare.error ?? authorize.error)?.message} primary={step === 0 ? <Button onClick={continueSetup} disabled={!canContinue || prepare.isPending}>{prepare.isPending ? "Preparing…" : "Continue"}</Button> : <Button onClick={submit} disabled={authorize.isPending}>{authorize.isPending ? "Authorizing…" : "Authorize access"}</Button>}>
     {step === 0 && <FormGrid><Field label="Project"><SelectControl value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Select project</option>{projects.map((project) => <option key={project.project_id} value={project.project_id}>{project.display_name}</option>)}</SelectControl></Field><Field label="Automation identity"><SelectControl value={automationIdentity} onChange={(event) => setAutomationIdentity(event.target.value)} disabled={!selectedProject}><option value="">Select identity</option>{(selectedProject?.service_accounts ?? []).map((account) => <option key={account.email} value={account.email}>{account.display_name}</option>)}</SelectControl></Field></FormGrid>}
-    {step === 1 && <div className="space-y-5"><div className="grid gap-5 lg:grid-cols-2"><Section title="Google Cloud" onEdit={() => { setPrepared(null); setStep(0) }}><DetailList><Detail label="Project">{selectedProject?.display_name}</Detail><Detail label="Cloud Run services">{selectedProject?.services.length}</Detail></DetailList></Section><Section title="Access" onEdit={() => { setPrepared(null); setStep(0) }}><DetailList><Detail label="Automation identity">{selectedProject?.service_accounts.find((item) => item.email === automationIdentity)?.display_name}</Detail><Detail label="Authorization">Workload identity</Detail></DetailList></Section></div><Field label="Grant access"><div className="flex items-center gap-3"><code className="min-w-0 flex-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-white px-3.5 py-3 text-[9px] text-[var(--ink)]">{prepared?.grant_command}</code><Button variant="secondary" onClick={() => void navigator.clipboard.writeText(prepared?.grant_command ?? "")}>Copy</Button></div></Field></div>}
+    {step === 1 && <div className="grid gap-5 lg:grid-cols-2"><Section title="Google Cloud" onEdit={() => { setPrepared(null); setStep(0) }}><DetailList><Detail label="Project">{selectedProject?.display_name}</Detail><Detail label="Cloud Run services">{selectedProject?.services.length}</Detail></DetailList></Section><Section title="Access" onEdit={() => { setPrepared(null); setStep(0) }}><DetailList><Detail label="Automation identity">{selectedProject?.service_accounts.find((item) => item.email === automationIdentity)?.display_name}</Detail><Detail label="Authorization">Workload identity</Detail></DetailList></Section></div>}
   </SetupPage>
 }
 

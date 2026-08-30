@@ -199,6 +199,8 @@ resource "google_access_context_manager_service_perimeter" "uumi" {
         [
           "RESTRICTED-SERVICES",
           "run.googleapis.com",
+          "cloudresourcemanager.googleapis.com",
+          "iam.googleapis.com",
         ],
         var.enable_agent_gateway ? [
           "aiplatform.googleapis.com",

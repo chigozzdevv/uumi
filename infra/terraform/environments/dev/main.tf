@@ -376,7 +376,8 @@ module "runtime" {
   google_cloud_client_secret_version = (
     var.google_cloud_client_secret_version == null ? "" : var.google_cloud_client_secret_version
   )
-  google_cloud_callback_url = var.google_cloud_callback_url == null ? "" : var.google_cloud_callback_url
+  google_cloud_callback_url       = var.google_cloud_callback_url == null ? "" : var.google_cloud_callback_url
+  google_cloud_onboarding_kms_key = module.storage.kms_key
   github_webhook_secret_version = (
     var.github_webhook_secret_version == null ? "" : var.github_webhook_secret_version
   )

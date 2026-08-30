@@ -7,6 +7,8 @@ from secrets import token_urlsafe
 from typing import Protocol
 from urllib.parse import urlencode
 
+from connectors.base import SecretValue
+from connectors.base.errors import ConnectorError
 from connectors.googlecloud import GoogleCloudOnboardingConnector
 from contracts import (
     Connection,
@@ -20,6 +22,7 @@ from contracts import (
 )
 
 from core.errors import ResourceConflictError, ResourceNotFoundError
+from core.googlecloud.authorization import GoogleCloudAuthorizationCipher
 from core.ids import new_id
 
 _RUNTIME_CAPABILITIES = frozenset(
@@ -55,6 +58,8 @@ class GoogleCloudRepositoryStore(Protocol):
         session: GoogleCloudOnboardingSession,
         projects: tuple[GoogleCloudProject, ...],
         completed_at: datetime,
+        authorization_ciphertext: str,
+        authorization_expires_at: datetime,
     ) -> GoogleCloudOnboardingSession: ...
 
     async def attach_connection(
@@ -63,11 +68,19 @@ class GoogleCloudRepositoryStore(Protocol):
         connection_id: str,
     ) -> GoogleCloudOnboardingSession: ...
 
+    async def authorize_session(
+        self,
+        session: GoogleCloudOnboardingSession,
+        authorized_at: datetime,
+    ) -> GoogleCloudOnboardingSession: ...
+
 
 class GoogleCloudInventoryStore(Protocol):
     async def add_connection(self, value: Connection) -> Connection: ...
 
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection: ...
+
+    async def connections(self, organisation_id: str) -> tuple[Connection, ...]: ...
 
     async def replace_connection(self, value: Connection, expected_revision: int) -> Connection: ...
 
@@ -87,6 +100,7 @@ class GoogleCloudOnboardingService:
         inventory: GoogleCloudInventoryStore | None = None,
         validator: GoogleCloudConnectionValidator | None = None,
         broker_service_account: str = "",
+        authorization_cipher: GoogleCloudAuthorizationCipher | None = None,
     ) -> None:
         self._repository = repository
         self._connector = connector
@@ -96,6 +110,7 @@ class GoogleCloudOnboardingService:
         self._inventory = inventory
         self._validator = validator
         self._broker_service_account = broker_service_account
+        self._authorization_cipher = authorization_cipher
 
     async def begin(
         self, organisation_id: str, subject: str
@@ -144,15 +159,35 @@ class GoogleCloudOnboardingService:
         _authorise(session, subject, state, verifier, now)
         if session.status is GoogleCloudOnboardingStatus.COMPLETE:
             raise ResourceConflictError("Google Cloud discovery has already been completed")
-        metadata = await self._connector.discover(code, verifier)
-        projects = tuple(GoogleCloudProject.model_validate(item) for item in metadata)
-        if not projects:
-            raise ResourceConflictError(
-                "Google Cloud returned no project with Cloud Run services "
-                "and an automation identity"
-            )
-        completed = await self._repository.complete_session(session, projects, now)
-        return completed, projects
+        cipher = _required(self._authorization_cipher, "Google Cloud authorization protection")
+        try:
+            discovery = await self._connector.discover(code, verifier)
+            try:
+                projects = tuple(
+                    GoogleCloudProject.model_validate(item) for item in discovery.projects
+                )
+                if not projects:
+                    raise ResourceConflictError(
+                        "Google Cloud returned no project with Cloud Run services "
+                        "and an automation identity"
+                    )
+                ciphertext, authorization_expires_at = await cipher.seal(
+                    session,
+                    discovery.access_token,
+                    discovery.expires_at,
+                )
+                completed = await self._repository.complete_session(
+                    session,
+                    projects,
+                    now,
+                    ciphertext,
+                    authorization_expires_at,
+                )
+                return completed, projects
+            finally:
+                discovery.access_token.clear()
+        except ConnectorError as error:
+            raise ResourceConflictError(str(error)) from None
 
     async def prepare_connection(
         self,
@@ -161,7 +196,7 @@ class GoogleCloudOnboardingService:
         subject: str,
         project_id: str,
         automation_identity: str,
-    ) -> tuple[Connection, str]:
+    ) -> Connection:
         inventory = _required(self._inventory, "Google Cloud inventory")
         session = await self._repository.get_session(organisation_id, session_id)
         _authorise_completed(session, subject, self._clock())
@@ -187,7 +222,27 @@ class GoogleCloudOnboardingService:
                 raise ResourceConflictError(
                     "Restart Google Cloud setup to change the selected project or identity"
                 )
-            return existing, self._grant_command(project.project_id, account.email)
+            return existing
+        authorization_reference = f"workload-identity://{account.email}"
+        reusable = next(
+            (
+                item
+                for item in await inventory.connections(organisation_id)
+                if item.platform == "google-cloud"
+                and item.status is ConnectionStatus.SETUP_REQUIRED
+                and item.archived_at is None
+                and item.authorization_reference == authorization_reference
+                and item.allowed_resources
+                and all(
+                    resource.startswith(f"projects/{project.project_id}/")
+                    for resource in item.allowed_resources
+                )
+            ),
+            None,
+        )
+        if reusable is not None:
+            await self._repository.attach_connection(session, reusable.id)
+            return reusable
         now = self._clock()
         connection = Connection(
             id=new_id("conn"),
@@ -197,7 +252,7 @@ class GoogleCloudOnboardingService:
             roles=frozenset({ConnectionRole.RUNTIME, ConnectionRole.SECRET_STORE}),
             interface=ConnectionInterface.API,
             authorization=ConnectionAuthorization.WORKLOAD_IDENTITY,
-            authorization_reference=f"workload-identity://{account.email}",
+            authorization_reference=authorization_reference,
             capabilities=_RUNTIME_CAPABILITIES | _SECRET_CAPABILITIES,
             allowed_resources=tuple(
                 dict.fromkeys(
@@ -221,9 +276,9 @@ class GoogleCloudOnboardingService:
             )
             await inventory.replace_connection(archived, stored.revision)
             raise
-        return stored, self._grant_command(project.project_id, account.email)
+        return stored
 
-    async def verify_connection(
+    async def authorize_connection(
         self,
         organisation_id: str,
         session_id: str,
@@ -232,18 +287,47 @@ class GoogleCloudOnboardingService:
     ) -> Connection:
         inventory = _required(self._inventory, "Google Cloud inventory")
         validator = _required(self._validator, "Google Cloud access validation")
+        cipher = _required(self._authorization_cipher, "Google Cloud authorization protection")
         session = await self._repository.get_session(organisation_id, session_id)
         _authorise_completed(session, subject, self._clock())
         if session.connection_id is None:
             raise ResourceConflictError("Google Cloud connection has not been prepared")
         connection = await inventory.get_connection(organisation_id, session.connection_id)
+        if connection.status is ConnectionStatus.READY:
+            if session.authorization_ciphertext is not None:
+                await self._repository.authorize_session(session, self._clock())
+            return connection
         if connection.revision != expected_revision:
             raise ResourceConflictError(
                 f"connection expected revision {expected_revision}, found {connection.revision}"
             )
         if connection.status is not ConnectionStatus.SETUP_REQUIRED:
             raise ResourceConflictError("Google Cloud connection is not awaiting access")
-        await validator.validate(connection)
+        if not self._broker_service_account:
+            raise ResourceConflictError("Google Cloud broker identity is unavailable")
+        project, automation_identity = _selection(session, connection)
+        token: SecretValue | None = None
+        try:
+            token = await cipher.open(session, self._clock())
+            await self._connector.authorize(
+                token,
+                project.project_id,
+                automation_identity,
+                tuple(
+                    dict.fromkeys(
+                        service.runtime_identity
+                        for service in project.services
+                        if service.runtime_identity is not None
+                    )
+                ),
+                self._broker_service_account,
+            )
+            await validator.validate(connection)
+        except ConnectorError as error:
+            raise ResourceConflictError(str(error)) from None
+        finally:
+            if token is not None:
+                token.clear()
         now = self._clock()
         ready = connection.model_copy(
             update={
@@ -254,17 +338,9 @@ class GoogleCloudOnboardingService:
                 "revision": connection.revision + 1,
             }
         )
-        return await inventory.replace_connection(ready, expected_revision)
-
-    def _grant_command(self, project_id: str, automation_identity: str) -> str:
-        if not self._broker_service_account:
-            raise ResourceConflictError("Google Cloud broker identity is unavailable")
-        return (
-            "gcloud iam service-accounts add-iam-policy-binding "
-            f"{automation_identity} --project={project_id} "
-            f"--member=serviceAccount:{self._broker_service_account} "
-            "--role=roles/iam.serviceAccountTokenCreator"
-        )
+        stored = await inventory.replace_connection(ready, expected_revision)
+        await self._repository.authorize_session(session, now)
+        return stored
 
 
 def _authorise(
@@ -301,6 +377,23 @@ def _required[T](value: T | None, label: str) -> T:
     if value is None:
         raise ResourceConflictError(f"{label} is unavailable")
     return value
+
+
+def _selection(
+    session: GoogleCloudOnboardingSession,
+    connection: Connection,
+) -> tuple[GoogleCloudProject, str]:
+    reference = connection.authorization_reference or ""
+    automation_identity = reference.removeprefix("workload-identity://")
+    for project in session.projects:
+        if not any(
+            resource.startswith(f"projects/{project.project_id}/")
+            for resource in connection.allowed_resources
+        ):
+            continue
+        if any(account.email == automation_identity for account in project.service_accounts):
+            return project, automation_identity
+    raise ResourceConflictError("Google Cloud connection selection is invalid")
 
 
 def _hash(value: str) -> str:

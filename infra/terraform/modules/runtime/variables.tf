@@ -194,6 +194,20 @@ variable "google_cloud_callback_url" {
   }
 }
 
+variable "google_cloud_onboarding_kms_key" {
+  description = "KMS key used to protect short-lived Google Cloud onboarding authorization."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.google_cloud_onboarding_kms_key == "" ||
+      can(regex("^projects/[a-z0-9-]+/locations/[a-z0-9-]+/keyRings/[A-Za-z0-9_-]+/cryptoKeys/[A-Za-z0-9_-]+$", var.google_cloud_onboarding_kms_key))
+    )
+    error_message = "google_cloud_onboarding_kms_key must be empty or a full KMS key resource name."
+  }
+}
+
 variable "github_webhook_secret_version" {
   description = "Secret Manager version holding the global GitHub App webhook secret."
   type        = string

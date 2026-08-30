@@ -254,7 +254,6 @@ export interface GoogleCloudDiscoveryResponse {
 
 export interface GoogleCloudConnectionResponse {
   connection: Connection
-  grant_command: string
 }
 
 export interface PlaybookVersion {
@@ -517,11 +516,11 @@ class ApiClient {
     })
   }
 
-  async verifyGoogleCloudConnection(
+  async authorizeGoogleCloudConnection(
     sessionId: Identifier,
     expectedRevision: number,
   ): Promise<Connection> {
-    return this.request(`${ROOT}/google-cloud/onboarding/${sessionId}/connection/verify`, {
+    return this.request(`${ROOT}/google-cloud/onboarding/${sessionId}/connection/authorize`, {
       method: "POST",
       body: JSON.stringify({ expected_revision: expectedRevision }),
     })

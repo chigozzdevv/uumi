@@ -2,13 +2,27 @@ from contracts import (
     Connection,
     Contract,
     GoogleCloudOnboardingSession,
+    GoogleCloudOnboardingStatus,
     GoogleCloudProject,
 )
 from core.auth import Permission
 from fastapi import APIRouter, Request, status
-from pydantic import Field
+from pydantic import AwareDatetime, Field
 
 from api.deps import Identity, required, services
+
+
+class GoogleCloudOnboardingView(Contract):
+    id: str
+    organisation_id: str
+    status: GoogleCloudOnboardingStatus
+    projects: tuple[GoogleCloudProject, ...]
+    connection_id: str | None
+    created_at: AwareDatetime
+    expires_at: AwareDatetime
+    completed_at: AwareDatetime | None
+    authorized_at: AwareDatetime | None
+
 
 router = APIRouter(
     prefix="/v1/organisations/{organisation_id}/google-cloud",
@@ -17,7 +31,7 @@ router = APIRouter(
 
 
 class BeginGoogleCloudResponse(Contract):
-    session: GoogleCloudOnboardingSession
+    session: GoogleCloudOnboardingView
     state: str = Field(min_length=32, max_length=256)
     pkce_verifier: str = Field(min_length=43, max_length=128)
     authorization_url: str = Field(pattern=r"^https://accounts\.google\.com/")
@@ -30,7 +44,7 @@ class CompleteGoogleCloudRequest(Contract):
 
 
 class CompleteGoogleCloudResponse(Contract):
-    session: GoogleCloudOnboardingSession
+    session: GoogleCloudOnboardingView
     projects: tuple[GoogleCloudProject, ...]
 
 
@@ -45,10 +59,9 @@ class PrepareGoogleCloudConnectionRequest(Contract):
 
 class PrepareGoogleCloudConnectionResponse(Contract):
     connection: Connection
-    grant_command: str = Field(min_length=32, max_length=4096)
 
 
-class VerifyGoogleCloudConnectionRequest(Contract):
+class AuthorizeGoogleCloudConnectionRequest(Contract):
     expected_revision: int = Field(ge=0)
 
 
@@ -68,7 +81,7 @@ async def begin_google_cloud_onboarding(
         api.google_cloud, "google-cloud"
     ).begin(organisation_id, identity.subject)
     return BeginGoogleCloudResponse(
-        session=session,
+        session=_view(session),
         state=state,
         pkce_verifier=verifier,
         authorization_url=authorization_url,
@@ -96,7 +109,7 @@ async def complete_google_cloud_onboarding(
         payload.pkce_verifier,
         payload.code,
     )
-    return CompleteGoogleCloudResponse(session=session, projects=projects)
+    return CompleteGoogleCloudResponse(session=_view(session), projects=projects)
 
 
 @router.post(
@@ -113,35 +126,50 @@ async def prepare_google_cloud_connection(
 ) -> PrepareGoogleCloudConnectionResponse:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
-    connection, command = await required(api.google_cloud, "google-cloud").prepare_connection(
+    connection = await required(api.google_cloud, "google-cloud").prepare_connection(
         organisation_id,
         session_id,
         identity.subject,
         payload.project_id,
         payload.automation_identity,
     )
-    return PrepareGoogleCloudConnectionResponse(
-        connection=connection,
-        grant_command=command,
-    )
+    return PrepareGoogleCloudConnectionResponse(connection=connection)
 
 
 @router.post(
-    "/onboarding/{session_id}/connection/verify",
+    "/onboarding/{session_id}/connection/authorize",
     response_model=Connection,
 )
-async def verify_google_cloud_connection(
+async def authorize_google_cloud_connection(
     organisation_id: str,
     session_id: str,
-    payload: VerifyGoogleCloudConnectionRequest,
+    payload: AuthorizeGoogleCloudConnectionRequest,
     request: Request,
     identity: Identity,
 ) -> Connection:
     api = services(request)
     await api.access.require(identity, organisation_id, Permission.INVENTORY_WRITE)
-    return await required(api.google_cloud, "google-cloud").verify_connection(
+    return await required(api.google_cloud, "google-cloud").authorize_connection(
         organisation_id,
         session_id,
         identity.subject,
         payload.expected_revision,
+    )
+
+
+def _view(session: GoogleCloudOnboardingSession) -> GoogleCloudOnboardingView:
+    return GoogleCloudOnboardingView.model_validate(
+        session.model_dump(
+            include={
+                "id",
+                "organisation_id",
+                "status",
+                "projects",
+                "connection_id",
+                "created_at",
+                "expires_at",
+                "completed_at",
+                "authorized_at",
+            }
+        )
     )

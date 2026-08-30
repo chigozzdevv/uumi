@@ -23,7 +23,7 @@ agents = [
     "google-adk[a2a,gcp]>=2,<3",
 ]
 browser = ["playwright>=1.55,<2"]
-mcp = ["mcp>=2,<3"]
+mcp = ["httpx2>=2,<3", "mcp>=2,<3"]
 
 [tool.uv.sources]
 uumi-contracts = { workspace = true }

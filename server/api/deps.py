@@ -39,6 +39,7 @@ from core.errors import AuthenticationError
 from core.github import FirestoreGitHubRepository, GitHubOnboardingService
 from core.googlecloud import (
     FirestoreGoogleCloudRepository,
+    GoogleCloudAuthorizationCipher,
     GoogleCloudBrokerValidator,
     GoogleCloudOnboardingService,
 )
@@ -236,6 +237,10 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             inventory_repository,
             GoogleCloudBrokerValidator(configured.broker_url),
             configured.broker_service_account,
+            GoogleCloudAuthorizationCipher(
+                google,
+                configured.google_cloud_onboarding_kms_key,
+            ),
         )
     return ApiServices(
         workflow=workflow,

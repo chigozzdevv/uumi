@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     google_cloud_client_id: str = Field(default="", max_length=512)
     google_cloud_client_secret: str = Field(default="", max_length=1024)
     google_cloud_callback_url: str = Field(default="", max_length=2048)
+    google_cloud_onboarding_kms_key: str = Field(default="", max_length=1024)
     broker_url: str = Field(default="", max_length=2048)
     broker_service_account: str = Field(default="", max_length=320)
     notification_email_secret_version: str = Field(default="", max_length=1024)
@@ -88,6 +89,7 @@ class Settings(BaseSettings):
             self.google_cloud_client_id,
             self.google_cloud_client_secret,
             self.google_cloud_callback_url,
+            self.google_cloud_onboarding_kms_key,
         )
         if any(google_cloud) and not all(google_cloud):
             raise ValueError("Google Cloud onboarding configuration is incomplete")
@@ -111,6 +113,11 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Google Cloud callback URL must be an HTTPS URL without credentials"
                 )
+        if self.google_cloud_onboarding_kms_key and not re.fullmatch(
+            rf"projects/{re.escape(self.project_id)}/locations/[a-z0-9-]+/keyRings/[A-Za-z0-9_-]+/cryptoKeys/[A-Za-z0-9_-]+",
+            self.google_cloud_onboarding_kms_key,
+        ):
+            raise ValueError("Google Cloud onboarding KMS key is invalid")
         if self.broker_url:
             broker = urlsplit(self.broker_url)
             if (

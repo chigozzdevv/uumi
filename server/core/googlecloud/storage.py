@@ -41,6 +41,8 @@ class FirestoreGoogleCloudRepository:
         session: GoogleCloudOnboardingSession,
         projects: tuple[GoogleCloudProject, ...],
         completed_at: datetime,
+        authorization_ciphertext: str,
+        authorization_expires_at: datetime,
     ) -> GoogleCloudOnboardingSession:
         reference = self._client.document(
             FirestorePaths.google_cloud_onboarding(session.organisation_id, session.id)
@@ -59,6 +61,8 @@ class FirestoreGoogleCloudRepository:
                     "status": GoogleCloudOnboardingStatus.COMPLETE,
                     "projects": projects,
                     "completed_at": completed_at,
+                    "authorization_ciphertext": authorization_ciphertext,
+                    "authorization_expires_at": authorization_expires_at,
                 }
             )
             transaction.set(reference, encode(completed))
@@ -90,6 +94,37 @@ class FirestoreGoogleCloudRepository:
             return changed
 
         return await attach(self._client.transaction(max_attempts=5))
+
+    async def authorize_session(
+        self,
+        session: GoogleCloudOnboardingSession,
+        authorized_at: datetime,
+    ) -> GoogleCloudOnboardingSession:
+        reference = self._client.document(
+            FirestorePaths.google_cloud_onboarding(session.organisation_id, session.id)
+        )
+
+        @async_transactional
+        async def authorize(transaction: AsyncTransaction) -> GoogleCloudOnboardingSession:
+            snapshot = await reference.get(transaction=transaction)
+            if not snapshot.exists:
+                raise ResourceNotFoundError(f"Google Cloud onboarding {session.id} was not found")
+            current = GoogleCloudOnboardingSession.model_validate(_data(snapshot))
+            if current != session:
+                if current.authorized_at is not None:
+                    return current
+                raise ResourceConflictError("Google Cloud onboarding changed before authorization")
+            changed = current.model_copy(
+                update={
+                    "authorization_ciphertext": None,
+                    "authorization_expires_at": None,
+                    "authorized_at": authorized_at,
+                }
+            )
+            transaction.set(reference, encode(changed))
+            return changed
+
+        return await authorize(self._client.transaction(max_attempts=5))
 
 
 def _data(snapshot: Any) -> dict[str, Any]:

@@ -1,24 +1,15 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 from broker.capability import CapabilityClaims, CapabilitySigner, request_digest
 from contracts import Approval, ProtectedAction, RotationRun, ToolRequest, ToolResult
+from core.mcpclient import authenticated_streamable_http
 from core.storage.catalog import FirestoreCatalog
 from core.storage.paths import FirestorePaths
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
 from mcp import Client
-from mcp.client.streamable_http import StreamableHTTPTransport
-
-
-class HeaderTransport(StreamableHTTPTransport):
-    def __init__(self, url: str, headers: dict[str, str]) -> None:
-        super().__init__(url)
-        self._headers = headers
-
-    def _prepare_headers(self) -> dict[str, str]:
-        return {**super()._prepare_headers(), **self._headers}
 
 
 class McpBrokerClient:
@@ -55,8 +46,8 @@ class McpBrokerClient:
         headers = {"Authorization": f"Bearer {await self._identity_token()}"}
         if tool not in _READ_TOOLS:
             headers["X-Uumi-Capability"] = await self._capability(run, request, approval_id)
-        transport = HeaderTransport(self._url, headers)
-        async with Client(cast(Any, transport), raise_exceptions=True) as client:
+        transport = authenticated_streamable_http(self._url, headers)
+        async with Client(transport, raise_exceptions=True) as client:
             response = await client.call_tool(
                 tool,
                 {"call": request.model_dump(mode="json", exclude={"tool"})},

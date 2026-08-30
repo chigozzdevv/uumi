@@ -2208,6 +2208,7 @@ browser = [
     { name = "playwright" },
 ]
 mcp = [
+    { name = "httpx2" },
     { name = "mcp" },
 ]
 
@@ -2222,6 +2223,7 @@ requires-dist = [
     { name = "google-cloud-firestore", specifier = ">=2.28,<3" },
     { name = "google-cloud-pubsub", specifier = ">=2.39,<3" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "httpx2", marker = "extra == 'mcp'", specifier = ">=2,<3" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2,<3" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.55,<2" },
     { name = "pydantic-settings", specifier = ">=2.10,<3" },

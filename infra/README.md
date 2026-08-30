@@ -58,23 +58,26 @@ place private or HMAC values in Terraform variables, plans, state, commands, or 
 Register a Google OAuth web client with the Uumi callback URL ending in
 `?google_cloud=callback`. Add its client secret as an immutable version of the managed
 `uumi-google-cloud-oauth-client` secret, then set the three `google_cloud_*` variables together.
-The short-lived user token is used only to discover visible projects, Cloud Run services, and
-service accounts during onboarding; it is cleared before the response and is never stored in
-Firestore or returned to the dashboard. The same Uumi OAuth client serves every customer; each
-authorization is isolated by the signed-in identity, PKCE-bound session, and Uumi organisation.
+The short-lived user token is KMS-encrypted for the 15-minute onboarding session, is never
+returned to the dashboard, and is cleared immediately after access is authorised. The same Uumi
+OAuth client serves every customer; each authorization is isolated by the signed-in identity,
+PKCE-bound session, and Uumi organisation.
 
-For each Google Cloud connection, select a customer-managed service account with only the roles
-needed on that connection's declared resources. The connection journey gives the administrator
-one exact IAM grant for the Uumi broker identity, verifies runtime and Secret Manager access,
-and only then marks the connection ready. Customer identities are not Terraform inputs, so a new
-connection never requires a Uumi redeployment. A browser worker receives an encrypted,
-short-lived token for its selected secret-store connection only when Secure Capture or authorised
-takeover needs it; the worker never receives impersonation permission. Uumi stores
+For each Google Cloud connection, select a dedicated customer-managed service account. The
+connection journey preserves existing IAM policies and grants that identity Cloud Run Developer,
+Secret Manager Viewer, and Secret Manager Secret Version Manager on the selected project. It also
+grants Service Account User on the discovered Cloud Run runtime identities and lets the Uumi broker
+mint short-lived tokens for the selected identities. Access is verified before the connection is
+marked ready. Customer identities are not Terraform inputs, so a new connection never requires a
+Uumi redeployment. A browser worker receives an encrypted, short-lived token for its selected
+secret-store connection only when Secure Capture or authorised takeover needs it; the worker never
+receives impersonation permission. Uumi stores
 `workload-identity://SERVICE_ACCOUNT_EMAIL` as the connection's authorisation reference; it is
 identity metadata, not a credential. Uumi uses that selected identity for runtime,
 secret-store, and connection-verification calls and rejects fallback to its own process identity.
-The customer administrator applying the displayed grant must be authorised to update the selected
-service account's IAM policy; Uumi cannot grant itself access to a customer account.
+The signed-in customer administrator must be authorised to update the selected project's IAM
+policy and the selected service-account policies; Uumi cannot grant itself access to a customer
+account.
 
 Register the customer-facing GitHub App with the Uumi ingestion URL ending in `/v1/github`,
 the configured HTTPS URL as both the OAuth callback and post-install setup URL, read access to

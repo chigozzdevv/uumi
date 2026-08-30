@@ -157,6 +157,17 @@ resource "google_firestore_field" "team_invitation_email" {
   }
 }
 
+resource "google_firestore_field" "google_cloud_onboarding_expiry" {
+  project         = var.project_id
+  database        = google_firestore_database.primary.name
+  collection      = "google-cloud-onboarding"
+  field           = "expires_at"
+  deletion_policy = "PREVENT"
+
+  ttl_config {}
+  index_config {}
+}
+
 resource "google_firestore_field" "principal_subject" {
   project         = var.project_id
   database        = google_firestore_database.primary.name

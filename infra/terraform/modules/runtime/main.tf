@@ -638,6 +638,11 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
+        name  = "UUMI_GOOGLE_CLOUD_ONBOARDING_KMS_KEY"
+        value = var.google_cloud_onboarding_kms_key
+      }
+
+      env {
         name  = "UUMI_NOTIFICATION_EMAIL_SECRET_VERSION"
         value = var.notification_email_secret_version
       }
