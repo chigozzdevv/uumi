@@ -1133,8 +1133,8 @@ class StageCoordinator:
         rejection_report = await self._latest_report(run, run.current_generation_id, Stage.REVOKE)
         await self._verification_checks(run, replacement_report, Stage.VERIFY)
         browser_managed = (
-            (await self._rotation_context(run)).provider.interface is ConnectionInterface.BROWSER
-        )
+            await self._rotation_context(run)
+        ).provider.interface is ConnectionInterface.BROWSER
         if not browser_managed and "credential-rejected" not in rejection_report.checks:
             raise ValueError("completion has no proof that the old credential is rejected")
         await self._incidents.advance_run(run.organisation_id, run.id, IncidentStatus.RESOLVED)
@@ -1581,7 +1581,9 @@ class StageCoordinator:
         expected_negative = (
             set()
             if browser_managed
-            else {ProbeKind.PROVIDER, ProbeKind.CREDENTIAL} if negative else set()
+            else {ProbeKind.PROVIDER, ProbeKind.CREDENTIAL}
+            if negative
+            else set()
         )
         if negative and not expected_negative.issubset(
             {item.kind for item in values if item.negative}

@@ -76,19 +76,23 @@ def compile_controls(
     management = by_id[credential.connection_id]
     secret_store = by_id[credential.secret_store_connection_id]
     browser_managed = management.interface is ConnectionInterface.BROWSER
-    verification = None if browser_managed else next(
-        (
-            connection
-            for connection in connections
-            if connection.platform == credential.provider
-            and ConnectionRole.PROVIDER in connection.roles
-            and connection.interface is ConnectionInterface.API
-            and connection.status is ConnectionStatus.READY
-            and connection.http is not None
-            and connection.http.test_credential is not None
-            and connection.http.credential_auth is not None
-        ),
-        None,
+    verification = (
+        None
+        if browser_managed
+        else next(
+            (
+                connection
+                for connection in connections
+                if connection.platform == credential.provider
+                and ConnectionRole.PROVIDER in connection.roles
+                and connection.interface is ConnectionInterface.API
+                and connection.status is ConnectionStatus.READY
+                and connection.http is not None
+                and connection.http.test_credential is not None
+                and connection.http.credential_auth is not None
+            ),
+            None,
+        )
     )
     if verification is None and not browser_managed:
         raise ResourceConflictError(

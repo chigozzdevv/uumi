@@ -1159,9 +1159,7 @@ async def test_setup_complete_normalizes_secret_manager_project_number() -> None
         catalog,
         _browser_connection(),
         state=_exported_state(),
-        stored_reference=(
-            "projects/256626005636/secrets/uumi-browser-session-org_one/versions/2"
-        ),
+        stored_reference=("projects/256626005636/secrets/uumi-browser-session-org_one/versions/2"),
     )
     session, token = await _ready_setup(service)
 
@@ -1214,9 +1212,7 @@ async def test_setup_complete_requires_a_captured_provider_session() -> None:
 @pytest.mark.anyio
 async def test_setup_complete_preserves_worker_capture_reason() -> None:
     catalog = SetupCatalog()
-    service, vms, _, _ = _setup_service(
-        catalog, _browser_connection(), state=_exported_state()
-    )
+    service, vms, _, _ = _setup_service(catalog, _browser_connection(), state=_exported_state())
     session, token = await _ready_setup(service)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1681,9 +1677,10 @@ async def test_setup_detects_only_authentication_storage_changed_after_navigatio
         url = "https://app.vendor.example.com/login"
 
     context = Context()
+    driver = Driver()
     runtime = SetupRuntime(
         cast(Any, context),
-        cast(Any, Driver()),
+        cast(Any, driver),
         "a" * 64,
         ("*.vendor.example.com",),
         "projects/project-one/secrets/uumi-browser-session-org_one",
@@ -1698,7 +1695,7 @@ async def test_setup_detects_only_authentication_storage_changed_after_navigatio
 
     assert not await runtime.authentication_captured()
 
-    runtime.driver.url = "https://app.vendor.example.com/overview"
+    driver.url = "https://app.vendor.example.com/overview"
 
     assert await runtime.authentication_captured()
 
@@ -2009,9 +2006,7 @@ async def test_gateway_binds_firebase_identity_behind_iap() -> None:
         email="OPERATOR@example.com",
     )
 
-    application = await gateway._application_identity(
-        {"identity_token": "firebase-token"}, iap
-    )
+    application = await gateway._application_identity({"identity_token": "firebase-token"}, iap)
 
     assert application.subject == "firebase-subject"
 
