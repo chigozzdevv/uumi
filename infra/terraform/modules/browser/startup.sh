@@ -28,7 +28,33 @@ iptables -I INPUT -p tcp -s "$runtime_cidr" --dport 8080 -j ACCEPT
 export DOCKER_CONFIG="/mnt/stateful_partition/uumi-docker"
 mkdir -p "$DOCKER_CONFIG"
 docker-credential-gcr configure-docker --registries="${region}-docker.pkg.dev"
-docker pull "$image"
+
+registry="https://${region}-docker.pkg.dev/v2/"
+registry_ready=false
+for attempt in {1..12}; do
+  if curl --silent --show-error --output /dev/null --max-time 10 "$registry"; then
+    registry_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$registry_ready" != "true" ]]; then
+  echo "Uumi browser worker cannot reach Artifact Registry." >/dev/console
+  exit 1
+fi
+
+image_ready=false
+for attempt in {1..4}; do
+  if docker pull "$image"; then
+    image_ready=true
+    break
+  fi
+  sleep "$((attempt * 3))"
+done
+if [[ "$image_ready" != "true" ]]; then
+  echo "Uumi browser worker cannot pull its pinned image." >/dev/console
+  exit 1
+fi
 
 if ! curl --fail --silent --show-error --header "$header" \
   "$metadata_root/instance/service-accounts/default/token" >/dev/null; then

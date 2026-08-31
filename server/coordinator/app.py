@@ -12,6 +12,7 @@ from agents.storage import AgentRepository
 from broker import CapabilitySigner, ConnectorRegistry
 from broker.evidence import GcsEvidenceSink
 from browser.compute import BrowserVmManager
+from browser.egress import BrowserEgressManager, FirestoreBrowserEgressStore
 from browser.secret import BrowserSecretAccessService
 from browser.service import BrowserService
 from browser.storage import FirestoreBrowserRepository
@@ -155,6 +156,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             settings.browser_image,
             settings.model_armor_template,
             settings.model_armor_response_template or settings.model_armor_template,
+            BrowserEgressManager(
+                FirestoreBrowserEgressStore(firestore, settings.region),
+                google,
+                settings.project_id,
+                settings.region,
+                settings.browser_network,
+                settings.browser_subnetwork,
+                settings.browser_worker_service_account,
+                settings.browser_egress_domains,
+                _now,
+            ),
         ),
         signer,
         secret_access=secret_access,

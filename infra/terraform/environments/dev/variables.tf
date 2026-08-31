@@ -265,6 +265,17 @@ variable "demo_image" {
   }
 }
 
+variable "demo_secret_version" {
+  description = "Pinned Secret Manager version consumed by the Resend demo runtime."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.demo_secret_version))
+    error_message = "demo_secret_version must be a positive numeric Secret Manager version."
+  }
+}
+
 variable "notification_app_url" {
   description = "Authenticated Uumi application origin used for safe notification links."
   type        = string

@@ -51,7 +51,7 @@ resource "google_cloud_run_v2_service" "demo" {
         value_source {
           secret_key_ref {
             secret  = var.demo_secret
-            version = "1"
+            version = var.demo_secret_version
           }
         }
       }
@@ -59,7 +59,7 @@ resource "google_cloud_run_v2_service" "demo" {
       resources {
         limits = {
           cpu    = "1"
-          memory = "256Mi"
+          memory = "512Mi"
         }
         cpu_idle          = true
         startup_cpu_boost = true
@@ -452,7 +452,7 @@ resource "google_cloud_run_v2_service" "web" {
 
   template {
     service_account                  = var.web_service_account
-    timeout                          = "55s"
+    timeout                          = "300s"
     max_instance_request_concurrency = 80
     execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"
 
@@ -655,6 +655,26 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "UUMI_BROWSER_WORKER_IMAGE"
         value = var.browser_image == null ? "" : var.browser_image
+      }
+
+      env {
+        name  = "UUMI_BROWSER_NETWORK"
+        value = var.browser_network
+      }
+
+      env {
+        name  = "UUMI_BROWSER_SUBNETWORK"
+        value = var.browser_subnetwork
+      }
+
+      env {
+        name  = "UUMI_BROWSER_WORKER_SERVICE_ACCOUNT"
+        value = var.browser_worker_service_account
+      }
+
+      env {
+        name  = "UUMI_BROWSER_EGRESS_DOMAINS"
+        value = jsonencode(sort(tolist(var.browser_egress_domains)))
       }
 
       env {
@@ -1053,6 +1073,26 @@ resource "google_cloud_run_v2_service" "coordinator" {
       env {
         name  = "UUMI_BROWSER_IMAGE"
         value = var.browser_image
+      }
+
+      env {
+        name  = "UUMI_BROWSER_NETWORK"
+        value = var.browser_network
+      }
+
+      env {
+        name  = "UUMI_BROWSER_SUBNETWORK"
+        value = var.browser_subnetwork
+      }
+
+      env {
+        name  = "UUMI_BROWSER_WORKER_SERVICE_ACCOUNT"
+        value = var.browser_worker_service_account
+      }
+
+      env {
+        name  = "UUMI_BROWSER_EGRESS_DOMAINS"
+        value = jsonencode(sort(tolist(var.browser_egress_domains)))
       }
       env {
         name  = "UUMI_MODEL_ARMOR_TEMPLATE"

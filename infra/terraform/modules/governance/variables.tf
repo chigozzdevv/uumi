@@ -51,6 +51,19 @@ variable "model_armor_callers" {
   }
 }
 
+variable "model_armor_vertex_service_agents" {
+  description = "Additional Vertex AI service agents allowed to apply this project's Model Armor templates."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for member in var.model_armor_vertex_service_agents : startswith(member, "serviceAccount:service-")
+    ])
+    error_message = "model_armor_vertex_service_agents must contain only Google-managed service-account IAM members."
+  }
+}
+
 variable "broker_uri" {
   description = "Private Uumi MCP broker URI, or null before runtime deployment."
   type        = string

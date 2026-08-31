@@ -1,0 +1,13 @@
+steps:
+  - id: browser
+    name: gcr.io/cloud-builders/docker
+    args: [build, --file, server/browser/worker.Dockerfile, --tag, "${_REGISTRY}/browser:${_TAG}", .]
+images:
+  - "${_REGISTRY}/browser:${_TAG}"
+options:
+  dynamicSubstitutions: true
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s
+substitutions:
+  _REGISTRY: us-east1-docker.pkg.dev/${PROJECT_ID}/uumi
+  _TAG: manual

@@ -86,6 +86,58 @@ resource "google_dns_record_set" "modelarmor" {
   deletion_policy = "PREVENT"
 }
 
+resource "google_dns_managed_zone" "googleapis" {
+  project         = var.project_id
+  name            = "uumi-googleapis"
+  description     = "Private DNS for browser workers to reach Google APIs through VPC Service Controls."
+  dns_name        = "googleapis.com."
+  visibility      = "private"
+  deletion_policy = "PREVENT"
+
+  private_visibility_config {
+    networks {
+      network_url = google_compute_network.uumi.id
+    }
+  }
+}
+
+resource "google_dns_record_set" "googleapis_restricted" {
+  for_each = toset([
+    "aiplatform",
+    "firestore",
+    "secretmanager",
+    "storage",
+  ])
+
+  project         = var.project_id
+  managed_zone    = google_dns_managed_zone.googleapis.name
+  name            = "${each.value}.googleapis.com."
+  type            = "A"
+  ttl             = 300
+  rrdatas         = ["199.36.153.4", "199.36.153.5", "199.36.153.6", "199.36.153.7"]
+  deletion_policy = "PREVENT"
+}
+
+resource "google_dns_record_set" "googleapis_restricted_vip" {
+  project         = var.project_id
+  managed_zone    = google_dns_managed_zone.googleapis.name
+  name            = "restricted.googleapis.com."
+  type            = "A"
+  ttl             = 300
+  rrdatas         = ["199.36.153.4", "199.36.153.5", "199.36.153.6", "199.36.153.7"]
+  deletion_policy = "PREVENT"
+}
+
+resource "google_dns_record_set" "googleapis_restricted_wildcard" {
+  project         = var.project_id
+  managed_zone    = google_dns_managed_zone.googleapis.name
+  name            = "*.googleapis.com."
+  type            = "CNAME"
+  ttl             = 300
+  rrdatas         = ["restricted.googleapis.com."]
+  deletion_policy = "PREVENT"
+}
+
 resource "google_compute_firewall" "worker" {
   project   = var.project_id
   name      = "uumi-browser-worker"
@@ -220,7 +272,7 @@ resource "google_compute_instance_template" "browser" {
     source_image = "projects/cos-cloud/global/images/family/cos-stable"
     auto_delete  = true
     boot         = true
-    disk_type    = "pd-balanced"
+    disk_type    = "pd-standard"
     disk_size_gb = 30
     disk_encryption_key {
       kms_key_self_link = google_kms_crypto_key.browser.id
@@ -306,6 +358,30 @@ resource "google_project_iam_member" "coordinator_compute" {
 resource "google_project_iam_member" "setup_compute" {
   project = var.project_id
   role    = "roles/compute.instanceAdmin.v1"
+  member  = var.setup_member
+}
+
+locals {
+  egress_roles = toset([
+    "roles/compute.networkAdmin",
+    "roles/networksecurity.admin",
+    "roles/networkservices.admin",
+  ])
+}
+
+resource "google_project_iam_member" "coordinator_egress" {
+  for_each = local.egress_roles
+
+  project = var.project_id
+  role    = each.value
+  member  = var.coordinator_member
+}
+
+resource "google_project_iam_member" "setup_egress" {
+  for_each = local.egress_roles
+
+  project = var.project_id
+  role    = each.value
   member  = var.setup_member
 }
 

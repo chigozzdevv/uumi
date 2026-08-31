@@ -11,6 +11,7 @@ from agents.storage import AgentRepository
 from broker import CapabilitySigner, GcsEvidenceSink
 from browser.access import BrowserAccessService
 from browser.compute import BrowserVmManager
+from browser.egress import BrowserEgressManager, FirestoreBrowserEgressStore
 from browser.secret import BrowserSecretAccessService
 from browser.service import BrowserService
 from browser.setup import BrowserSetupApi, BrowserSetupService, WorkflowRunResumer
@@ -49,6 +50,7 @@ from core.inventory import InventoryService
 from core.notification import EmailDeliveryConfiguration, NotificationService
 from core.overview import OverviewService
 from core.playbook import PlaybookService, WalkthroughService
+from core.state import RotationMachine
 from core.storage import (
     FirestoreApprovalRepository,
     FirestoreAuditRepository,
@@ -115,7 +117,7 @@ def build_services(settings: Settings | None = None) -> ApiServices:
     inventory_repository = FirestoreInventoryRepository(client)
     incident_repository = FirestoreIncidentRepository(client)
     approval_repository = FirestoreApprovalRepository(client)
-    workflow = RunWorkflow(runs)
+    workflow = RunWorkflow(runs, machine=RotationMachine(validate_policy=False))
     agent_repository = AgentRepository(client)
     continuity = AgentContinuityService(
         agent_repository,
@@ -167,6 +169,10 @@ def build_services(settings: Settings | None = None) -> ApiServices:
             configured.browser_zone,
             configured.browser_template,
             configured.browser_worker_image,
+            configured.browser_network,
+            configured.browser_subnetwork,
+            configured.browser_worker_service_account,
+            configured.browser_egress_domains,
             configured.capability_public_key,
             configured.evidence_bucket,
             configured.model_armor_template,
@@ -186,6 +192,17 @@ def build_services(settings: Settings | None = None) -> ApiServices:
                 configured.browser_worker_image,
                 configured.model_armor_template,
                 configured.model_armor_response_template or configured.model_armor_template,
+                BrowserEgressManager(
+                    FirestoreBrowserEgressStore(client, configured.region),
+                    google,
+                    configured.project_id,
+                    configured.region,
+                    configured.browser_network,
+                    configured.browser_subnetwork,
+                    configured.browser_worker_service_account,
+                    configured.browser_egress_domains,
+                    _now,
+                ),
             ),
             secret_manager,
             configured.browser_setup_url,

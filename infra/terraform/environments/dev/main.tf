@@ -155,6 +155,12 @@ resource "google_service_account_iam_member" "coordinator_token" {
   member             = module.identity.members["uumi-coordinator"]
 }
 
+resource "google_service_account_iam_member" "coordinator_agent_token" {
+  service_account_id = module.identity.names["uumi-agents"]
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = module.identity.members["uumi-coordinator"]
+}
+
 module "storage" {
   source = "../../modules/storage"
 
@@ -195,6 +201,8 @@ module "storage" {
   google_cloud_oauth_accessor   = module.identity.members["uumi-api"]
   provider_sources              = var.provider_sources
   provider_secret_accessor      = module.identity.members["uumi-ingestion"]
+  resend_demo_writer            = module.identity.members["uumi-agents"]
+  resend_demo_manager           = module.identity.members["uumi-agents"]
   principals = {
     for organisation_id in var.workflow_organisations :
     "workflow-${organisation_id}" => {
@@ -403,24 +411,29 @@ module "runtime" {
   auditlog_image       = var.auditlog_image
   demo_image           = var.demo_image
   demo_secret          = module.storage.resend_demo_secret
+  demo_secret_version  = var.demo_secret_version
   notification_app_url = var.notification_app_url
   notification_email_secret_version = (
     var.notification_email_secret_version == null ? "" : var.notification_email_secret_version
   )
-  notification_email_sender     = (var.notification_email_sender == null ? "" : var.notification_email_sender)
-  browser_image                 = var.browser_image
-  browser_gateway_url           = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
-  browser_setup_url             = var.browser_setup_url
-  evidence_bucket               = module.storage.evidence_bucket
-  walkthrough_bucket            = module.storage.walkthrough_bucket
-  capability_secret_version     = local.capability_secret_version
-  capability_public_key         = var.capability_public_key
-  browser_template              = module.browser.template
-  browser_zone                  = var.zone
-  model_armor_template          = "projects/${local.agent_project_id}/locations/${var.region}/templates/uumi-agent-guardrails"
-  model_armor_response_template = "projects/${local.agent_project_id}/locations/${var.region}/templates/uumi-agent-response-guardrails"
-  network                       = module.browser.network
-  subnetwork                    = module.browser.runtime_subnetwork
+  notification_email_sender      = (var.notification_email_sender == null ? "" : var.notification_email_sender)
+  browser_image                  = var.browser_image
+  browser_gateway_url            = coalesce(module.gateway.url, "https://browser-gateway.disabled.invalid")
+  browser_setup_url              = var.browser_setup_url
+  evidence_bucket                = module.storage.evidence_bucket
+  walkthrough_bucket             = module.storage.walkthrough_bucket
+  capability_secret_version      = local.capability_secret_version
+  capability_public_key          = var.capability_public_key
+  browser_template               = module.browser.template
+  browser_zone                   = var.zone
+  browser_network                = module.browser.network
+  browser_subnetwork             = module.browser.subnetwork
+  browser_worker_service_account = module.identity.emails["uumi-browser"]
+  browser_egress_domains         = var.browser_allowed_domains
+  model_armor_template           = "projects/${local.agent_project_id}/locations/${var.region}/templates/uumi-agent-guardrails"
+  model_armor_response_template  = "projects/${local.agent_project_id}/locations/${var.region}/templates/uumi-agent-response-guardrails"
+  network                        = module.browser.network
+  subnetwork                     = module.browser.runtime_subnetwork
 
   depends_on = [module.project, module.storage, module.browser, module.gateway]
 }
@@ -482,6 +495,7 @@ module "governance" {
   deployment_member   = module.identity.members["uumi-agents"]
   model_armor_callers = toset([
     module.identity.members["uumi-api"],
+    module.identity.members["uumi-browser"],
     module.identity.members["uumi-coordinator"],
   ])
   broker_uri = module.runtime.broker_uri
@@ -522,7 +536,11 @@ module "agent_governance" {
   deployment_member   = module.identity.members["uumi-agents"]
   model_armor_callers = toset([
     module.identity.members["uumi-api"],
+    module.identity.members["uumi-browser"],
     module.identity.members["uumi-coordinator"],
+  ])
+  model_armor_vertex_service_agents = toset([
+    "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform.iam.gserviceaccount.com",
   ])
   broker_uri = var.agent_broker_uri
 
@@ -607,6 +625,18 @@ resource "google_project_iam_member" "browser_runtime" {
   ])
 
   project = var.project_id
+  role    = each.value
+  member  = module.identity.members["uumi-browser"]
+}
+
+resource "google_project_iam_member" "browser_agent_project_runtime" {
+  provider = google.agent
+  for_each = local.split_agent_project ? toset([
+    "roles/aiplatform.user",
+    "roles/serviceusage.serviceUsageConsumer",
+  ]) : toset([])
+
+  project = local.agent_project_id
   role    = each.value
   member  = module.identity.members["uumi-browser"]
 }

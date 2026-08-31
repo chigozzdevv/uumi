@@ -6,6 +6,8 @@ from typing import Any
 from connectors.base.errors import ConnectorError
 from connectors.google import GoogleRestClient
 
+from browser.egress import BrowserEgressManager
+
 
 @dataclass(frozen=True, slots=True)
 class BrowserVm:
@@ -26,6 +28,7 @@ class BrowserVmManager:
         worker_image: str,
         model_armor_template: str,
         model_armor_response_template: str | None = None,
+        egress: BrowserEgressManager | None = None,
     ) -> None:
         self._client = client
         self._project = project_id
@@ -37,6 +40,7 @@ class BrowserVmManager:
         self._image = worker_image
         self._model_armor_template = model_armor_template
         self._model_armor_response_template = model_armor_response_template or model_armor_template
+        self._egress = egress
 
     async def create(
         self,
@@ -49,6 +53,7 @@ class BrowserVmManager:
         secret_container: str | None = None,
     ) -> BrowserVm:
         name = _name(session_id)
+        instance_name = f"projects/{self._project}/zones/{self._zone}/instances/{name}"
         base = (
             f"https://compute.googleapis.com/compute/v1/projects/{self._project}/zones/{self._zone}"
         )
@@ -90,28 +95,33 @@ class BrowserVmManager:
                     {"key": "uumi-setup-secret", "value": secret_container},
                 ]
             )
-        metadata = await self._merge_template_metadata(metadata)
-        operation = await self._client.request(
-            "POST",
-            f"{base}/instances",
-            params={"sourceInstanceTemplate": self._template},
-            json={
-                "name": name,
-                "labels": {
-                    "uumi-browser": "true",
-                    "uumi-session": _label(session_id),
+        if self._egress is not None:
+            await self._egress.acquire(instance_name, expires_at, allowed_domains)
+        try:
+            metadata = await self._merge_template_metadata(metadata)
+            operation = await self._client.request(
+                "POST",
+                f"{base}/instances",
+                params={"sourceInstanceTemplate": self._template},
+                json={
+                    "name": name,
+                    "labels": {
+                        "uumi-browser": "true",
+                        "uumi-session": _label(session_id),
+                    },
+                    "metadata": {"items": metadata},
                 },
-                "metadata": {"items": metadata},
-            },
-        )
-        await self._client.wait_operation(_operation(operation), base_url=f"{base}/operations")
-        instance = await self._client.request("GET", f"{base}/instances/{name}")
-        self._validate(instance)
-        address = _address(instance)
-        return BrowserVm(
-            instance=f"projects/{self._project}/zones/{self._zone}/instances/{name}",
-            internal_address=address,
-        )
+            )
+            await self._client.wait_operation(_operation(operation), base_url=f"{base}/operations")
+            instance = await self._client.request("GET", f"{base}/instances/{name}")
+            self._validate(instance)
+            address = _address(instance)
+            return BrowserVm(instance=instance_name, internal_address=address)
+        except BaseException:
+            await self._delete_compute(instance_name)
+            if self._egress is not None:
+                await self._egress.release(instance_name)
+            raise
 
     async def _merge_template_metadata(
         self, overrides: list[dict[str, str]]
@@ -147,6 +157,11 @@ class BrowserVmManager:
         return [{"key": key, "value": value} for key, value in merged.items()]
 
     async def delete(self, instance: str) -> None:
+        await self._delete_compute(instance)
+        if self._egress is not None:
+            await self._egress.release(instance)
+
+    async def _delete_compute(self, instance: str) -> None:
         expected = f"projects/{self._project}/zones/{self._zone}/instances/"
         if not instance.startswith(expected):
             raise ConnectorError("browser-instance-scope", "browser VM is outside its zone")
@@ -164,6 +179,10 @@ class BrowserVmManager:
             raise
         if operation:
             await self._client.wait_operation(_operation(operation), base_url=f"{base}/operations")
+
+    async def reconcile(self) -> None:
+        if self._egress is not None:
+            await self._egress.reconcile()
 
     async def exists(self, instance: str) -> bool:
         expected = f"projects/{self._project}/zones/{self._zone}/instances/"

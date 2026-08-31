@@ -406,6 +406,12 @@ locals {
       )
     }
   }
+  modelarmor_vertex_members = setunion(
+    toset([
+      "serviceAccount:service-${data.google_project.current.number}@gcp-sa-aiplatform.iam.gserviceaccount.com",
+    ]),
+    var.model_armor_vertex_service_agents,
+  )
 }
 
 resource "google_project_iam_member" "modelarmor" {
@@ -414,6 +420,14 @@ resource "google_project_iam_member" "modelarmor" {
   project = var.project_id
   role    = each.value.role
   member  = each.value.member
+}
+
+resource "google_project_iam_member" "modelarmor_vertex" {
+  for_each = local.modelarmor_vertex_members
+
+  project = var.project_id
+  role    = "roles/modelarmor.user"
+  member  = each.value
 }
 
 resource "google_project_iam_member" "modelarmor_caller" {

@@ -234,6 +234,17 @@ variable "demo_secret" {
   default     = ""
 }
 
+variable "demo_secret_version" {
+  description = "Pinned Secret Manager version consumed by the Resend demo runtime."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.demo_secret_version))
+    error_message = "demo_secret_version must be a positive numeric Secret Manager version."
+  }
+}
+
 variable "github_webhook_secret_version" {
   description = "Secret Manager version holding the global GitHub App webhook secret."
   type        = string
@@ -477,6 +488,26 @@ variable "browser_template" {
 variable "browser_zone" {
   description = "Zone used for ephemeral browser VMs."
   type        = string
+}
+
+variable "browser_network" {
+  description = "Full VPC network resource used by on-demand browser egress."
+  type        = string
+}
+
+variable "browser_subnetwork" {
+  description = "Full browser subnetwork resource used by on-demand Secure Web Proxy."
+  type        = string
+}
+
+variable "browser_worker_service_account" {
+  description = "Browser worker identity allowed through the on-demand egress policy."
+  type        = string
+}
+
+variable "browser_egress_domains" {
+  description = "Approved provider domains allowed while browser egress is active."
+  type        = set(string)
 }
 
 variable "model_armor_template" {

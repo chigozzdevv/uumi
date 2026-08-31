@@ -15,6 +15,10 @@ class CoordinatorSettings(BaseSettings):
     capability_secret: str = Field(default="", min_length=20)
     oidc_audience: str = Field(default="", min_length=8)
     browser_image: str = Field(default="", min_length=20)
+    browser_network: str = Field(default="", min_length=12)
+    browser_subnetwork: str = Field(default="", min_length=12)
+    browser_worker_service_account: str = Field(default="", min_length=12)
+    browser_egress_domains: tuple[str, ...] = Field(default=(), min_length=1)
     model_armor_template: str = Field(default="", min_length=20)
     model_armor_response_template: str = ""
 
@@ -30,6 +34,10 @@ class CoordinatorSettings(BaseSettings):
             self.capability_secret,
             self.oidc_audience,
             self.browser_image,
+            self.browser_network,
+            self.browser_subnetwork,
+            self.browser_worker_service_account,
+            self.browser_egress_domains,
             self.model_armor_template,
         )
         if not all(required):

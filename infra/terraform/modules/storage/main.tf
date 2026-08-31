@@ -636,6 +636,24 @@ resource "google_secret_manager_secret" "resend_demo" {
   deletion_protection = true
 }
 
+resource "google_secret_manager_secret_iam_member" "resend_demo_writer" {
+  count = var.resend_demo_writer == null ? 0 : 1
+
+  project   = google_secret_manager_secret.resend_demo.project
+  secret_id = google_secret_manager_secret.resend_demo.secret_id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = var.resend_demo_writer
+}
+
+resource "google_secret_manager_secret_iam_member" "resend_demo_manager" {
+  count = var.resend_demo_manager == null ? 0 : 1
+
+  project   = google_secret_manager_secret.resend_demo.project
+  secret_id = google_secret_manager_secret.resend_demo.secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = var.resend_demo_manager
+}
+
 resource "google_secret_manager_secret" "provider" {
   for_each = var.provider_sources
 

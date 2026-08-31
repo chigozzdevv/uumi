@@ -138,6 +138,10 @@ class FirestorePaths:
         return f"{FirestorePaths.organisation(organisation_id)}/browsers/{_segment(session_id)}"
 
     @staticmethod
+    def browser_egress(region: str) -> str:
+        return f"browser-egress/{_segment(region)}"
+
+    @staticmethod
     def setup(organisation_id: str, setup_id: str) -> str:
         return f"{FirestorePaths.organisation(organisation_id)}/setups/{_segment(setup_id)}"
 

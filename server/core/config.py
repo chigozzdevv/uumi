@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     browser_zone: str = ""
     browser_template: str = ""
     browser_worker_image: str = ""
+    browser_network: str = ""
+    browser_subnetwork: str = ""
+    browser_worker_service_account: str = ""
+    browser_egress_domains: tuple[str, ...] = ()
     model_armor_template: str = ""
     model_armor_response_template: str = ""
     capability_public_key: str = ""
@@ -162,6 +166,18 @@ class Settings(BaseSettings):
             "projects/"
         ):
             raise ValueError("Model Armor response template must be a full resource name")
+        browser_egress = (
+            self.browser_network,
+            self.browser_subnetwork,
+            self.browser_worker_service_account,
+            self.browser_egress_domains,
+        )
+        if any(browser_egress) and not all(browser_egress):
+            raise ValueError("browser egress configuration is incomplete")
+        if self.browser_worker_service_account and not _service_account(
+            self.browser_worker_service_account
+        ):
+            raise ValueError("browser worker service account is invalid")
         return self
 
 

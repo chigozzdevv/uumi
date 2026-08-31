@@ -192,3 +192,33 @@ variable "provider_secret_accessor" {
     error_message = "Provider webhook accessor must be a service account IAM member."
   }
 }
+
+variable "resend_demo_writer" {
+  description = "IAM member allowed to add replacement versions to the Resend demo secret."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.resend_demo_writer == null ||
+      startswith(var.resend_demo_writer, "serviceAccount:")
+    )
+    error_message = "Resend demo writer must be a service account IAM member."
+  }
+}
+
+variable "resend_demo_manager" {
+  description = "IAM member allowed to inspect and disable Resend demo secret versions."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.resend_demo_manager == null ||
+      startswith(var.resend_demo_manager, "serviceAccount:")
+    )
+    error_message = "Resend demo manager must be a service account IAM member."
+  }
+}

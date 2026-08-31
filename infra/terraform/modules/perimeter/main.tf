@@ -10,6 +10,8 @@ locals {
     "firestore.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
+    "networksecurity.googleapis.com",
+    "networkservices.googleapis.com",
     "pubsub.googleapis.com",
     "securitycenter.googleapis.com",
     "secretmanager.googleapis.com",
@@ -188,6 +190,30 @@ resource "google_access_context_manager_service_perimeter" "uumi" {
           service_name = "logging.googleapis.com"
           method_selectors {
             method = "LoggingServiceV2.WriteLogEntries"
+          }
+        }
+      }
+    }
+
+    ingress_policies {
+      title = "video-intelligence-storage"
+
+      ingress_from {
+        identities = [
+          "serviceAccount:uumi-api@${var.project_id}.iam.gserviceaccount.com",
+        ]
+        sources {
+          access_level = "*"
+        }
+      }
+
+      ingress_to {
+        resources = ["projects/${var.project_number}"]
+
+        operations {
+          service_name = "storage.googleapis.com"
+          method_selectors {
+            method = "google.storage.objects.get"
           }
         }
       }
