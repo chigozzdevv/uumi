@@ -11,6 +11,7 @@ class AgentContext:
         self._state = tool_context.state
         self.organisation_id = self._required("organisation_id")
         self.run_id = self._required("run_id")
+        self.skill = self._required("skill")
         task_context = self._state.get("task_context")
         if not isinstance(task_context, dict):
             raise ValueError("managed session state is missing task_context")

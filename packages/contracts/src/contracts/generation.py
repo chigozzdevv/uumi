@@ -9,6 +9,7 @@ class CredentialGeneration(Contract):
     organisation_id: Identifier
     credential_id: Identifier
     provider_id: str | None = Field(default=None, max_length=256)
+    provider_display_name: str | None = Field(default=None, max_length=256)
     fingerprint: str | None = Field(default=None, min_length=8, max_length=256)
     scopes: frozenset[str] = frozenset()
     state: GenerationState

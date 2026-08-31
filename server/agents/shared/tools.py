@@ -6,6 +6,77 @@ from google.adk.agents.context import Context as ToolContext
 from agents.shared.context import AgentContext
 
 
+async def inspect_inventory(tool_context: ToolContext) -> dict[str, Any]:
+    """Execute the control-plane-bound inventory skill and return its complete assessment."""
+    context = AgentContext(tool_context)
+    credential = context.object("inventory_item", required=False)
+    credential_id = credential.get("id") if isinstance(credential, dict) else None
+    if context.skill == "detect_stale_mapping":
+        if not isinstance(credential_id, str):
+            raise ValueError("managed task credential has no ID")
+        result = await detect_stale_mapping(credential_id, tool_context)
+        assessment = {
+            "credential_id": credential_id,
+            "declared_consumers": result["declared_consumers"],
+            "observed_consumers": result["observed_consumers"],
+            "missing_inventory": result["missing_inventory"],
+            "stale_inventory": result["unobserved_inventory"],
+            "incident_ids": [],
+            "conclusion": (
+                "Every observed credential consumer is represented in inventory."
+                if not result["missing_inventory"]
+                else "One or more observed credential consumers are missing from inventory."
+            ),
+        }
+    elif context.skill == "resolve_consumers":
+        if not isinstance(credential_id, str):
+            raise ValueError("managed task credential has no ID")
+        result = await resolve_consumers(credential_id, tool_context)
+        declared = sorted(
+            item["service_id"]
+            for item in result["bindings"]
+            if isinstance(item.get("service_id"), str)
+        )
+        observed = sorted(
+            item for item in result["credential"].get("consumer_ids", []) if isinstance(item, str)
+        )
+        assessment = {
+            "credential_id": credential_id,
+            "declared_consumers": declared,
+            "observed_consumers": observed,
+            "missing_inventory": sorted(set(observed).difference(declared)),
+            "stale_inventory": sorted(set(declared).difference(observed)),
+            "incident_ids": [],
+            "conclusion": "Credential consumers were resolved from the bound inventory snapshot.",
+        }
+    elif context.skill == "correlate_exposure":
+        incident = context.object("incident")
+        assert incident is not None
+        incident_id = incident.get("id")
+        if not isinstance(incident_id, str):
+            raise ValueError("managed task incident has no ID")
+        result = await correlate_exposure(incident_id, tool_context)
+        bound_credential = result.get("credential")
+        correlated_id = bound_credential.get("id") if isinstance(bound_credential, dict) else None
+        if not isinstance(correlated_id, str):
+            correlated_id = incident.get("credential_id")
+        if not isinstance(correlated_id, str):
+            raise ValueError("managed incident is not correlated to a credential")
+        assessment = {
+            "credential_id": correlated_id,
+            "declared_consumers": [],
+            "observed_consumers": [],
+            "missing_inventory": [],
+            "stale_inventory": [],
+            "incident_ids": [incident_id],
+            "conclusion": "The incident is correlated to the bound credential inventory.",
+        }
+    else:
+        raise ValueError(f"unsupported managed inventory skill {context.skill}")
+    tool_context.actions.skip_summarization = True
+    return assessment
+
+
 async def correlate_exposure(incident_id: str, tool_context: ToolContext) -> dict[str, Any]:
     """Return the control-plane-bound incident and credential inventory."""
     context = AgentContext(tool_context)
@@ -113,7 +184,11 @@ async def select_strategy(tool_context: ToolContext) -> dict[str, Any]:
             branch = recovery.get(stage.value)
             actions = branch.get("actions") if isinstance(branch, dict) else None
             if isinstance(actions, list):
-                recovery_actions.extend(item for item in actions if isinstance(item, str))
+                for item in actions:
+                    if isinstance(item, str):
+                        recovery_actions.append(item)
+                    elif isinstance(item, dict) and isinstance(item.get("tool"), str):
+                        recovery_actions.append(item["tool"])
     return {
         "credential": credential,
         "provider_connection": connection,

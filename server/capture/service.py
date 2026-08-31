@@ -66,7 +66,8 @@ class SecureCapture:
         locator = await self._driver.locator(field.selector)
         provider = await self._driver.locator(field.provider_id_selector)
         raw = await _read(locator)
-        provider_id = await _read(provider)
+        provider_id = await _read(provider, field.provider_id_attribute)
+        provider_display_name = await _provider_display_name(self._driver, field)
         if not raw or len(raw) > 16384:
             raise CaptureError("declared secure field is empty or exceeds the capture limit")
         if not provider_id or len(provider_id) > 256:
@@ -80,6 +81,7 @@ class SecureCapture:
             secret_resource,
             raw,
             provider_id,
+            provider_display_name,
             locator,
             access_token,
         )
@@ -105,7 +107,8 @@ class SecureCapture:
             raise CaptureError("secure input is not valid UTF-8") from error
         if not raw or len(raw) > 16384:
             raise CaptureError("secure input is empty or exceeds the capture limit")
-        provider_id = await _read(provider)
+        provider_id = await _read(provider, field.provider_id_attribute)
+        provider_display_name = await _provider_display_name(self._driver, field)
         if not provider_id or len(provider_id) > 256:
             raise CaptureError("declared provider identifier is empty or invalid")
         return await self._store_and_mask(
@@ -117,6 +120,7 @@ class SecureCapture:
             secret_resource,
             raw,
             provider_id,
+            provider_display_name,
             locator,
             access_token,
         )
@@ -131,6 +135,7 @@ class SecureCapture:
         secret_resource: str,
         raw: str,
         provider_id: str,
+        provider_display_name: str | None,
         locator: Locator,
         access_token: SecretValue | None,
     ) -> SecureCaptureResult:
@@ -176,6 +181,7 @@ class SecureCapture:
                 session_id=session_id,
                 field_name=field.name,
                 provider_id=provider_id,
+                provider_display_name=provider_display_name,
                 secret_reference=secret_reference,
                 fingerprint=fingerprint,
                 masked_value_digest=hashlib.sha256(masked_markup.encode()).hexdigest(),
@@ -239,9 +245,21 @@ def _resource_allowed(resource: str, allowed: tuple[str, ...]) -> bool:
     )
 
 
-async def _read(locator: Locator) -> str:
+async def _provider_display_name(driver: BrowserDriver, field: SecureField) -> str | None:
+    if field.provider_display_name_selector is None:
+        return None
+    value = await _read(await driver.locator(field.provider_display_name_selector))
+    if not value or len(value) > 256:
+        raise CaptureError("declared provider display name is empty or invalid")
+    return value
+
+
+async def _read(locator: Locator, attribute: str = "text") -> str:
+    if attribute == "href":
+        value = await locator.get_attribute("href")
+        return value.strip() if value else ""
     tag = await locator.evaluate("element => element.tagName.toLowerCase()")
-    if tag in {"input", "textarea"}:
+    if attribute == "value" or (attribute == "text" and tag in {"input", "textarea"}):
         return await locator.input_value()
     value = await locator.text_content()
     return value.strip() if value else ""

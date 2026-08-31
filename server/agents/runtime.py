@@ -91,6 +91,7 @@ class AgentRuntimeService:
                             "metadata": {
                                 "uumi_organisation_id": task.organisation_id,
                                 "uumi_run_id": task.run_id,
+                                "uumi_skill": task.skill,
                                 "uumi_task_context": task_context,
                             },
                         },
@@ -261,7 +262,19 @@ def _validated_output(kind: AgentKind, output: dict[str, Any]) -> dict[str, Any]
         AgentKind.PLAYBOOK: PlaybookAgentDraft,
         AgentKind.OPERATOR: OperatorDecision,
     }
-    return schemas[kind].model_validate(output).model_dump(mode="json")
+    validated = schemas[kind].model_validate(output)
+    if isinstance(validated, OperatorDecision):
+        validated = validated.model_copy(
+            update={
+                "expected_checkpoint": "bound-to-published-playbook",
+                "pause_reason": (
+                    None
+                    if validated.ready and not validated.drift_detected
+                    else validated.pause_reason
+                ),
+            }
+        )
+    return validated.model_dump(mode="json")
 
 
 def _collect_text(value: Any, output: list[str]) -> None:

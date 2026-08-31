@@ -271,6 +271,7 @@ def compile_controls(
                 "provider.testCredential",
             }
         )
+        protected_tools.add("browser.secure-capture")
         if preferences.require_revoke_approval:
             protected_tools.add("browser.revokeCredential")
     else:
@@ -349,6 +350,30 @@ def update_controls(
     current: ControlDefinition,
     preferences: ControlPreferences,
 ) -> ControlDefinition:
+    browser_managed = "browser.secure-capture" in current.allowed_tools
+    protected_tools = set(current.protected_tools)
+    if browser_managed:
+        protected_tools.add("browser.secure-capture")
+    revoke_tools = {
+        "browser.revokeCredential" if browser_managed else "provider.revokeCredential",
+        "secretStore.disableVersion",
+        "secretStore.destroyVersion",
+    }
+    if preferences.require_revoke_approval:
+        protected_tools.update(revoke_tools)
+    else:
+        protected_tools.difference_update(revoke_tools)
+    required_checks = dict(current.required_checks)
+    if preferences.require_revoke_approval:
+        required_checks[Stage.PREFLIGHT] = required_checks[Stage.PREFLIGHT].union(
+            {"approvers-known"}
+        )
+        required_checks[Stage.APPROVAL] = REQUIRED_CHECKS[Stage.APPROVAL]
+    else:
+        required_checks[Stage.PREFLIGHT] = required_checks[Stage.PREFLIGHT].difference(
+            {"approvers-known"}
+        )
+        required_checks[Stage.APPROVAL] = frozenset({"approval-not-required", "evidence-current"})
     return current.model_copy(
         update={
             "automatic_triggers": _trigger_events(preferences),
@@ -360,6 +385,9 @@ def update_controls(
             "exposure_sources": preferences.exposure_sources,
             "rotate_before_expiry_seconds": preferences.rotate_before_expiry_seconds,
             "maximum_observation_seconds": preferences.maximum_observation_seconds,
+            "protected_tools": frozenset(protected_tools),
+            "require_revoke_approval": preferences.require_revoke_approval,
+            "required_checks": required_checks,
         }
     )
 

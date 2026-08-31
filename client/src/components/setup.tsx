@@ -109,7 +109,7 @@ export function CredentialSetup({
   const resolvedEnvironmentName = existingEnvironment?.display_name ?? selectedRuntimeResource?.environment_name ?? environmentName
   const selectedSecret = secretResourcesQuery.data?.find((item) => item.reference === secretResource)
   const name = resolvedCredential?.name ?? selectedSecret?.display_name ?? ""
-  const providerId = connection?.interface === "browser" ? "" : resolvedCredential?.provider_id ?? ""
+  const providerId = connection?.interface === "browser" ? null : resolvedCredential?.provider_id ?? null
   const kind = resolvedCredential?.kind ?? ""
   const scopes = resolvedCredential?.scopes ?? []
   const alreadyImported = connection?.interface === "browser"

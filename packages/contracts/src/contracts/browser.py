@@ -257,6 +257,7 @@ class SecureCaptureResult(Contract):
     session_id: Identifier
     field_name: Identifier
     provider_id: str = Field(min_length=1, max_length=256)
+    provider_display_name: str | None = Field(default=None, max_length=256)
     secret_reference: str = Field(min_length=1, max_length=1024)
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     masked_value_digest: str = Field(pattern=r"^[a-f0-9]{64}$")

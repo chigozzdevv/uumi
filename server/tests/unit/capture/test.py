@@ -25,9 +25,10 @@ def anyio_backend() -> str:
 
 
 class Locator:
-    def __init__(self, value: str = "one-time-key") -> None:
+    def __init__(self, value: str = "one-time-key", href: str | None = None) -> None:
         self.masked = False
         self.value = value
+        self.href = href
 
     async def evaluate(self, script: str, values: Any = None) -> str:
         if "tagName" in script:
@@ -41,6 +42,10 @@ class Locator:
 
     async def text_content(self) -> str | None:
         return None
+
+    async def get_attribute(self, name: str) -> str | None:
+        assert name == "href"
+        return self.href
 
 
 class Text:
@@ -72,10 +77,15 @@ class Page:
 class Driver:
     def __init__(self, locator: Locator) -> None:
         self.value = locator
-        self.provider = Locator("provider-key-one")
+        self.provider = Locator("provider-key-one", "/api-keys/provider-key-one")
+        self.provider_name = Locator("resend-run-one")
 
     async def locator(self, selector: Selector) -> Locator:
-        return self.provider if selector.value == "new-key-id" else self.value
+        if selector.value == "new-key-id":
+            return self.provider
+        if selector.value == "new-key-name":
+            return self.provider_name
+        return self.value
 
 
 class Secrets:
@@ -160,6 +170,42 @@ async def test_capture_stores_masks_checks_and_only_returns_reference() -> None:
     assert result.secret_reference.endswith("/versions/7")
     assert result.provider_id == "provider-key-one"
     assert "one-time-key" not in result.model_dump_json()
+
+
+@pytest.mark.anyio
+async def test_capture_records_exact_provider_link_and_display_name() -> None:
+    locator = Locator()
+    capture = SecureCapture(
+        Page(locator),  # type: ignore[arg-type]
+        Driver(locator),  # type: ignore[arg-type]
+        Secrets(),  # type: ignore[arg-type]
+        Connections(),
+        lambda: NOW,
+    )
+    field = _field().model_copy(
+        update={
+            "provider_id_attribute": "href",
+            "provider_display_name_selector": Selector(
+                kind=SelectorKind.TEST_ID,
+                value="new-key-name",
+            ),
+        }
+    )
+
+    with SecretValue(b"ephemeral-access") as access:
+        result = await capture.transfer(
+            "capture_one",
+            "org_one",
+            "session_one",
+            field,
+            _checkpoint(),
+            "sink_one",
+            "projects/project-one/secrets/key",
+            access,
+        )
+
+    assert result.provider_id == "/api-keys/provider-key-one"
+    assert result.provider_display_name == "resend-run-one"
 
 
 @pytest.mark.anyio

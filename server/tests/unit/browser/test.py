@@ -1,11 +1,11 @@
 import base64
 import hashlib
 import json
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -14,8 +14,14 @@ from browser.access import BrowserAccessService
 from browser.auth import BrowserAuthBroker
 from browser.compute import BrowserVm, BrowserVmManager
 from browser.driver import AuthenticationRequiredError, BrowserDriver
+from browser.egress import (
+    BrowserEgressManager,
+    BrowserEgressState,
+    BrowserEgressStatus,
+)
 from browser.gateway import BrowserSessionGateway
-from browser.model import ComputerUseClient
+from browser.model import ComputerProposal, ComputerUseClient
+from browser.playbook import browser_step_context, resolve_playbook_step
 from browser.secret import BrowserSecretAccessService, associated_data
 from browser.service import BrowserService
 from browser.setup import BrowserSetupService
@@ -40,6 +46,8 @@ from contracts import (
     ConnectionRole,
     ConnectionStatus,
     ConnectionWaiter,
+    CredentialGeneration,
+    GenerationState,
     ManagedCredential,
     NotificationKind,
     PageCheckpoint,
@@ -59,7 +67,7 @@ from contracts import (
     Stage,
     Trigger,
 )
-from coordinator.browser import BrowserPauseError, BrowserStepExecutor
+from coordinator.browser import BrowserPauseError, BrowserStepExecutor, BrowserWorkerError
 from coordinator.service import _flag_reauthentication
 from core.auth import AccessControl, AuthenticatedIdentity, PrincipalGrant, Role
 from core.errors import CapabilityError, ResourceConflictError, ResourceNotFoundError
@@ -67,6 +75,7 @@ from core.storage.paths import FirestorePaths
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from testkit import make_http_provider_api, make_run
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -75,6 +84,71 @@ NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+def test_browser_playbook_resolves_run_bound_values_across_the_full_step() -> None:
+    run = make_run(NOW).model_copy(
+        update={
+            "id": "run_1234567890abcdef1234567890abcdef",
+            "current_generation_id": "gen_old",
+        }
+    )
+    credential = ManagedCredential(
+        id=run.credential_id,
+        organisation_id=run.organisation_id,
+        connection_id="connection_browser",
+        secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
+        secret_reference="projects/project-one/secrets/key/versions/1",
+        provider="Resend",
+        kind="api-key",
+        display_name="Resend key",
+        control_version="policy_one",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    old = CredentialGeneration(
+        id="gen_old",
+        organisation_id=run.organisation_id,
+        credential_id=run.credential_id,
+        provider_id="/api-keys/old-key-one",
+        provider_display_name="uumi",
+        state=GenerationState.ACTIVE,
+        attempt_id="attempt_old",
+        created_at=NOW,
+    )
+    step = PlaybookStep(
+        id="revoke_old_key",
+        stage=Stage.REVOKE,
+        tool="browser.revokeCredential",
+        operation="click",
+        objective="Delete the superseded key",
+        parameters={"value": "${old_provider_display_name}"},
+        selectors=(Selector(kind=SelectorKind.TEXT, value="${old_provider_display_name}"),),
+        checkpoint=PageCheckpoint(
+            url_pattern="https://resend.com/${old_provider_path}",
+            required_text=("${old_provider_display_name}",),
+        ),
+        evidence_checks=frozenset({"provider-revoked"}),
+        effect=PlaybookEffect.REVOKE_CREDENTIAL,
+    )
+
+    resolved = resolve_playbook_step(
+        step,
+        browser_step_context(run, credential, old, None),
+        protected=True,
+    )
+
+    assert resolved.parameters == {"value": "uumi"}
+    assert resolved.selectors[0].value == "uumi"
+    assert resolved.checkpoint is not None
+    assert resolved.checkpoint.url_pattern == "https://resend.com/api-keys/old-key-one"
+    assert resolved.checkpoint.required_text == ("uumi",)
+    assert resolved.protected is True
+    assert browser_step_context(run, credential, old, None)["replacement_provider_id"] == (
+        "resend-1234567890abcdef12345678"
+    )
+    assert browser_step_context(run, credential, old, None)["old_provider_display_name"] == "uumi"
 
 
 class Repository:
@@ -479,7 +553,7 @@ async def test_takeover_blocks_an_alternate_selector_for_a_protected_element(
 
 
 @pytest.mark.anyio
-async def test_computer_use_enables_injection_detection_and_parses_supported_action() -> None:
+async def test_computer_use_screens_content_and_parses_supported_action() -> None:
     google = ComputerGoogle("click")
     client = ComputerUseClient(
         cast(Any, google),
@@ -494,48 +568,91 @@ async def test_computer_use_enables_injection_detection_and_parses_supported_act
     assert proposal.name == "click"
     assert proposal.requires_confirmation is True
     computer = google.body["tools"][0]["computerUse"]
-    assert computer["enablePromptInjectionDetection"] is True
+    assert "/models/gemini-3.7-flash:generateContent" in google.url
+    assert computer["enable_prompt_injection_detection"] is True
     assert "navigate" not in computer["excludedPredefinedFunctions"]
-    assert google.body["modelArmorConfig"] == {
-        "promptTemplateName": ("projects/project-one/locations/us-east1/templates/uumi-guardrails"),
-        "responseTemplateName": (
-            "projects/project-one/locations/us-east1/templates/uumi-response-guardrails"
+    assert "modelArmorConfig" not in google.body
+    assert google.armor == [
+        (
+            "https://modelarmor.us-east1.rep.googleapis.com/v1/"
+            "projects/project-one/locations/us-east1/templates/"
+            "uumi-response-guardrails:sanitizeUserPrompt"
         ),
-    }
+        (
+            "https://modelarmor.us-east1.rep.googleapis.com/v1/"
+            "projects/project-one/locations/us-east1/templates/"
+            "uumi-response-guardrails:sanitizeModelResponse"
+        ),
+    ]
+    assert google.armor_bodies[:1] == [
+        {"userPromptData": {"text": "click the approved control"}},
+    ]
     assert proposal.safety_explanation == "confirm the browser action"
 
 
 @pytest.mark.anyio
-async def test_computer_use_streams_visible_thought_summary_before_function_call() -> None:
-    class StreamingGoogle:
+async def test_computer_use_reports_only_matched_armor_filter_names() -> None:
+    class Google:
+        async def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            assert method == "POST"
+            assert url.endswith(":sanitizeUserPrompt")
+            return {
+                "sanitizationResult": {
+                    "invocationResult": "SUCCESS",
+                    "filterMatchState": "MATCH_FOUND",
+                    "filterResults": {
+                        "pi_and_jailbreak": {
+                            "piAndJailbreakFilterResult": {
+                                "matchState": "MATCH_FOUND",
+                                "confidenceLevel": "HIGH",
+                            }
+                        },
+                        "sdp": {
+                            "sdpFilterResult": {"inspectResult": {"matchState": "NO_MATCH_FOUND"}}
+                        },
+                    },
+                }
+            }
+
+    client = ComputerUseClient(
+        cast(Any, Google()),
+        "project-one",
+        "projects/project-one/locations/us-east1/templates/uumi-guardrails",
+        "projects/project-one/locations/us-east1/templates/uumi-response-guardrails",
+    )
+
+    with pytest.raises(ConnectorError) as captured:
+        await client.propose("activate the approved control", b"image")
+
+    assert captured.value.code == "model-armor-blocked"
+    assert captured.value.safe_detail == "prompt-text:pi_and_jailbreak"
+
+
+@pytest.mark.anyio
+async def test_computer_use_records_visible_thought_summary_before_function_call() -> None:
+    class Google:
         def __init__(self) -> None:
             self.body: dict[str, Any] = {}
 
-        async def stream(
-            self, method: str, url: str, **kwargs: Any
-        ) -> AsyncIterator[dict[str, Any]]:
+        async def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
             assert method == "POST"
-            assert url.endswith(":streamGenerateContent")
-            assert kwargs["params"] == {"alt": "sse"}
-            self.body = kwargs["json"]
-            yield {
-                "candidates": [
-                    {
-                        "content": {
-                            "role": "model",
-                            "parts": [
-                                {"text": "The approved control is visible.", "thought": True}
-                            ],
-                        }
+            if ":sanitize" in url:
+                return {
+                    "sanitizationResult": {
+                        "invocationResult": "SUCCESS",
+                        "filterMatchState": "NO_MATCH_FOUND",
                     }
-                ]
-            }
-            yield {
+                }
+            assert url.endswith(":generateContent")
+            self.body = kwargs["json"]
+            return {
                 "candidates": [
                     {
                         "content": {
                             "role": "model",
                             "parts": [
+                                {"text": "The approved control is visible.", "thought": True},
                                 {
                                     "functionCall": {
                                         "name": "click",
@@ -546,14 +663,14 @@ async def test_computer_use_streams_visible_thought_summary_before_function_call
                                             "safety_decision": {"decision": "allowed"},
                                         },
                                     }
-                                }
+                                },
                             ],
                         }
                     }
                 ]
             }
 
-    google = StreamingGoogle()
+    google = Google()
     events: list[tuple[str, str]] = []
     client = ComputerUseClient(
         cast(Any, google),
@@ -570,6 +687,7 @@ async def test_computer_use_streams_visible_thought_summary_before_function_call
     assert proposal.intent == "Open the approved form"
     assert proposal.arguments["x"] == 500
     assert events == [("thought", "The approved control is visible.")]
+    assert "candidateCount" not in google.body["generationConfig"]
     assert google.body["generationConfig"]["thinkingConfig"] == {"includeThoughts": True}
 
 
@@ -622,6 +740,40 @@ async def test_computer_worker_masks_declared_secret_fields_before_model_proposa
 
     assert proposal is None
     assert driver.masked == (selector,)
+
+
+@pytest.mark.anyio
+async def test_computer_worker_rejects_an_action_outside_the_approved_tool() -> None:
+    worker = ComputerUseWorker(
+        cast(Any, None),
+        cast(Any, None),
+        cast(Any, None),
+        cast(Any, None),
+        lambda prefix: prefix,
+    )
+    step = PlaybookStep(
+        id="fill_name",
+        stage=Stage.CREATE,
+        tool="browser.fill",
+        operation="fill",
+        objective="Enter the replacement name",
+        parameters={"value": "replacement"},
+        selectors=(Selector(kind=SelectorKind.LABEL, value="Name"),),
+        checkpoint=PageCheckpoint(url_pattern="https://app.vendor.example.com/keys"),
+        evidence_checks=frozenset({"name-entered"}),
+    )
+    proposal = ComputerProposal(
+        name="wait",
+        arguments={"seconds": 1},
+        intent=None,
+        safety_decision=None,
+        requires_confirmation=False,
+        safety_explanation=None,
+        response_content={},
+    )
+
+    with pytest.raises(ResourceConflictError, match="approved browser tool"):
+        await worker._bind(_session(), step, proposal)
 
 
 def test_browser_domain_allowlist_does_not_accept_lookalikes() -> None:
@@ -758,10 +910,25 @@ class ComputerGoogle:
     def __init__(self, action: str) -> None:
         self.action = action
         self.body: dict[str, Any] = {}
+        self.url = ""
+        self.armor: list[str] = []
+        self.armor_bodies: list[dict[str, Any]] = []
 
     async def request(self, method: str, url: str, **kwargs: object) -> dict[str, Any]:
         assert method == "POST"
+        if ":sanitize" in url:
+            self.armor.append(url)
+            body = kwargs.get("json")
+            assert isinstance(body, dict)
+            self.armor_bodies.append(body)
+            return {
+                "sanitizationResult": {
+                    "invocationResult": "SUCCESS",
+                    "filterMatchState": "NO_MATCH_FOUND",
+                }
+            }
         assert url.endswith(":generateContent")
+        self.url = url
         body = kwargs.get("json")
         assert isinstance(body, dict)
         self.body = body
@@ -871,6 +1038,19 @@ class SetupConnections:
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection:
         return self.connection
 
+    async def get_playbook_version(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        version_id: str,
+    ) -> PlaybookVersion:
+        assert (organisation_id, playbook_id, version_id) == (
+            "org_one",
+            "playbook_one",
+            "version_one",
+        )
+        return _computer_version()
+
     async def update_authentication(
         self,
         organisation_id: str,
@@ -941,6 +1121,9 @@ class SetupVms:
 
     async def exists(self, instance: str) -> bool:
         return self.instance_exists
+
+    async def reconcile(self) -> None:
+        return None
 
 
 class SetupSecrets:
@@ -1018,6 +1201,8 @@ def _setup_service(
             return httpx.Response(200, json={"status": "ok"})
         if request.url.path == "/v1/setup/store":
             secrets.store_calls += 1
+            if state is not None:
+                state["validation"] = json.loads(request.content)
             captured = state or {}
             cookies = captured.get("cookies", []) if isinstance(captured, dict) else []
             if not any(
@@ -1131,9 +1316,8 @@ async def test_setup_begin_rejects_api_connections() -> None:
 @pytest.mark.anyio
 async def test_setup_complete_captures_only_the_provider_session() -> None:
     catalog = SetupCatalog()
-    service, vms, secrets, _ = _setup_service(
-        catalog, _browser_connection(), state=_exported_state()
-    )
+    state = _exported_state()
+    service, vms, secrets, _ = _setup_service(catalog, _browser_connection(), state=state)
     session, token = await _ready_setup(service)
 
     completed, connection, resumed = await service.complete(
@@ -1150,6 +1334,15 @@ async def test_setup_complete_captures_only_the_provider_session() -> None:
     assert connection.authorization_reference == completed.auth_reference
     assert vms.deleted == [completed.worker_instance]
     assert secrets.store_calls == 1
+    assert state["validation"] == {
+        "url": "https://app.vendor.example.com/keys",
+        "login_url_pattern": "https://*.vendor.example.com/login*",
+        "checkpoint": {
+            "url_pattern": "https://app.vendor.example.com/keys",
+            "required_text": [],
+            "forbidden_text": [],
+        },
+    }
 
 
 @pytest.mark.anyio
@@ -1232,6 +1425,38 @@ async def test_setup_complete_preserves_worker_capture_reason() -> None:
     with pytest.raises(ResourceConflictError, match="provider session domain"):
         await service.complete("org_one", session.id, session.revision, token, "user_one")
 
+    assert vms.deleted == [session.worker_instance]
+
+
+@pytest.mark.anyio
+async def test_setup_marks_the_connection_for_reauthentication_when_restore_fails() -> None:
+    catalog = SetupCatalog()
+    service, vms, _, connections = _setup_service(
+        catalog, _browser_connection(), state=_exported_state()
+    )
+    session, token = await _ready_setup(service)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health/live":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/v1/setup/store":
+            return httpx.Response(
+                409,
+                json={
+                    "code": "authentication-required",
+                    "message": "provider session landed on the login page",
+                },
+            )
+        raise AssertionError(f"unexpected {request.url.path}")
+
+    service._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(ResourceConflictError, match="landed on the login page"):
+        await service.complete("org_one", session.id, session.revision, token, "user_one")
+
+    stored = await catalog.get(FirestorePaths.setup("org_one", session.id), SetupSession)
+    assert stored.status is SetupStatus.TERMINATED
+    assert connections.connection.status is ConnectionStatus.REAUTHENTICATION
+    assert connections.connection.authorization_reference is None
     assert vms.deleted == [session.worker_instance]
 
 
@@ -1436,6 +1661,9 @@ def test_browser_vm_startup_runs_the_worker_process() -> None:
     assert "service-accounts/default/token" in startup
     assert "--network=host" in startup
     assert 'iptables -I INPUT -p tcp -s "$runtime_cidr" --dport 8080 -j ACCEPT' in startup
+    assert 'registry="https://${region}-docker.pkg.dev/v2/"' in startup
+    assert "for attempt in {1..12}; do" in startup
+    assert "for attempt in {1..4}; do" in startup
 
 
 @pytest.mark.anyio
@@ -1479,7 +1707,38 @@ async def test_setup_store_requires_the_setup_token_and_returns_metadata_only() 
         async def request(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
             return {"name": "projects/project-one/secrets/uumi-browser-session-org_one/versions/2"}
 
+    class VerificationPage:
+        def __init__(self) -> None:
+            self.url = "about:blank"
+
+        async def route(self, pattern: str, handler: Any) -> None:
+            del pattern, handler
+
+        async def goto(self, url: str, wait_until: str) -> None:
+            del wait_until
+            self.url = url
+
+    class VerificationContext:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def new_page(self) -> VerificationPage:
+            return VerificationPage()
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class Browser:
+        def __init__(self) -> None:
+            self.storage_state: dict[str, Any] | None = None
+            self.context = VerificationContext()
+
+        async def new_context(self, **kwargs: Any) -> VerificationContext:
+            self.storage_state = cast(dict[str, Any], kwargs["storage_state"])
+            return self.context
+
     token = "t" * 43
+    browser = Browser()
     app.state.setup = SetupRuntime(
         cast(Any, ExportContext()),
         cast(Any, None),
@@ -1487,13 +1746,27 @@ async def test_setup_store_requires_the_setup_token_and_returns_metadata_only() 
         ("*.vendor.example.com",),
         "projects/project-one/secrets/uumi-browser-session-org_one",
         cast(Any, Google()),
+        cast(Any, browser),
     )
+    validation = {
+        "url": "https://app.vendor.example.com/keys",
+        "login_url_pattern": "https://*.vendor.example.com/login*",
+        "checkpoint": {"url_pattern": "https://app.vendor.example.com/keys"},
+    }
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     try:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             missing = await client.post("/v1/setup/store")
-            wrong = await client.post("/v1/setup/store", headers={"X-Uumi-Setup": "x" * 43})
-            stored = await client.post("/v1/setup/store", headers={"X-Uumi-Setup": token})
+            wrong = await client.post(
+                "/v1/setup/store",
+                headers={"X-Uumi-Setup": "x" * 43},
+                json=validation,
+            )
+            stored = await client.post(
+                "/v1/setup/store",
+                headers={"X-Uumi-Setup": token},
+                json=validation,
+            )
     finally:
         del app.state.setup
 
@@ -1503,6 +1776,100 @@ async def test_setup_store_requires_the_setup_token_and_returns_metadata_only() 
     assert stored.json()["secret_reference"].endswith("/versions/2")
     assert "storage_state" not in stored.json()
     assert "cookie-value" not in stored.text
+    assert browser.storage_state == {
+        "cookies": [
+            {
+                "name": "session",
+                "value": "cookie-value",
+                "domain": "app.vendor.example.com",
+                "path": "/",
+            }
+        ],
+        "origins": [],
+    }
+    assert browser.context.closed
+
+
+@pytest.mark.anyio
+async def test_setup_store_rejects_storage_that_returns_to_the_login_page() -> None:
+    from browser.workerapp import SetupRuntime, app
+
+    class ExportContext:
+        def __init__(self) -> None:
+            self.pages: list[Any] = []
+
+        async def storage_state(self) -> dict[str, Any]:
+            return {
+                "cookies": [
+                    {
+                        "name": "session",
+                        "value": "cookie-value",
+                        "domain": "app.vendor.example.com",
+                        "path": "/",
+                    }
+                ],
+                "origins": [],
+            }
+
+        async def clear_cookies(self) -> None:
+            pass
+
+    class Google:
+        async def request(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("authentication must be validated before secret storage")
+
+    class VerificationPage:
+        url = "about:blank"
+
+        async def route(self, pattern: str, handler: Any) -> None:
+            del pattern, handler
+
+        async def goto(self, url: str, wait_until: str) -> None:
+            del url, wait_until
+            self.url = "https://app.vendor.example.com/login"
+
+    class VerificationContext:
+        async def new_page(self) -> VerificationPage:
+            return VerificationPage()
+
+        async def close(self) -> None:
+            pass
+
+    class Browser:
+        async def new_context(self, **kwargs: Any) -> VerificationContext:
+            del kwargs
+            return VerificationContext()
+
+    token = "t" * 43
+    app.state.setup = SetupRuntime(
+        cast(Any, ExportContext()),
+        cast(Any, None),
+        hashlib.sha256(token.encode()).hexdigest(),
+        ("*.vendor.example.com",),
+        "projects/project-one/secrets/uumi-browser-session-org_one",
+        cast(Any, Google()),
+        cast(Any, Browser()),
+    )
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/v1/setup/store",
+                headers={"X-Uumi-Setup": token},
+                json={
+                    "url": "https://app.vendor.example.com/keys",
+                    "login_url_pattern": "https://*.vendor.example.com/login*",
+                    "checkpoint": {"url_pattern": "https://app.vendor.example.com/keys"},
+                },
+            )
+    finally:
+        del app.state.setup
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "code": "authentication-required",
+        "message": "provider session landed on the login page",
+    }
 
 
 class _LoginPage:
@@ -1740,6 +2107,266 @@ async def test_driver_detects_a_login_redirect_after_navigation() -> None:
         await driver.execute(action)
 
 
+def test_driver_detects_a_login_redirect_with_query_parameters() -> None:
+    driver = BrowserDriver(
+        cast(Any, _LoginPage("https://app.vendor.example.com/login?redirect=/keys")),
+        BrowserPolicy(
+            allowed_domains=("*.vendor.example.com",),
+            allowed_actions=frozenset({BrowserActionKind.NAVIGATE}),
+            login_url_pattern="https://*.vendor.example.com/login",
+        ),
+    )
+
+    with pytest.raises(AuthenticationRequiredError, match="login page"):
+        driver._check_authentication()
+
+
+@pytest.mark.anyio
+async def test_driver_waits_for_client_rendered_checkpoint_text() -> None:
+    class TextLocator:
+        first: "TextLocator"
+
+        def __init__(self) -> None:
+            self.first = self
+            self.waited = False
+
+        async def wait_for(self, *, state: str, timeout: int) -> None:
+            assert state == "visible"
+            assert timeout == 10_000
+            self.waited = True
+
+    class Page:
+        def __init__(self) -> None:
+            self.url = "https://app.vendor.example.com/keys"
+            self.locator = TextLocator()
+
+        def get_by_text(self, text: str, exact: bool = False) -> TextLocator:
+            assert text == "API Keys"
+            assert exact is True
+            return self.locator
+
+    page = Page()
+    driver = BrowserDriver(cast(Any, page), _login_driver("")._policy)
+
+    await driver._validate_text(("API Keys",), ())
+
+    assert page.locator.waited is True
+
+
+@pytest.mark.anyio
+async def test_driver_detects_a_client_rendered_login_redirect_while_waiting() -> None:
+    class TextLocator:
+        first: "TextLocator"
+
+        def __init__(self, page: "Page") -> None:
+            self.first = self
+            self.page = page
+
+        async def wait_for(self, *, state: str, timeout: int) -> None:
+            assert state == "visible"
+            assert timeout == 10_000
+            self.page.url = "https://app.vendor.example.com/login?redirect=/keys"
+            raise PlaywrightTimeoutError("checkpoint timed out")
+
+    class Page:
+        def __init__(self) -> None:
+            self.url = "https://app.vendor.example.com/keys"
+            self.locator = TextLocator(self)
+
+        def get_by_text(self, text: str, exact: bool = False) -> TextLocator:
+            assert text == "API Keys"
+            assert exact is True
+            return self.locator
+
+    driver = BrowserDriver(cast(Any, Page()), _login_driver("")._policy)
+
+    with pytest.raises(AuthenticationRequiredError, match="login page"):
+        await driver._validate_text(("API Keys",), ())
+
+
+@pytest.mark.anyio
+async def test_worker_navigation_creates_a_valid_browser_action_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from browser import workerapp
+
+    session = _session().model_copy(update={"status": BrowserStatus.RUNNING})
+    run = make_run(NOW).model_copy(update={"fencing_token": session.fencing_token})
+
+    class Sessions:
+        action: BrowserAction | None = None
+
+        async def authorize_action(
+            self,
+            organisation_id: str,
+            session_id: str,
+            revision: int,
+            action: BrowserAction,
+        ) -> BrowserSession:
+            del organisation_id, session_id, revision
+            self.action = action
+            return session.model_copy(update={"revision": session.revision + 1, "step_count": 1})
+
+        async def finish_action(self, *args: Any) -> None:
+            del args
+
+    class Driver:
+        async def execute(self, action: BrowserAction) -> None:
+            assert action.kind is BrowserActionKind.NAVIGATE
+
+    async def authorise(*args: Any) -> tuple[BrowserSession, RotationRun, Any]:
+        del args
+        return session, run, SimpleNamespace()
+
+    async def validate(*args: Any) -> None:
+        del args
+
+    sessions = Sessions()
+    runtime = SimpleNamespace(sessions=sessions, driver=Driver(), session=session)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(runtime=runtime)))
+    monkeypatch.setattr(workerapp, "_authorise", authorise)
+    monkeypatch.setattr(workerapp, "_validate_step", validate)
+    monkeypatch.setattr(workerapp, "_validate_approval", validate)
+    step = PlaybookStep(
+        id="open_keys",
+        stage=Stage.CREATE,
+        tool="browser.navigate",
+        operation="navigate",
+        objective="Open the API keys page",
+        parameters={"url": "https://app.vendor.example.com/keys"},
+        checkpoint=PageCheckpoint(url_pattern="https://app.vendor.example.com/keys"),
+        evidence_checks=frozenset({"page-confirmed"}),
+    )
+
+    result = await workerapp.navigate(
+        workerapp.NavigateRequest(step=step),
+        "c" * 32,
+        cast(Any, request),
+    )
+
+    assert result.session.step_count == 1
+    assert sessions.action is not None
+    assert sessions.action.id.startswith("browseraction_")
+
+
+@pytest.mark.anyio
+async def test_worker_selection_uses_the_declared_option_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from browser import workerapp
+
+    session = _session().model_copy(update={"status": BrowserStatus.RUNNING})
+    run = make_run(NOW).model_copy(update={"fencing_token": session.fencing_token})
+
+    class Sessions:
+        action: BrowserAction | None = None
+
+        async def authorize_action(
+            self,
+            organisation_id: str,
+            session_id: str,
+            revision: int,
+            action: BrowserAction,
+        ) -> BrowserSession:
+            del organisation_id, session_id, revision
+            self.action = action
+            return session.model_copy(update={"revision": session.revision + 1, "step_count": 1})
+
+        async def finish_action(self, *args: Any) -> None:
+            del args
+
+    class Driver:
+        async def execute(self, action: BrowserAction) -> None:
+            assert action.kind is BrowserActionKind.SELECT
+            assert action.value == "Sending access"
+            assert action.selector == Selector(kind=SelectorKind.FIELD, value="Permission")
+
+    async def authorise(*args: Any) -> tuple[BrowserSession, RotationRun, Any]:
+        del args
+        return session, run, SimpleNamespace()
+
+    async def validate(*args: Any) -> None:
+        del args
+
+    sessions = Sessions()
+    runtime = SimpleNamespace(sessions=sessions, driver=Driver(), session=session)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(runtime=runtime)))
+    monkeypatch.setattr(workerapp, "_authorise", authorise)
+    monkeypatch.setattr(workerapp, "_validate_step", validate)
+    monkeypatch.setattr(workerapp, "_validate_approval", validate)
+    step = PlaybookStep(
+        id="select_sending_access",
+        stage=Stage.CREATE,
+        tool="browser.select",
+        operation="select",
+        objective="Set the provider permission",
+        parameters={"value": "Sending access"},
+        selectors=(Selector(kind=SelectorKind.FIELD, value="Permission"),),
+        checkpoint=PageCheckpoint(url_pattern="https://app.vendor.example.com/keys"),
+        evidence_checks=frozenset({"permission-selected"}),
+    )
+
+    result = await workerapp.select(
+        workerapp.NavigateRequest(step=step),
+        "c" * 32,
+        cast(Any, request),
+    )
+
+    assert result.completed is True
+    assert sessions.action is not None
+    assert sessions.action.kind is BrowserActionKind.SELECT
+
+
+@pytest.mark.anyio
+async def test_driver_selection_supports_custom_combobox_controls() -> None:
+    class Locator:
+        def __init__(self, tag: str, visible: bool = True) -> None:
+            self.tag = tag
+            self.visible = visible
+            self.clicked = False
+
+        async def evaluate(self, expression: str) -> str:
+            assert expression == "element => element.tagName.toLowerCase()"
+            return self.tag
+
+        async def click(self) -> None:
+            self.clicked = True
+
+        async def count(self) -> int:
+            return 1
+
+        async def is_visible(self) -> bool:
+            return self.visible
+
+    class Page:
+        def __init__(self) -> None:
+            self.field = Locator("button")
+            self.option = Locator("div")
+
+        def get_by_label(self, value: str, exact: bool) -> Locator:
+            assert value == "Permission"
+            assert exact is True
+            return self.field
+
+        def get_by_role(self, role: str, name: str, exact: bool) -> Locator:
+            assert role == "option"
+            assert name == "Sending access"
+            assert exact is True
+            return self.option
+
+        def get_by_text(self, value: str, exact: bool) -> Locator:
+            raise AssertionError(f"unexpected fallback for {value!r}, exact={exact}")
+
+    driver = BrowserDriver(cast(Any, Page()), _login_driver("")._policy)
+    await driver._select_option(
+        Selector(kind=SelectorKind.LABEL, value="Permission"), "Sending access"
+    )
+
+    page = cast(Any, driver._page)
+    assert page.field.clicked is True
+    assert page.option.clicked is True
+
+
 @pytest.mark.anyio
 async def test_coordinator_maps_the_login_wall_to_a_reauthentication_pause() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1762,6 +2389,96 @@ async def test_coordinator_maps_the_login_wall_to_a_reauthentication_pause() -> 
 
     assert captured.value.output["authentication_required"] is True
     assert captured.value.output["connection_id"] == "provider_one"
+    assert captured.value.output["browser_error"] == {
+        "status_code": 409,
+        "code": "authentication-required",
+        "message": "login page",
+    }
+
+
+@pytest.mark.anyio
+async def test_coordinator_readiness_uses_bounded_health_probes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeouts: list[dict[str, float]] = []
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        timeouts.append(request.extensions["timeout"])
+        return httpx.Response(503 if attempts == 1 else 200)
+
+    async def no_sleep(seconds: float) -> None:
+        assert seconds == 2
+
+    monkeypatch.setattr("coordinator.browser.asyncio.sleep", no_sleep)
+    executor = BrowserStepExecutor(
+        cast(Any, None),
+        cast(Any, None),
+        cast(Any, None),
+        CapabilitySigner(b"\x01" * 32),
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    await executor._wait_ready("10.0.0.2")
+
+    assert attempts == 2
+    assert timeouts == [
+        {"connect": 2.0, "read": 2.0, "write": 2.0, "pool": 2.0},
+        {"connect": 2.0, "read": 2.0, "write": 2.0, "pool": 2.0},
+    ]
+
+
+@pytest.mark.anyio
+async def test_coordinator_preserves_a_safe_generic_browser_worker_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409,
+            json={"code": "checkpoint-mismatch", "message": "approved page was not reached"},
+        )
+
+    executor = BrowserStepExecutor(
+        cast(Any, None),
+        cast(Any, None),
+        cast(Any, None),
+        CapabilitySigner(b"\x01" * 32),
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    run = make_run(NOW).model_copy(update={"fencing_token": 3})
+    session = _session().model_copy(update={"internal_address": "10.0.0.2"})
+
+    with pytest.raises(BrowserWorkerError) as captured:
+        await executor._post(run, session, "browser.operate", "/v1/steps/propose", {})
+
+    assert str(captured.value) == "approved page was not reached"
+    assert captured.value.output == {
+        "browser_error": {
+            "status_code": 409,
+            "code": "checkpoint-mismatch",
+            "message": "approved page was not reached",
+        }
+    }
+
+
+@pytest.mark.anyio
+async def test_browser_worker_returns_only_sanitized_google_error_detail() -> None:
+    from browser import workerapp
+
+    response = await workerapp._connector_error(
+        cast(Any, None),
+        ConnectorError(
+            "google-api-400",
+            "Google API returned HTTP 400",
+            safe_detail="invalid-argument.field-tools[0].computerUse",
+        ),
+    )
+
+    assert response.status_code == 422
+    assert json.loads(bytes(response.body)) == {
+        "code": "google-api-400",
+        "message": ("Google API returned HTTP 400 (invalid-argument.field-tools[0].computerUse)"),
+    }
 
 
 class FlagCatalog:
@@ -2290,6 +3007,42 @@ def test_blocked_redirect_is_authentication_required() -> None:
 
 
 @pytest.mark.anyio
+async def test_blocked_subresource_does_not_require_reauthentication() -> None:
+    main_frame = object()
+    page = SimpleNamespace(url="https://app.vendor.example.com/keys", main_frame=main_frame)
+    driver = BrowserDriver(cast(Any, page), _login_driver("")._policy)
+    route = SimpleNamespace(abort=AsyncMock())
+    request = SimpleNamespace(
+        url="https://analytics.example.net/script.js",
+        frame=main_frame,
+        is_navigation_request=lambda: False,
+    )
+
+    await driver._route(cast(Any, route), cast(Any, request))
+
+    route.abort.assert_awaited_once_with("blockedbyclient")
+    assert driver._blocked_egress is False
+
+
+@pytest.mark.anyio
+async def test_blocked_top_level_navigation_requires_reauthentication() -> None:
+    main_frame = object()
+    page = SimpleNamespace(url="https://app.vendor.example.com/keys", main_frame=main_frame)
+    driver = BrowserDriver(cast(Any, page), _login_driver("")._policy)
+    route = SimpleNamespace(abort=AsyncMock())
+    request = SimpleNamespace(
+        url="https://identity.example.net/login",
+        frame=main_frame,
+        is_navigation_request=lambda: True,
+    )
+
+    await driver._route(cast(Any, route), cast(Any, request))
+
+    route.abort.assert_awaited_once_with("blockedbyclient")
+    assert driver._blocked_egress is True
+
+
+@pytest.mark.anyio
 async def test_setup_begin_rejects_a_second_active_session() -> None:
     catalog = SetupCatalog()
     service, _, _, _ = _setup_service(catalog, _browser_connection())
@@ -2485,6 +3238,174 @@ async def test_executor_uses_the_exact_playbook_step_as_the_model_prompt(
     assert prompts == [step.objective]
 
 
+@pytest.mark.anyio
+async def test_executor_finishes_after_one_checkpointed_browser_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _browser_connection()
+    version = _computer_version()
+    step = PlaybookStep(
+        id="open_form",
+        stage=Stage.CREATE,
+        tool="browser.click",
+        operation="click",
+        objective="Open the creation form",
+        selectors=(Selector(kind=SelectorKind.TEST_ID, value="create-api-key"),),
+        checkpoint=PageCheckpoint(url_pattern="https://app.vendor.example.com/keys"),
+        evidence_checks=frozenset({"form-opened"}),
+    )
+    run = make_run(NOW).model_copy(update={"fencing_token": 3})
+    credential = ManagedCredential(
+        id="cred_one",
+        organisation_id="org_one",
+        connection_id="connection_browser",
+        secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
+        secret_reference="projects/project-one/secrets/key",
+        provider="internal-vendor",
+        kind="api-key",
+        display_name="Vendor production key",
+        control_version="policy_one",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    browser_session = _session().model_copy(
+        update={"status": BrowserStatus.RUNNING, "internal_address": "10.0.0.2"}
+    )
+    calls: list[str] = []
+
+    async def session(*args: object) -> BrowserSession:
+        del args
+        return browser_session
+
+    async def post(
+        run_value: RotationRun,
+        session_value: BrowserSession,
+        tool: str,
+        path: str,
+        payload: dict[str, Any],
+        approval: object = None,
+    ) -> dict[str, Any]:
+        del run_value, session_value, tool, payload, approval
+        calls.append(path)
+        if path == "/v1/steps/propose":
+            return {"done": False, "action": {"id": "action_one"}}
+        return {
+            "session": browser_session.model_dump(mode="json"),
+            "completed": True,
+            "outputs": {},
+        }
+
+    async with httpx.AsyncClient() as http:
+        executor = BrowserStepExecutor(
+            cast(Any, None),
+            cast(Any, None),
+            cast(Any, None),
+            CapabilitySigner(b"\x01" * 32),
+            http,
+        )
+        monkeypatch.setattr(executor, "_session", session)
+        monkeypatch.setattr(executor, "_post", post)
+
+        result = await executor.execute(
+            run,
+            connection,
+            version,
+            credential,
+            frozenset(),
+            step,
+        )
+
+    assert result["done"] is True
+    assert calls == ["/v1/steps/click"]
+
+
+@pytest.mark.anyio
+async def test_executor_completes_a_declared_fill_without_model_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _browser_connection()
+    version = _computer_version()
+    step = PlaybookStep(
+        id="fill_name",
+        stage=Stage.CREATE,
+        tool="browser.fill",
+        operation="fill",
+        objective="Enter the replacement name",
+        parameters={"value": "replacement"},
+        selectors=(Selector(kind=SelectorKind.LABEL, value="Name"),),
+        checkpoint=PageCheckpoint(url_pattern="https://app.vendor.example.com/keys"),
+        evidence_checks=frozenset({"name-entered"}),
+    )
+    run = make_run(NOW).model_copy(update={"fencing_token": 3})
+    credential = ManagedCredential(
+        id="cred_one",
+        organisation_id="org_one",
+        connection_id="connection_browser",
+        secret_store_connection_id="secret_one",
+        secret_resource="projects/project-one/secrets/key",
+        secret_reference="projects/project-one/secrets/key",
+        provider="internal-vendor",
+        kind="api-key",
+        display_name="Vendor production key",
+        control_version="policy_one",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    browser_session = _session().model_copy(
+        update={"status": BrowserStatus.RUNNING, "internal_address": "10.0.0.2"}
+    )
+    calls: list[str] = []
+    executions = 0
+
+    async def session(*args: object) -> BrowserSession:
+        del args
+        return browser_session
+
+    async def post(
+        run_value: RotationRun,
+        session_value: BrowserSession,
+        tool: str,
+        path: str,
+        payload: dict[str, Any],
+        approval: object = None,
+    ) -> dict[str, Any]:
+        nonlocal executions
+        del run_value, session_value, tool, payload, approval
+        calls.append(path)
+        if path == "/v1/steps/propose":
+            return {"done": False, "action": {"id": f"action_{len(calls)}"}}
+        executions += 1
+        return {
+            "session": browser_session.model_dump(mode="json"),
+            "completed": True,
+            "outputs": {},
+        }
+
+    async with httpx.AsyncClient() as http:
+        executor = BrowserStepExecutor(
+            cast(Any, None),
+            cast(Any, None),
+            cast(Any, None),
+            CapabilitySigner(b"\x01" * 32),
+            http,
+        )
+        monkeypatch.setattr(executor, "_session", session)
+        monkeypatch.setattr(executor, "_post", post)
+
+        result = await executor.execute(
+            run,
+            connection,
+            version,
+            credential,
+            frozenset(),
+            step,
+        )
+
+    assert result["done"] is True
+    assert calls == ["/v1/steps/fill"]
+
+
 class SessionCatalog:
     def __init__(self, version: PlaybookVersion, connections: dict[str, Connection]) -> None:
         self.version = version
@@ -2567,3 +3488,145 @@ def _computer_version() -> PlaybookVersion:
         created_by="author_one",
         created_at=NOW,
     )
+
+
+class EgressStore:
+    def __init__(self) -> None:
+        self.state: BrowserEgressState | None = None
+
+    async def get(self) -> BrowserEgressState | None:
+        return self.state
+
+    async def update(self, change: Any) -> BrowserEgressState:
+        self.state = change(self.state)
+        return self.state
+
+
+class EgressManager(BrowserEgressManager):
+    def __init__(self, store: EgressStore) -> None:
+        super().__init__(
+            store,
+            cast(Any, None),
+            "project-one",
+            "us-east1",
+            "projects/project-one/global/networks/uumi",
+            "projects/project-one/regions/us-east1/subnetworks/uumi-browser",
+            "uumi-browser@project-one.iam.gserviceaccount.com",
+            ("vendor.example.com",),
+            lambda: NOW,
+        )
+        self.provisions = 0
+        self.deletions = 0
+
+    async def _ensure_resources(self) -> str:
+        self.provisions += 1
+        return "10.76.0.2"
+
+    async def _delete_resources(self) -> None:
+        self.deletions += 1
+
+
+class FlakyEgressManager(EgressManager):
+    async def _ensure_resources(self) -> str:
+        self.provisions += 1
+        if self.provisions == 1:
+            raise ConnectorError(
+                "google-operation-failed",
+                "Google operation completed with an error",
+                retryable=True,
+                safe_detail="internal",
+            )
+        return "10.76.0.2"
+
+
+@pytest.mark.anyio
+async def test_browser_egress_is_shared_until_the_last_session_releases() -> None:
+    store = EgressStore()
+    manager = EgressManager(store)
+
+    await manager.acquire(
+        "projects/project-one/zones/us-east1-b/instances/one",
+        NOW + timedelta(minutes=30),
+        ("app.vendor.example.com",),
+    )
+    await manager.acquire(
+        "projects/project-one/zones/us-east1-b/instances/two",
+        NOW + timedelta(minutes=30),
+        ("*.vendor.example.com",),
+    )
+
+    assert manager.provisions == 1
+    assert store.state is not None
+    initial = store.state
+    assert initial.status is BrowserEgressStatus.READY
+    assert len(initial.leases) == 2
+
+    await manager.release("projects/project-one/zones/us-east1-b/instances/one")
+    assert manager.deletions == 0
+    shared = store.state
+    assert shared is not None
+    assert shared.status is BrowserEgressStatus.READY
+
+    await manager.release("projects/project-one/zones/us-east1-b/instances/two")
+    assert manager.deletions == 1
+    released = store.state
+    assert released is not None
+    assert released.status is BrowserEgressStatus.ABSENT
+    assert released.leases == ()
+
+
+@pytest.mark.anyio
+async def test_browser_egress_retries_transient_provisioning_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("browser.egress.asyncio.sleep", AsyncMock())
+    store = EgressStore()
+    manager = FlakyEgressManager(store)
+
+    await manager.acquire(
+        "projects/project-one/zones/us-east1-b/instances/one",
+        NOW + timedelta(minutes=30),
+        ("vendor.example.com",),
+    )
+
+    assert manager.provisions == 2
+    assert store.state is not None
+    assert store.state.status is BrowserEgressStatus.READY
+    assert store.state.error is None
+
+
+@pytest.mark.anyio
+async def test_browser_egress_reaper_deletes_expired_orphan() -> None:
+    store = EgressStore()
+    manager = EgressManager(store)
+    await manager.acquire(
+        "projects/project-one/zones/us-east1-b/instances/one",
+        NOW + timedelta(minutes=30),
+        ("vendor.example.com",),
+    )
+    assert store.state is not None
+    store.state = store.state.model_copy(
+        update={
+            "leases": tuple(
+                lease.model_copy(update={"expires_at": NOW - timedelta(seconds=1)})
+                for lease in store.state.leases
+            )
+        }
+    )
+
+    await manager.reconcile()
+
+    assert manager.deletions == 1
+    assert store.state.status is BrowserEgressStatus.ABSENT
+
+
+@pytest.mark.anyio
+async def test_browser_egress_rejects_unapproved_session_domain() -> None:
+    manager = EgressManager(EgressStore())
+
+    with pytest.raises(ConnectorError, match="outside the approved egress boundary"):
+        await manager.acquire(
+            "projects/project-one/zones/us-east1-b/instances/one",
+            NOW + timedelta(minutes=30),
+            ("attacker.example",),
+        )

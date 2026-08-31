@@ -27,6 +27,7 @@ class ManagedCredential(Contract):
     kind: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=160)
     provider_id: str | None = Field(default=None, max_length=256)
+    provider_display_name: str | None = Field(default=None, max_length=256)
     scopes: frozenset[str] = frozenset()
     consumer_ids: tuple[Identifier, ...] = ()
     active_generation_id: Identifier | None = None

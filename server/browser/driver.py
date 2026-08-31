@@ -15,6 +15,7 @@ from contracts import (
 )
 from core.errors import ResourceConflictError
 from playwright.async_api import Locator, Page, Request, Route
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from browser.url import metadata_url
 
@@ -60,7 +61,7 @@ class BrowserDriver:
             await (await self.locator(_selector(action))).fill(action.value)
         elif action.kind is BrowserActionKind.SELECT:
             assert action.value is not None
-            await (await self.locator(_selector(action))).select_option(action.value)
+            await self._select_option(_selector(action), action.value)
         elif action.kind is BrowserActionKind.SCROLL:
             value = _bounded_integer(action.value, -2000, 2000)
             await self._page.mouse.wheel(0, value)
@@ -188,6 +189,8 @@ class BrowserDriver:
             )
         elif selector.kind is SelectorKind.LABEL:
             locator = self._page.get_by_label(selector.value, exact=selector.exact)
+        elif selector.kind is SelectorKind.FIELD:
+            locator = await self._field_locator(selector)
         elif selector.kind is SelectorKind.TEXT:
             locator = self._page.get_by_text(selector.value, exact=selector.exact)
         elif selector.kind is SelectorKind.TEST_ID:
@@ -204,6 +207,35 @@ class BrowserDriver:
         if require_unique and not await locator.is_visible():
             raise ResourceConflictError("approved selector is not visible")
         return locator
+
+    async def _field_locator(self, selector: Selector) -> Locator:
+        field_xpath = (
+            "xpath=following::*[self::input or self::select or self::textarea or self::button][1]"
+        )
+        labeled = self._page.get_by_label(selector.value, exact=selector.exact)
+        if await labeled.count() == 1:
+            return labeled
+        label = self._page.locator("label").filter(has_text=selector.value)
+        if await label.count() == 1:
+            return label.locator(field_xpath)
+        text = self._page.get_by_text(selector.value, exact=selector.exact)
+        if await text.count() == 1:
+            return text.locator(field_xpath)
+        return labeled
+
+    async def _select_option(self, selector: Selector, value: str) -> None:
+        field = await self.locator(selector)
+        tag_name = await field.evaluate("element => element.tagName.toLowerCase()")
+        if tag_name == "select":
+            await field.select_option(label=value)
+            return
+        await field.click()
+        option = self._page.get_by_role("option", name=value, exact=True)
+        if await option.count() != 1:
+            option = self._page.get_by_text(value, exact=True)
+        if await option.count() != 1 or not await option.is_visible():
+            raise ResourceConflictError("approved select option is not uniquely visible")
+        await option.click()
 
     async def same_element(self, left: Selector, right: Selector) -> bool:
         left_locator = await self.locator(left)
@@ -244,7 +276,8 @@ class BrowserDriver:
         try:
             self.validate_url(request.url)
         except AuthenticationRequiredError:
-            self._blocked_egress = True
+            if request.is_navigation_request() and request.frame == self._page.main_frame:
+                self._blocked_egress = True
             await route.abort("blockedbyclient")
             return
         except ResourceConflictError:
@@ -262,7 +295,10 @@ class BrowserDriver:
 
     def _check_authentication(self) -> None:
         pattern = self._policy.login_url_pattern
-        if pattern and fnmatch.fnmatchcase(self._page.url, pattern):
+        if pattern and (
+            fnmatch.fnmatchcase(self._page.url, pattern)
+            or fnmatch.fnmatchcase(metadata_url(self._page.url), pattern)
+        ):
             raise AuthenticationRequiredError("provider session landed on the login page")
 
     def _check_blocked_egress(self) -> None:
@@ -271,8 +307,18 @@ class BrowserDriver:
 
     async def _validate_text(self, required: tuple[str, ...], forbidden: tuple[str, ...]) -> None:
         for text in required:
-            if await self._page.get_by_text(text, exact=True).count() == 0:
-                raise ResourceConflictError(f"browser checkpoint text is missing: {text}")
+            try:
+                await self._page.get_by_text(text, exact=True).first.wait_for(
+                    state="visible",
+                    timeout=_CHECKPOINT_TIMEOUT_MS,
+                )
+            except PlaywrightTimeoutError as error:
+                self._check_blocked_egress()
+                self._check_authentication()
+                self.validate_url(self._page.url)
+                raise ResourceConflictError(
+                    f"browser checkpoint text is missing: {text}"
+                ) from error
         for text in forbidden:
             if await self._page.get_by_text(text, exact=True).count() != 0:
                 raise ResourceConflictError(f"browser checkpoint contains forbidden text: {text}")
@@ -335,3 +381,5 @@ _SETUP_SENSITIVE_SELECTOR = ", ".join(
         'textarea[id*="api-key" i]',
     )
 )
+
+_CHECKPOINT_TIMEOUT_MS = 10_000

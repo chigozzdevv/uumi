@@ -253,6 +253,12 @@ def validate_definition(definition: PlaybookDraft) -> None:
     patterns = (
         definition.login_url_pattern,
         *(step.checkpoint.url_pattern for step in definition.steps if step.checkpoint is not None),
+        *(
+            url
+            for step in definition.steps
+            if step.tool == "browser.navigate"
+            and isinstance(url := step.parameters.get("url"), str)
+        ),
     )
     for pattern in patterns:
         parsed = urlparse(pattern)

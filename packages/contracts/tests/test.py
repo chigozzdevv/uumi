@@ -244,6 +244,34 @@ def test_browser_playbook_requires_secure_capture() -> None:
         )
 
 
+def test_browser_navigation_requires_a_selector_free_url_step() -> None:
+    checkpoint = PageCheckpoint(url_pattern="https://vendor.example.com/keys")
+
+    with pytest.raises(ValidationError, match="must not declare a selector"):
+        PlaybookStep(
+            id="open_keys",
+            stage=Stage.CREATE,
+            tool="browser.navigate",
+            operation="navigate",
+            objective="Open the API keys page",
+            parameters={"url": "https://vendor.example.com/keys"},
+            selectors=(Selector(kind=SelectorKind.CSS, value="body"),),
+            checkpoint=checkpoint,
+            evidence_checks=frozenset({"page-confirmed"}),
+        )
+
+    with pytest.raises(ValidationError, match="requires a URL parameter"):
+        PlaybookStep(
+            id="open_keys",
+            stage=Stage.CREATE,
+            tool="browser.navigate",
+            operation="navigate",
+            objective="Open the API keys page",
+            checkpoint=checkpoint,
+            evidence_checks=frozenset({"page-confirmed"}),
+        )
+
+
 def test_secure_capture_action_cannot_target_the_generated_credential() -> None:
     output = Selector(kind=SelectorKind.TEST_ID, value="new-api-key")
 

@@ -16,6 +16,8 @@ from contracts import (
     ConnectionStatus,
     ConnectionWaiter,
     Contract,
+    PageCheckpoint,
+    PlaybookVersion,
     ResumeRunCommand,
     RotationRun,
     RunStatus,
@@ -24,6 +26,7 @@ from contracts import (
 )
 from core.errors import ResourceConflictError, ResourceNotFoundError
 from core.storage.paths import FirestorePaths
+from pydantic import Field
 
 from browser.auth import is_domain_pattern
 from browser.compute import BrowserVm
@@ -33,6 +36,16 @@ T = TypeVar("T", bound=Contract)
 _SETUP_MINUTES = 30
 _READINESS_PROBE_TIMEOUT_SECONDS = 2.0
 _PROVISIONING_TIMEOUT = timedelta(minutes=5)
+
+
+class SetupAuthenticationRequiredError(ResourceConflictError):
+    pass
+
+
+class ProviderSessionValidation(Contract):
+    url: str = Field(min_length=1, max_length=2048)
+    login_url_pattern: str = Field(min_length=1, max_length=1024)
+    checkpoint: PageCheckpoint
 
 
 class SetupCatalog(Protocol):
@@ -53,6 +66,13 @@ class SetupCatalog(Protocol):
 
 class SetupConnections(Protocol):
     async def get_connection(self, organisation_id: str, resource_id: str) -> Connection: ...
+
+    async def get_playbook_version(
+        self,
+        organisation_id: str,
+        playbook_id: str,
+        version_id: str,
+    ) -> PlaybookVersion: ...
 
     async def complete_setup(
         self,
@@ -88,6 +108,8 @@ class SetupVms(Protocol):
     async def delete(self, instance: str) -> None: ...
 
     async def exists(self, instance: str) -> bool: ...
+
+    async def reconcile(self) -> None: ...
 
 
 class SetupSecrets(Protocol):
@@ -304,15 +326,16 @@ class BrowserSetupService:
         try:
             before = _version_names(await self._secrets.versions(session.secret_container))
             baseline_loaded = True
-            result = await self._store(session, token)
+            previous_connection = await self._connections.get_connection(
+                organisation_id, session.connection_id
+            )
+            validation = await self._session_validation(previous_connection)
+            result = await self._store(session, token, validation)
             auth_reference = _canonical_secret_reference(
                 session.secret_container, result.get("secret_reference")
             )
             if auth_reference is None:
                 raise ResourceConflictError("setup worker returned no secret version reference")
-            previous_connection = await self._connections.get_connection(
-                organisation_id, session.connection_id
-            )
             completed_at = self._clock()
             expected_connection = previous_connection.model_copy(
                 update={
@@ -354,6 +377,8 @@ class BrowserSetupService:
                 )
                 await self._terminate_failed(path, session)
                 await self._delete_vm(session)
+                if isinstance(error, SetupAuthenticationRequiredError):
+                    await self._mark_reauthentication(organisation_id, session.connection_id)
                 if cleanup_error is not None:
                     raise cleanup_error from error
                 raise
@@ -431,6 +456,7 @@ class BrowserSetupService:
             )
             if ended.status is SetupStatus.TERMINATED:
                 terminated.append(ended)
+        await self._vms.reconcile()
         return tuple(terminated)
 
     def _must_terminate(self, session: SetupSession) -> bool:
@@ -550,14 +576,19 @@ class BrowserSetupService:
             )
         return resumed
 
-    async def _store(self, session: SetupSession, token: str) -> dict[str, Any]:
+    async def _store(
+        self,
+        session: SetupSession,
+        token: str,
+        validation: ProviderSessionValidation,
+    ) -> dict[str, Any]:
         if session.internal_address is None:
             raise ResourceConflictError("setup worker has no internal address")
         try:
             response = await self._http.post(
                 f"http://{session.internal_address}:8080/v1/setup/store",
                 headers={"X-Uumi-Setup": token},
-                json={},
+                json=validation.model_dump(mode="json"),
             )
         except (httpx.TimeoutException, httpx.NetworkError):
             raise ResourceConflictError("setup worker was unavailable") from None
@@ -568,18 +599,65 @@ class BrowserSetupService:
                 body = response.json()
             except ValueError:
                 body = None
+            code = body.get("code") if isinstance(body, dict) else None
             message = body.get("message") if isinstance(body, dict) else None
-            raise ResourceConflictError(
+            reason = (
                 message
                 if isinstance(message, str) and message
                 else "no provider session was captured on the connection domains"
             )
+            if code == "authentication-required":
+                raise SetupAuthenticationRequiredError(reason)
+            raise ResourceConflictError(reason)
         if response.status_code != 200:
             raise ResourceConflictError(f"setup worker returned HTTP {response.status_code}")
         body = response.json()
         if not isinstance(body, dict):
             raise ResourceConflictError("setup worker returned invalid metadata")
         return body
+
+    async def _session_validation(self, connection: Connection) -> ProviderSessionValidation:
+        if connection.playbook_id is None or connection.playbook_version_id is None:
+            raise ResourceConflictError("browser connection has no published playbook")
+        version = await self._connections.get_playbook_version(
+            connection.organisation_id,
+            connection.playbook_id,
+            connection.playbook_version_id,
+        )
+        login_url_pattern = version.definition.login_url_pattern
+        if login_url_pattern is None:
+            raise ResourceConflictError("published browser playbook has no login boundary")
+        for step in version.definition.steps:
+            if step.checkpoint is None:
+                continue
+            url = _validation_url(step.operation, step.parameters, step.checkpoint)
+            if url is not None:
+                return ProviderSessionValidation(
+                    url=url,
+                    login_url_pattern=login_url_pattern,
+                    checkpoint=step.checkpoint,
+                )
+        raise ResourceConflictError("published browser playbook has no post-login validation route")
+
+    async def _mark_reauthentication(
+        self,
+        organisation_id: str,
+        connection_id: str,
+    ) -> None:
+        for _ in range(3):
+            current = await self._connections.get_connection(organisation_id, connection_id)
+            try:
+                await self._connections.update_authentication(
+                    organisation_id,
+                    connection_id,
+                    current.revision,
+                    None,
+                    ConnectionStatus.REAUTHENTICATION,
+                    self._clock(),
+                )
+                return
+            except ResourceConflictError:
+                continue
 
     async def _reconcile_store(
         self,
@@ -718,6 +796,22 @@ def _canonical_secret_reference(container: str, value: Any) -> str | None:
     ):
         return None
     return f"{container}/versions/{version}"
+
+
+def _validation_url(
+    operation: str,
+    parameters: dict[str, Any],
+    checkpoint: PageCheckpoint,
+) -> str | None:
+    value = parameters.get("url")
+    if operation == "navigate" and isinstance(value, str) and value:
+        return value
+    pattern = checkpoint.url_pattern
+    if "*" not in pattern:
+        return pattern
+    if pattern.endswith("*") and pattern.count("*") == 1:
+        return pattern.removesuffix("*")
+    return None
 
 
 class WorkflowRunResumer:

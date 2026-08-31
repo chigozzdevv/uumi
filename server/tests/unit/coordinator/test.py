@@ -16,11 +16,68 @@ from contracts import (
     VerificationReport,
     VerificationStatus,
 )
-from coordinator.service import StageCoordinator
+from coordinator.browser import is_deterministic_browser_step
+from coordinator.service import (
+    StageCoordinator,
+    _operator_objective,
+    _operator_task_id,
+    _requires_provider_revocation,
+)
 from core.storage.paths import FirestorePaths
 from testkit import make_run
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
+
+
+def test_browser_bootstrap_generation_skips_provider_revocation() -> None:
+    assert _requires_provider_revocation(True, None) is False
+    assert _requires_provider_revocation(True, "resend-key-one") is True
+    assert _requires_provider_revocation(False, None) is True
+
+
+def test_operator_objective_is_policy_safe_and_step_bound() -> None:
+    objective = _operator_objective("create_navigate_api_keys")
+
+    assert objective == (
+        "Review immutable browser step create_navigate_api_keys "
+        "for isolated Computer Use readiness."
+    )
+    assert "Do not" not in objective
+
+
+def test_operator_task_id_is_stable_within_a_lease_and_changes_after_resume() -> None:
+    first = _operator_task_id("run_one", "create_navigate", 4)
+
+    assert first == _operator_task_id("run_one", "create_navigate", 4)
+    assert first != _operator_task_id("run_one", "create_navigate", 5)
+
+
+def test_declared_browser_controls_bypass_operator_agent() -> None:
+    from contracts import PageCheckpoint, PlaybookStep, Selector, SelectorKind
+
+    navigate = PlaybookStep(
+        id="navigate",
+        stage=Stage.CREATE,
+        tool="browser.navigate",
+        operation="navigate",
+        objective="Open the provider page",
+        parameters={"url": "https://resend.com/api-keys"},
+        checkpoint=PageCheckpoint(url_pattern="https://resend.com/api-keys"),
+        evidence_checks=frozenset({"opened"}),
+    )
+    unsupported = PlaybookStep(
+        id="operate",
+        stage=Stage.CREATE,
+        tool="browser.operate",
+        operation="operate",
+        objective="Complete an unsupported operation",
+        checkpoint=PageCheckpoint(url_pattern="https://resend.com/api-keys"),
+        selectors=(Selector(kind=SelectorKind.TEST_ID, value="unsupported"),),
+        evidence_checks=frozenset({"operated"}),
+    )
+
+    assert is_deterministic_browser_step(navigate)
+    assert not is_deterministic_browser_step(unsupported)
 
 
 class MemoryCatalog:

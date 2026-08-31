@@ -35,6 +35,7 @@ from contracts import (
 from core.audit import GENESIS, event_hash
 from core.errors import PlaybookError, ResourceConflictError
 from core.inventory import InventoryService
+from core.inventory.controls import update_controls
 from core.playbook import PlaybookService
 from policy import digest
 from testkit import make_http_provider_api
@@ -447,6 +448,27 @@ async def test_confirmed_playbook_archive_detaches_browser_connection() -> None:
 async def test_playbook_rejects_checkpoints_outside_its_domains() -> None:
     service = PlaybookService(Catalog(), clock=lambda: NOW)
     escaped = _draft().model_copy(update={"login_url_pattern": "https://untrusted.example/login"})
+
+    with pytest.raises(PlaybookError, match="escapes"):
+        await service.create_version(
+            "org_one", "playbook_one", "version_one", escaped, "author_one"
+        )
+
+
+@pytest.mark.anyio
+async def test_playbook_rejects_navigation_outside_its_domains() -> None:
+    service = PlaybookService(Catalog(), clock=lambda: NOW)
+    navigation = PlaybookStep(
+        id="open_keys",
+        stage=Stage.CREATE,
+        tool="browser.navigate",
+        operation="navigate",
+        objective="Open the API keys page",
+        parameters={"url": "https://untrusted.example/keys"},
+        checkpoint=PageCheckpoint(url_pattern="https://vendor.example.com/keys"),
+        evidence_checks=frozenset({"page-confirmed"}),
+    )
+    escaped = _draft().model_copy(update={"steps": (navigation, *_draft().steps)})
 
     with pytest.raises(PlaybookError, match="escapes"):
         await service.create_version(
@@ -993,6 +1015,40 @@ async def test_inventory_imports_existing_browser_credential_without_provider_id
     assert repository.imported_controls.definition.allowed_tools.intersection(
         {"browser.secure-capture", "browser.revokeCredential"}
     ) == {"browser.secure-capture", "browser.revokeCredential"}
+    assert repository.imported_controls.definition.protected_tools == frozenset(
+        {"browser.secure-capture"}
+    )
+    approval_controls = update_controls(
+        repository.imported_controls.definition,
+        ControlPreferences(
+            automatic_triggers=frozenset({"expiry"}),
+            rotate_before_expiry_seconds=604800,
+            maximum_observation_seconds=1800,
+            require_revoke_approval=True,
+        ),
+    )
+    assert approval_controls.protected_tools.issuperset(
+        {
+            "browser.secure-capture",
+            "browser.revokeCredential",
+            "secretStore.disableVersion",
+            "secretStore.destroyVersion",
+        }
+    )
+    assert approval_controls.require_revoke_approval is True
+    assert "approvers-known" in approval_controls.required_checks[Stage.PREFLIGHT]
+
+    automatic_controls = update_controls(
+        approval_controls,
+        ControlPreferences(
+            automatic_triggers=frozenset({"expiry"}),
+            rotate_before_expiry_seconds=604800,
+            maximum_observation_seconds=1800,
+        ),
+    )
+    assert automatic_controls.protected_tools == frozenset({"browser.secure-capture"})
+    assert automatic_controls.require_revoke_approval is False
+    assert "approvers-known" not in automatic_controls.required_checks[Stage.PREFLIGHT]
     verify_kinds = {
         probe.definition.kind
         for probe in repository.imported_probes

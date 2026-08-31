@@ -14,11 +14,22 @@ root_agent = Agent(
 credential creation and revocation with deterministic selectors, exact page checkpoints, and
 explicit Secure Capture for generated values. Do not add triggers, approvals, runtime deployment,
 verification, rollout, observation, or recovery; those belong to credential controls and
-orchestration. Write each objective as the exact visible browser action, such as "Open the
-credential creation form" or "Submit the credential creation form". Secure Capture is step
+orchestration. A browser.navigate step must use operation=navigate, put the complete HTTPS target
+in parameters.url, and have no selectors. Write each objective as the exact visible browser
+action, such as "Open the credential creation form" or "Submit the credential creation form".
+Secure Capture is step
 metadata, not part of the objective. The secure-capture action selector must target the control
 that creates the credential; the secure field and provider ID selectors identify the resulting
-output. Exactly one final create-stage step must pair effect=create-credential with
+output. Checkpoints describe the page after each action, including any URL or dialog change caused
+by that action. Use ${replacement_provider_display_name} for the unique new credential name,
+${old_provider_id} for the superseded provider's exact record identity, and
+${old_provider_display_name} only where the provider requires its visible name for confirmation;
+these variables may be used in parameters, selectors, and checkpoints. When source evidence
+exposes the created credential's exact record link, capture its href as provider_id and capture
+its visible name separately. Every fill action must put
+its exact approved text in parameters.value. Split opening a selector and choosing its option into
+separate deterministic click steps. Exactly one final create-stage step must pair
+effect=create-credential with
 tool=browser.secure-capture and a secure_field. Exactly one revoke-stage step must pair
 effect=revoke-credential with tool=browser.revokeCredential and no secure_field. All other
 browser steps must use effect=none. Evidence IDs are audit references, not walkthrough source IDs;

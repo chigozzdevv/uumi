@@ -163,6 +163,14 @@ class ComputerUseWorker:
         step: PlaybookStep,
         proposal: ComputerProposal,
     ) -> BrowserAction:
+        allowed = {
+            "browser.click": frozenset({"click"}),
+            "browser.fill": frozenset({"click", "type"}),
+            "browser.secure-capture": frozenset({"click"}),
+            "browser.revokeCredential": frozenset({"click"}),
+        }.get(step.tool)
+        if allowed is None or proposal.name not in allowed:
+            raise ResourceConflictError("model action differs from the approved browser tool")
         selector = step.selectors[0] if step.selectors else None
         parameters = step.parameters
         kind: BrowserActionKind
@@ -209,7 +217,7 @@ class ComputerUseWorker:
         else:
             raise ResourceConflictError(f"model action {proposal.name} is unsupported")
         return BrowserAction(
-            id=self._id("browser-action"),
+            id=self._id("browseraction"),
             session_id=session.id,
             kind=kind,
             selector=selector,

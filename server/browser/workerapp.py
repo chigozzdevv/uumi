@@ -14,6 +14,7 @@ from broker.capability import request_digest
 from broker.evidence import GcsEvidenceSink
 from capture import SecureCapture
 from connectors.base import SecretValue
+from connectors.base.errors import ConnectorError
 from connectors.google import GoogleRestClient
 from connectors.secrets import SecretManagerConnector
 from contracts import (
@@ -33,6 +34,8 @@ from contracts import (
     ComputerUseActivityStatus,
     Connection,
     Contract,
+    CredentialGeneration,
+    ManagedCredential,
     PlaybookStep,
     PlaybookVersion,
     ProtectedAction,
@@ -58,9 +61,11 @@ from telemetry import instrument
 
 from browser.auth import BrowserAuthBroker, filter_storage_state, validate_storage_state
 from browser.driver import AuthenticationRequiredError, BrowserDriver
-from browser.model import ComputerProposal, ComputerUseClient, ModelStreamEvent
+from browser.model import MODEL_ID, ComputerProposal, ComputerUseClient, ModelStreamEvent
+from browser.playbook import browser_step_context, resolve_playbook_step
 from browser.secret import associated_data
 from browser.service import BrowserService
+from browser.setup import ProviderSessionValidation
 from browser.storage import FirestoreBrowserRepository
 from browser.worker import ComputerUseWorker, ProposedBrowserAction
 
@@ -75,7 +80,7 @@ class WorkerSettings(BaseSettings):
     capability_public_key: str = Field(min_length=40, max_length=64)
     evidence_bucket: str = Field(min_length=3)
     region: str = Field(min_length=3, max_length=32)
-    model: str = "gemini-3.7-flash"
+    model: str = MODEL_ID
     model_armor_template: str = Field(min_length=20)
     model_armor_response_template: str = ""
     setup: bool = False
@@ -94,6 +99,7 @@ class SetupRuntime:
         storage_domains: tuple[str, ...],
         secret: str,
         google: GoogleRestClient,
+        browser: Browser | None = None,
     ) -> None:
         self.context = context
         self.driver = driver
@@ -102,6 +108,7 @@ class SetupRuntime:
         self.secret = secret
         self.secrets = SecretManagerConnector(google)
         self.google = google
+        self.browser = browser
         self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
         self._baseline_fingerprint: str | None = None
         self._baseline_url: str | None = None
@@ -121,6 +128,45 @@ class SetupRuntime:
         return self.driver.url != self._baseline_url and not hmac.compare_digest(
             self._baseline_fingerprint, _storage_fingerprint(state)
         )
+
+    async def verify_restored_session(
+        self,
+        state: dict[str, Any],
+        validation: ProviderSessionValidation,
+    ) -> None:
+        if self.browser is None:
+            raise ResourceConflictError("setup browser cannot validate provider authentication")
+        context = await self.browser.new_context(
+            viewport={"width": 1440, "height": 900},
+            accept_downloads=False,
+            service_workers="block",
+            storage_state=cast(Any, state),
+        )
+        try:
+            page = await context.new_page()
+            driver = BrowserDriver(
+                page,
+                BrowserPolicy(
+                    allowed_domains=self.storage_domains,
+                    allowed_actions=frozenset({BrowserActionKind.NAVIGATE}),
+                    login_url_pattern=validation.login_url_pattern,
+                ),
+            )
+            await driver.enforce_egress()
+            await driver.execute(
+                BrowserAction(
+                    id="setup_restore_validation",
+                    session_id="setup_restore_validation",
+                    kind=BrowserActionKind.NAVIGATE,
+                    url=validation.url,
+                    expected_url=validation.checkpoint.url_pattern,
+                    expected_text=validation.checkpoint.required_text,
+                    forbidden_text=validation.checkpoint.forbidden_text,
+                    fencing_token=1,
+                )
+            )
+        finally:
+            await context.close()
 
 
 class ProposeRequest(Contract):
@@ -148,6 +194,8 @@ class ExecuteRequest(Contract):
 class ExecuteResponse(Contract):
     session: BrowserSession
     capture: SecureCaptureResult | None = None
+    completed: bool = False
+    outputs: dict[str, str] = Field(default_factory=dict)
     paused_reason: str | None = Field(default=None, max_length=256)
 
 
@@ -332,6 +380,18 @@ async def _resource_conflict(request: Request, error: ResourceConflictError) -> 
     )
 
 
+@app.exception_handler(ConnectorError)
+async def _connector_error(request: Request, error: ConnectorError) -> JSONResponse:
+    del request
+    message = str(error)
+    if error.safe_detail is not None:
+        message = f"{message} ({error.safe_detail})"
+    return JSONResponse(
+        status_code=502 if error.retryable else 422,
+        content={"code": error.code, "message": message},
+    )
+
+
 @asynccontextmanager
 async def _setup_lifespan(app: FastAPI, settings: WorkerSettings) -> AsyncGenerator[None, None]:
     if (
@@ -380,6 +440,7 @@ async def _setup_lifespan(app: FastAPI, settings: WorkerSettings) -> AsyncGenera
         storage_domains,
         settings.setup_secret,
         google,
+        browser,
     )
     try:
         yield
@@ -736,9 +797,14 @@ async def execute(
     paused_reason = None
     if step.secure_field is not None and capture is None:
         paused_reason = "secure capture requires authorised recovery"
+    completed = changed.status is BrowserStatus.RUNNING and (
+        step.tool != "browser.fill" or proposal.action.kind is BrowserActionKind.TYPE
+    )
     return ExecuteResponse(
         session=changed,
         capture=capture,
+        completed=completed,
+        outputs=(await runtime.driver.extract(step.outputs) if completed else {}),
         paused_reason=paused_reason,
     )
 
@@ -764,7 +830,7 @@ async def navigate(
     if not isinstance(url, str):
         raise ResourceConflictError("deterministic navigation step has no URL")
     action = BrowserAction(
-        id=new_id("browser-action"),
+        id=new_id("browseraction"),
         session_id=session.id,
         kind=BrowserActionKind.NAVIGATE,
         url=url,
@@ -791,6 +857,196 @@ async def navigate(
     await runtime.sessions.finish_action(session.organisation_id, session.id, action.id, True)
     runtime.session = authorised
     return ExecuteResponse(session=authorised)
+
+
+async def _execute_deterministic_control(
+    body: NavigateRequest,
+    capability: Capability,
+    request: Request,
+    *,
+    tool: str,
+    operation: str,
+    kind: BrowserActionKind,
+) -> ExecuteResponse:
+    runtime = _runtime(request)
+    payload = {"step": body.step.model_dump(mode="json")}
+    session, _, claims = await _authorise(runtime, capability, tool, payload)
+    await _validate_step(runtime, session, body.step)
+    if (
+        body.step.tool != tool
+        or body.step.operation != operation
+        or body.step.secure_field is not None
+        or len(body.step.selectors) != 1
+    ):
+        raise ResourceConflictError("deterministic browser control must be one non-secret control")
+    raw_value = (
+        body.step.parameters.get("value")
+        if kind
+        in {
+            BrowserActionKind.SELECT,
+            BrowserActionKind.TYPE,
+        }
+        else None
+    )
+    value = raw_value if isinstance(raw_value, str) else None
+    if kind in {BrowserActionKind.SELECT, BrowserActionKind.TYPE} and value is None:
+        raise ResourceConflictError("deterministic browser input has no declared value")
+    await _validate_approval(runtime, claims, body.step)
+    action = BrowserAction(
+        id=new_id("browseraction"),
+        session_id=session.id,
+        kind=kind,
+        selector=body.step.selectors[0],
+        value=value,
+        protected=body.step.protected,
+        expected_url=body.step.checkpoint.url_pattern if body.step.checkpoint else None,
+        expected_text=body.step.checkpoint.required_text if body.step.checkpoint else (),
+        forbidden_text=(body.step.checkpoint.forbidden_text if body.step.checkpoint else ()),
+        fencing_token=session.fencing_token,
+    )
+    authorised = await runtime.sessions.authorize_action(
+        session.organisation_id, session.id, session.revision, action
+    )
+    try:
+        await runtime.driver.execute(action)
+    except Exception as error:
+        await runtime.sessions.finish_action(
+            session.organisation_id,
+            session.id,
+            action.id,
+            False,
+            f"{type(error).__name__}: {error}"[:1024],
+        )
+        raise
+    await runtime.sessions.finish_action(session.organisation_id, session.id, action.id, True)
+    runtime.session = authorised
+    return ExecuteResponse(session=authorised, completed=True)
+
+
+@app.post("/v1/steps/click", response_model=ExecuteResponse)
+async def click(
+    body: NavigateRequest,
+    capability: Capability,
+    request: Request,
+) -> ExecuteResponse:
+    return await _execute_deterministic_control(
+        body,
+        capability,
+        request,
+        tool="browser.click",
+        operation="click",
+        kind=BrowserActionKind.CLICK,
+    )
+
+
+@app.post("/v1/steps/fill", response_model=ExecuteResponse)
+async def fill(
+    body: NavigateRequest,
+    capability: Capability,
+    request: Request,
+) -> ExecuteResponse:
+    return await _execute_deterministic_control(
+        body,
+        capability,
+        request,
+        tool="browser.fill",
+        operation="fill",
+        kind=BrowserActionKind.TYPE,
+    )
+
+
+@app.post("/v1/steps/select", response_model=ExecuteResponse)
+async def select(
+    body: NavigateRequest,
+    capability: Capability,
+    request: Request,
+) -> ExecuteResponse:
+    return await _execute_deterministic_control(
+        body,
+        capability,
+        request,
+        tool="browser.select",
+        operation="select",
+        kind=BrowserActionKind.SELECT,
+    )
+
+
+@app.post("/v1/steps/capture", response_model=ExecuteResponse)
+async def capture(
+    body: NavigateRequest,
+    capability: Capability,
+    request: Request,
+) -> ExecuteResponse:
+    runtime = _runtime(request)
+    payload = {"step": body.step.model_dump(mode="json")}
+    session, _, claims = await _authorise(runtime, capability, "browser.secure-capture", payload)
+    await _validate_step(runtime, session, body.step)
+    if (
+        body.step.tool != "browser.secure-capture"
+        or body.step.operation != "click"
+        or body.step.secure_field is None
+        or len(body.step.selectors) != 1
+    ):
+        raise ResourceConflictError("deterministic capture requires one declared secure control")
+    await _validate_approval(runtime, claims, body.step)
+    action = BrowserAction(
+        id=new_id("browseraction"),
+        session_id=session.id,
+        kind=BrowserActionKind.CLICK,
+        selector=body.step.selectors[0],
+        protected=True,
+        expected_url=body.step.checkpoint.url_pattern if body.step.checkpoint else None,
+        expected_text=body.step.checkpoint.required_text if body.step.checkpoint else (),
+        forbidden_text=(body.step.checkpoint.forbidden_text if body.step.checkpoint else ()),
+        fencing_token=session.fencing_token,
+    )
+    proposal = ProposedBrowserAction(
+        action=action,
+        model=ComputerProposal(
+            name="click",
+            arguments={},
+            intent=None,
+            safety_decision=None,
+            requires_confirmation=True,
+            safety_explanation=None,
+            response_content={},
+        ),
+        requires_confirmation=True,
+    )
+    worker: ComputerUseWorker = request.app.state.worker
+    try:
+        changed, result = await worker.execute_protected_capture(
+            session,
+            proposal,
+            body.step,
+            True,
+            runtime.require_secret_access(),
+        )
+    finally:
+        runtime.clear_secret_access()
+    runtime.session = changed
+    return ExecuteResponse(
+        session=changed,
+        capture=result,
+        completed=result is not None,
+        paused_reason=(None if result is not None else "secure capture did not complete"),
+    )
+
+
+@app.post("/v1/steps/revoke", response_model=ExecuteResponse)
+async def revoke(
+    body: NavigateRequest,
+    capability: Capability,
+    request: Request,
+) -> ExecuteResponse:
+    return await _execute_deterministic_control(
+        body,
+        capability,
+        request,
+        tool="browser.revokeCredential",
+        operation="click",
+        kind=BrowserActionKind.CLICK,
+    )
 
 
 @app.websocket("/v1/live")
@@ -914,7 +1170,28 @@ async def _authorise(
         claims.request_digest,
     )
     if actual != expected:
-        raise CapabilityError("worker capability does not bind the exact browser operation")
+        fields = (
+            "organisation_id",
+            "run_id",
+            "tool",
+            "connection_id",
+            "stage",
+            "fencing_token",
+            "request_digest",
+        )
+        mismatches = ",".join(
+            field
+            for field, left, right in zip(fields, actual, expected, strict=True)
+            if left != right
+        )
+        detail = f"worker capability binding mismatch: {mismatches}"
+        if "request_digest" in mismatches:
+            detail += (
+                f" tool={tool}"
+                f" expected_request_digest={expected[-1][:16]}"
+                f" actual_request_digest={actual[-1][:16]}"
+            )
+        raise CapabilityError(detail)
     _consume_nonce(runtime, claims)
     return session, run, claims
 
@@ -1001,22 +1278,51 @@ async def _validate_step(
         PlaybookVersion,
     )
     matches = tuple(item for item in version.definition.steps if item.id == step.id)
-    if len(matches) != 1 or not _resolved_step(matches[0], step, session.policy.protected_tools):
+    if len(matches) != 1 or not await _resolved_step(
+        runtime,
+        session,
+        matches[0],
+        step,
+        session.policy.protected_tools,
+    ):
         raise CapabilityError("browser step differs from the immutable playbook")
 
 
-def _resolved_step(
+async def _resolved_step(
+    runtime: WorkerRuntime,
+    session: BrowserSession,
     template: PlaybookStep,
     resolved: PlaybookStep,
     protected_tools: frozenset[str],
 ) -> bool:
-    expected = template.model_copy(
-        update={
-            "parameters": resolved.parameters,
-            "protected": template.tool in protected_tools,
-        }
+    catalog = FirestoreCatalog(runtime.firestore)
+    run = await catalog.get(
+        FirestorePaths.run(session.organisation_id, session.run_id), RotationRun
+    )
+    credential = await catalog.get(
+        FirestorePaths.credential(session.organisation_id, run.credential_id),
+        ManagedCredential,
+    )
+    old = await _optional_generation(catalog, session.organisation_id, run.current_generation_id)
+    target = await _optional_generation(catalog, session.organisation_id, run.target_generation_id)
+    expected = resolve_playbook_step(
+        template,
+        browser_step_context(run, credential, old, target),
+        protected=template.tool in protected_tools,
     )
     return resolved == expected
+
+
+async def _optional_generation(
+    catalog: FirestoreCatalog,
+    organisation_id: str,
+    generation_id: str | None,
+) -> CredentialGeneration | None:
+    if generation_id is None:
+        return None
+    return await catalog.get(
+        FirestorePaths.generation(organisation_id, generation_id), CredentialGeneration
+    )
 
 
 async def _validate_takeover_action(
@@ -1045,7 +1351,15 @@ async def _validate_takeover_action(
         for selector in (
             *step.selectors,
             *(
-                (step.secure_field.selector, step.secure_field.provider_id_selector)
+                tuple(
+                    item
+                    for item in (
+                        step.secure_field.selector,
+                        step.secure_field.provider_id_selector,
+                        step.secure_field.provider_display_name_selector,
+                    )
+                    if item is not None
+                )
                 if step.secure_field is not None
                 else ()
             ),
@@ -1168,12 +1482,17 @@ async def _secure_input(
 
 
 @app.post("/v1/setup/store")
-async def setup_store(request: Request, token: SetupToken) -> dict[str, Any]:
+async def setup_store(
+    body: ProviderSessionValidation,
+    request: Request,
+    token: SetupToken,
+) -> dict[str, Any]:
     setup = _setup(request)
     _authorise_setup(setup, token)
     filtered = _filtered_setup_storage(await setup.context.storage_state(), setup.storage_domains)
     if not filtered["cookies"] and not filtered["origins"]:
         raise ResourceConflictError("no provider session was captured on the connection domains")
+    await setup.verify_restored_session(filtered, body)
     encoded = bytearray(json.dumps(filtered, separators=(",", ":")).encode())
     secret = SecretValue(encoded)
     try:

@@ -410,7 +410,7 @@ def _playbook_draft() -> dict[str, Any]:
                 ],
                 "checkpoint": {
                     "url_pattern": "https://resend.com/api-keys*",
-                    "required_text": ["API Keys"],
+                    "required_text": [],
                     "forbidden_text": [],
                 },
                 "secure_field": {
@@ -439,7 +439,7 @@ def _playbook_draft() -> dict[str, Any]:
                 "selectors": [{"kind": "role", "value": "button", "name": "Revoke", "exact": True}],
                 "checkpoint": {
                     "url_pattern": "https://resend.com/api-keys*",
-                    "required_text": ["API Keys"],
+                    "required_text": ["API keys"],
                     "forbidden_text": [],
                 },
                 "secure_field": None,

@@ -33,7 +33,7 @@ class PlaybookAgentStep(BaseModel):
             "requires a revoke-stage browser.revokeCredential step."
         )
     )
-    selectors: tuple[Selector, ...] = Field(min_length=1, max_length=1)
+    selectors: tuple[Selector, ...] = Field(default=(), max_length=1)
     checkpoint: PageCheckpoint
     secure_field: SecureField | None = Field(
         default=None,

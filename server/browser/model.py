@@ -1,10 +1,14 @@
 import base64
+import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from connectors.base.errors import ConnectorError
 from connectors.google import GoogleRestClient
+
+MODEL_ID = "gemini-3.7-flash"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +35,7 @@ class ComputerUseClient:
         project_id: str,
         model_armor_template: str,
         model_armor_response_template: str | None = None,
-        model: str = "gemini-3.7-flash",
+        model: str = MODEL_ID,
         location: str = "global",
     ) -> None:
         self._client = client
@@ -40,6 +44,9 @@ class ComputerUseClient:
         self._location = location
         self._model_armor_template = model_armor_template
         self._model_armor_response_template = model_armor_response_template or model_armor_template
+        self._model_armor_region = _template_region(model_armor_template)
+        if _template_region(self._model_armor_response_template) != self._model_armor_region:
+            raise ValueError("Model Armor templates must share a region")
         self._contents: list[dict[str, Any]] = []
 
     @property
@@ -54,6 +61,7 @@ class ComputerUseClient:
         outcome: dict[str, str | int | bool] | None = None,
         on_event: Callable[[ModelStreamEvent], Awaitable[None]] | None = None,
     ) -> ComputerProposal | None:
+        await self._screen("prompt-text", objective, template=self._model_armor_response_template)
         if previous is None:
             self._contents = [
                 {
@@ -83,19 +91,14 @@ class ComputerUseClient:
         body = {
             "contents": self._contents,
             "generationConfig": {
-                "candidateCount": 1,
                 "thinkingConfig": {"includeThoughts": True},
-            },
-            "modelArmorConfig": {
-                "promptTemplateName": self._model_armor_template,
-                "responseTemplateName": self._model_armor_response_template,
             },
             "tools": [
                 {
                     "computerUse": {
                         "environment": "ENVIRONMENT_BROWSER",
+                        "enable_prompt_injection_detection": True,
                         "excludedPredefinedFunctions": sorted(_EXCLUDED),
-                        "enablePromptInjectionDetection": True,
                     }
                 }
             ],
@@ -106,30 +109,70 @@ class ComputerUseClient:
             f"{self._project}/locations/{self._location}/publishers/google/models/"
             f"{self._model}"
         )
-        stream = getattr(self._client, "stream", None)
-        if stream is None:
-            response = await self._client.request("POST", f"{base_url}:generateContent", json=body)
-            content = _content(response)
-            await _emit_visible(content, on_event)
-            return _proposal(content)
+        response = await self._client.request("POST", f"{base_url}:generateContent", json=body)
+        content = _content(response)
+        await self._screen(
+            "response",
+            json.dumps(content, separators=(",", ":"), sort_keys=True),
+            associated_prompt=objective,
+        )
+        await _emit_visible(content, on_event)
+        return _proposal(content)
 
-        parts: list[dict[str, Any]] = []
-        async for response in stream(
+    async def _screen(
+        self,
+        direction: str,
+        content: str,
+        *,
+        associated_prompt: str | None = None,
+        template: str | None = None,
+    ) -> None:
+        prompt = direction.startswith("prompt")
+        selected_template = template or (
+            self._model_armor_template if prompt else self._model_armor_response_template
+        )
+        body: dict[str, Any] = {
+            "userPromptData" if prompt else "modelResponseData": {"text": content}
+        }
+        if not prompt:
+            if not associated_prompt:
+                raise ValueError("Model Armor response screening requires its prompt")
+            body["userPrompt"] = associated_prompt
+        response = await self._client.request(
             "POST",
-            f"{base_url}:streamGenerateContent",
+            (
+                f"https://modelarmor.{self._model_armor_region}.rep.googleapis.com/v1/"
+                f"{selected_template}:"
+                f"{'sanitizeUserPrompt' if prompt else 'sanitizeModelResponse'}"
+            ),
             json=body,
-            params={"alt": "sse"},
-        ):
-            content = _content(response)
-            chunk_parts = content.get("parts")
-            if not isinstance(chunk_parts, list):
-                continue
-            safe_parts = [part for part in chunk_parts if isinstance(part, dict)]
-            parts.extend(safe_parts)
-            await _emit_visible({"role": "model", "parts": safe_parts}, on_event)
-        if not parts:
-            raise ConnectorError("computer-use-response", "Gemini returned no response parts")
-        return _proposal({"role": "model", "parts": parts})
+        )
+        self._validate_screen_result(direction, response)
+
+    @staticmethod
+    def _validate_screen_result(direction: str, response: dict[str, Any]) -> None:
+        result = response.get("sanitizationResult")
+        if not isinstance(result, dict):
+            raise ConnectorError(
+                "model-armor-invalid",
+                "Model Armor returned no sanitization result",
+                safe_detail=direction,
+            )
+        invocation = result.get("invocationResult")
+        match = result.get("filterMatchState")
+        if invocation != "SUCCESS" or match not in {"MATCH_FOUND", "NO_MATCH_FOUND"}:
+            raise ConnectorError(
+                "model-armor-invalid",
+                "Model Armor did not return a conclusive decision",
+                safe_detail=direction,
+            )
+        if match == "MATCH_FOUND":
+            filters = _matched_filters(result)
+            raise ConnectorError(
+                "model-armor-blocked",
+                "Model Armor blocked browser model content",
+                safe_detail=f"{direction}:{','.join(filters) or 'unknown'}",
+            )
 
 
 def _content(response: dict[str, Any]) -> dict[str, Any]:
@@ -141,6 +184,28 @@ def _content(response: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(content, dict):
         raise ConnectorError("computer-use-response", "Gemini candidate content is invalid")
     return content
+
+
+def _matched_filters(result: dict[str, Any]) -> tuple[str, ...]:
+    raw = result.get("filterResults")
+    if not isinstance(raw, dict):
+        return ()
+    return tuple(
+        sorted(
+            name for name, value in raw.items() if isinstance(name, str) and _contains_match(value)
+        )
+    )
+
+
+def _contains_match(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(
+            (key == "matchState" and item == "MATCH_FOUND") or _contains_match(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_match(item) for item in value)
+    return False
 
 
 async def _emit_visible(
@@ -211,6 +276,16 @@ def _image(value: bytes) -> dict[str, Any]:
             "data": base64.b64encode(value).decode(),
         }
     }
+
+
+def _template_region(template: str) -> str:
+    match = re.fullmatch(
+        r"projects/[a-z0-9-]+/locations/(?P<region>[a-z0-9-]+)/templates/[A-Za-z0-9_-]+",
+        template,
+    )
+    if match is None:
+        raise ValueError("Model Armor templates must be full regional resource names")
+    return match.group("region")
 
 
 _ALLOWED = frozenset({"click", "press_key", "scroll", "type", "wait"})

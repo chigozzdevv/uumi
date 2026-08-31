@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_serializer, model_validator
 
 from contracts.base import Contract, Identifier
 from contracts.state import Stage
@@ -22,6 +22,10 @@ class OperationStep(Contract):
     parameters: dict[str, str | int | bool | tuple[str, ...]] = Field(default_factory=dict)
     protected: bool = False
     evidence_checks: frozenset[str] = Field(min_length=1)
+
+    @field_serializer("evidence_checks")
+    def serialize_evidence_checks(self, value: frozenset[str]) -> list[str]:
+        return sorted(value)
 
 
 class RuntimeDeployment(Contract):

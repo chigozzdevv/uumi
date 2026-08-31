@@ -37,6 +37,38 @@ class BrowserPauseError(RuntimeError):
         self.output = output
 
 
+class BrowserWorkerError(RuntimeError):
+    def __init__(self, status_code: int, code: str | None, message: str) -> None:
+        super().__init__(message)
+        self.output = {
+            "browser_error": {
+                "status_code": status_code,
+                "code": code or "unknown",
+                "message": message,
+            }
+        }
+
+
+DETERMINISTIC_BROWSER_OPERATIONS = {
+    ("browser.navigate", "navigate"): ("browser.navigate", "/v1/steps/navigate"),
+    ("browser.click", "click"): ("browser.click", "/v1/steps/click"),
+    ("browser.fill", "fill"): ("browser.fill", "/v1/steps/fill"),
+    ("browser.select", "select"): ("browser.select", "/v1/steps/select"),
+    ("browser.secure-capture", "click"): (
+        "browser.secure-capture",
+        "/v1/steps/capture",
+    ),
+    ("browser.revokeCredential", "click"): (
+        "browser.revokeCredential",
+        "/v1/steps/revoke",
+    ),
+}
+
+
+def is_deterministic_browser_step(step: PlaybookStep) -> bool:
+    return (step.tool, step.operation) in DETERMINISTIC_BROWSER_OPERATIONS
+
+
 class BrowserStepExecutor:
     def __init__(
         self,
@@ -65,23 +97,38 @@ class BrowserStepExecutor:
         approval: Approval | None = None,
     ) -> dict[str, Any]:
         session = await self._session(run, connection, version, credential, protected_tools)
-        if step.operation == "navigate":
+        deterministic = DETERMINISTIC_BROWSER_OPERATIONS.get((step.tool, step.operation))
+        if deterministic is not None:
+            if step.secure_field is not None:
+                if self._secret_access is None:
+                    raise RuntimeError("browser secure capture authorization is unavailable")
+                await self._secret_access.install(run, session)
             payload = {"step": step.model_dump(mode="json")}
             result = await self._post(
                 run,
                 session,
-                "browser.navigate",
-                "/v1/steps/navigate",
+                *deterministic,
                 payload,
                 approval,
             )
-            navigated = BrowserSession.model_validate(result.get("session"))
+            changed = BrowserSession.model_validate(result.get("session"))
+            capture = result.get("capture")
+            if capture is not None:
+                captured = dict(capture) if isinstance(capture, dict) else {"capture": capture}
+                return {
+                    "session_id": changed.id,
+                    "step_id": step.id,
+                    "objective": step.objective,
+                    "operation": step.operation,
+                    "outcome": "Secret captured and masked",
+                    **captured,
+                }
             return {
-                "session_id": navigated.id,
+                "session_id": changed.id,
                 "step_id": step.id,
                 "objective": step.objective,
                 "operation": step.operation,
-                "outcome": "Approved page opened",
+                "outcome": "Approved browser control completed",
                 "done": True,
             }
         objective = step.objective
@@ -152,6 +199,22 @@ class BrowserStepExecutor:
                     "outcome": "Secret captured and masked",
                     **captured,
                 }
+            if session.status is BrowserStatus.RUNNING and result.get("completed") is True:
+                outputs = result.get("outputs", {})
+                if not isinstance(outputs, dict) or any(
+                    not isinstance(key, str) or not isinstance(value, str)
+                    for key, value in outputs.items()
+                ):
+                    raise RuntimeError("browser worker returned invalid declared outputs")
+                return {
+                    "session_id": session.id,
+                    "step_id": step.id,
+                    "objective": step.objective,
+                    "operation": step.operation,
+                    "outcome": "Step completed",
+                    "done": True,
+                    **outputs,
+                }
             if session.status is BrowserStatus.PAUSED:
                 raise BrowserPauseError(
                     str(result.get("paused_reason") or "browser execution paused"),
@@ -184,6 +247,21 @@ class BrowserStepExecutor:
         if session.worker_instance:
             await self._vms.delete(session.worker_instance)
 
+    async def pause_for_approval(self, run: RotationRun) -> None:
+        session_id = _session_id(run.id)
+        try:
+            session = await self._catalog.get(
+                FirestorePaths.browser(run.organisation_id, session_id), BrowserSession
+            )
+        except ResourceNotFoundError:
+            return
+        if session.status is BrowserStatus.RUNNING:
+            await self._sessions.freeze(
+                session.organisation_id,
+                session.id,
+                session.revision,
+            )
+
     async def _session(
         self,
         run: RotationRun,
@@ -199,6 +277,22 @@ class BrowserStepExecutor:
             )
         except ResourceNotFoundError:
             session = None
+        if (
+            session is not None
+            and session.status is not BrowserStatus.TERMINATED
+            and (
+                session.expires_at <= datetime.now(UTC)
+                or session.worker_instance is None
+                or not await self._vms.exists(session.worker_instance)
+            )
+        ):
+            session = await self._sessions.terminate(
+                session.organisation_id,
+                session.id,
+                session.revision,
+            )
+            if session.worker_instance is not None:
+                await self._vms.delete(session.worker_instance)
         if (
             session is not None
             and session.status is not BrowserStatus.TERMINATED
@@ -252,7 +346,7 @@ class BrowserStepExecutor:
                         policy=policy,
                         fencing_token=run.fencing_token,
                         created_at=now,
-                        expires_at=now + timedelta(hours=2),
+                        expires_at=now + timedelta(minutes=30),
                         updated_at=now,
                     )
                 )
@@ -268,9 +362,14 @@ class BrowserStepExecutor:
                     credential.secret_resource,
                     policy,
                     run.fencing_token,
-                    now + timedelta(hours=2),
+                    now + timedelta(minutes=30),
                 )
-            vm = await self._vms.create(run.organisation_id, session.id, session.expires_at)
+            vm = await self._vms.create(
+                run.organisation_id,
+                session.id,
+                session.expires_at,
+                allowed_domains=version.definition.allowed_domains,
+            )
             session = await self._sessions.attach(
                 session.organisation_id,
                 session.id,
@@ -332,8 +431,10 @@ class BrowserStepExecutor:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
-            if error.response.status_code == 409 and _code(error.response) == (
-                "authentication-required"
+            worker_error = _worker_error(error.response)
+            if (
+                error.response.status_code == 409
+                and worker_error.output["browser_error"]["code"] == "authentication-required"
             ):
                 raise BrowserPauseError(
                     "provider session requires reauthentication",
@@ -341,18 +442,19 @@ class BrowserStepExecutor:
                         "authentication_required": True,
                         "session_id": session.id,
                         "connection_id": session.provider_connection_id,
+                        **worker_error.output,
                     },
                 ) from error
-            raise
+            raise worker_error from error
         value = response.json()
         if not isinstance(value, dict):
             raise RuntimeError("browser worker returned a non-object response")
         return value
 
     async def _wait_ready(self, address: str) -> None:
-        for _ in range(60):
+        for _ in range(150):
             try:
-                response = await self._http.get(f"http://{address}:8080/health/live")
+                response = await self._http.get(f"http://{address}:8080/health/live", timeout=2.0)
                 if response.status_code == 200:
                     return
             except httpx.HTTPError:
@@ -365,10 +467,15 @@ def _session_id(run_id: str) -> str:
     return f"browser_{run_id.removeprefix('run_')}"[:128]
 
 
-def _code(response: httpx.Response) -> str | None:
+def _worker_error(response: httpx.Response) -> BrowserWorkerError:
     try:
         body = response.json()
     except ValueError:
-        return None
+        body = None
     code = body.get("code") if isinstance(body, dict) else None
-    return code if isinstance(code, str) else None
+    message = body.get("message") if isinstance(body, dict) else None
+    if not isinstance(code, str) or not code.replace("-", "").isalnum():
+        code = None
+    if not isinstance(message, str) or not message.strip():
+        message = f"browser worker returned HTTP {response.status_code}"
+    return BrowserWorkerError(response.status_code, code, message.replace("\n", " ")[:512])

@@ -4,16 +4,16 @@ from google.adk.apps import App
 from agents.shared.app import managed_app
 from agents.shared.model import managed_model
 from agents.shared.models import InventoryAssessment
-from agents.shared.tools import correlate_exposure, detect_stale_mapping, resolve_consumers
+from agents.shared.tools import inspect_inventory
 
 root_agent = Agent(
     name="inventory_exposure_agent",
     model=managed_model(),
     description="Correlates credential exposure with Uumi's inventory graph.",
-    instruction="""Use only the registered read tools and managed session state. Correlate the
-incident with declared consumers, call out stale or missing mappings, and cite returned resource
-IDs. Never request or infer credential values. Return conclusions as structured JSON.""",
-    tools=[correlate_exposure, resolve_consumers, detect_stale_mapping],
+    instruction="""Call inspect_inventory exactly once. It executes the immutable skill bound by
+the Uumi control plane. Copy its complete result exactly. Never request or infer credential values
+or choose a different inventory operation. Return conclusions as structured JSON.""",
+    tools=[inspect_inventory],
     output_schema=InventoryAssessment,
     output_key="inventory_assessment",
     mode="chat",

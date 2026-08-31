@@ -171,10 +171,16 @@ class FirestorePlaybookRepository:
                 previous_snapshot = await previous_ref.get(transaction=transaction)
                 if not previous_snapshot.exists:
                     raise PlaybookError("published playbook version is missing")
-                previous = PlaybookVersion.model_validate(_data(previous_snapshot))
-                transaction.set(
+                previous = _data(previous_snapshot)
+                if (
+                    previous.get("id") != root.active_version_id
+                    or previous.get("organisation_id") != organisation_id
+                    or previous.get("playbook_id") != playbook_id
+                ):
+                    raise PlaybookError("published playbook version identity is invalid")
+                transaction.update(
                     previous_ref,
-                    encode(previous.model_copy(update={"state": PlaybookState.SUPERSEDED})),
+                    {"state": PlaybookState.SUPERSEDED.value},
                 )
             changed_root = root.model_copy(
                 update={

@@ -101,6 +101,43 @@ def registration() -> AgentRegistration:
     )
 
 
+def test_operator_output_discards_free_form_success_prose_before_screening() -> None:
+    output = _validated_output(
+        AgentKind.OPERATOR,
+        {
+            "step_id": "create_resend_key",
+            "ready": True,
+            "expected_checkpoint": "Potentially unsafe model-authored prose",
+            "drift_detected": False,
+            "pause_reason": "Unnecessary explanation",
+        },
+    )
+
+    assert output == {
+        "step_id": "create_resend_key",
+        "ready": True,
+        "expected_checkpoint": "bound-to-published-playbook",
+        "drift_detected": False,
+        "pause_reason": None,
+    }
+
+
+def test_operator_output_preserves_a_real_pause_reason() -> None:
+    output = _validated_output(
+        AgentKind.OPERATOR,
+        {
+            "step_id": "create_resend_key",
+            "ready": False,
+            "expected_checkpoint": "Untrusted model checkpoint",
+            "drift_detected": True,
+            "pause_reason": "The provider layout changed.",
+        },
+    )
+
+    assert output["expected_checkpoint"] == "bound-to-published-playbook"
+    assert output["pause_reason"] == "The provider layout changed."
+
+
 class ProbeRuntime:
     def __init__(self) -> None:
         self.tasks: list[AgentTask] = []
@@ -1052,6 +1089,7 @@ async def test_agent_runtime_uses_bound_a2a_session(monkeypatch: pytest.MonkeyPa
     assert message["metadata"] == {
         "uumi_organisation_id": "org_acme",
         "uumi_run_id": "run_one",
+        "uumi_skill": "plan_rotation",
         "uumi_task_context": {
             "credential_id": "credential_one",
             "api_key": "[REDACTED]",
@@ -1181,6 +1219,7 @@ def test_managed_agent_uses_request_local_session_state() -> None:
                     "metadata": {
                         "uumi_organisation_id": "org_acme",
                         "uumi_run_id": "run_one",
+                        "uumi_skill": "plan_rotation",
                         "uumi_task_context": {
                             "inventory_item": {"id": "credential_one"},
                             "api_key": "must-not-reach-the-model",
@@ -1199,6 +1238,7 @@ def test_managed_agent_uses_request_local_session_state() -> None:
     assert request.state_delta == {
         "organisation_id": "org_acme",
         "run_id": "run_one",
+        "skill": "plan_rotation",
         "task_context": {
             "inventory_item": {"id": "credential_one"},
             "api_key": "[REDACTED]",
@@ -1268,6 +1308,7 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
     from agents.shared.tools import (
         detect_stale_mapping,
         execute_console_playbook,
+        inspect_inventory,
         plan_rotation,
         select_strategy,
     )
@@ -1280,6 +1321,7 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
             "state": {
                 "organisation_id": "org_acme",
                 "run_id": "run_one",
+                "skill": "detect_stale_mapping",
                 "task_context": {
                     "run": {"id": "run_one", "credential_id": "credential_one"},
                     "inventory_item": {
@@ -1306,7 +1348,13 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
                             "recovery": {
                                 "create": {
                                     "mode": "cleanup",
-                                    "actions": ["discard-candidate"],
+                                    "actions": [
+                                        {
+                                            "tool": "discard-candidate",
+                                            "operation": "discard",
+                                            "parameters": {},
+                                        }
+                                    ],
                                 }
                             },
                         },
@@ -1335,6 +1383,16 @@ async def test_managed_tools_use_only_the_bound_task_snapshot() -> None:
         "missing_inventory": [],
         "unobserved_inventory": [],
     }
+    assert await inspect_inventory(tool_context) == {
+        "credential_id": "credential_one",
+        "declared_consumers": ["service_one"],
+        "observed_consumers": ["service_one"],
+        "missing_inventory": [],
+        "stale_inventory": [],
+        "incident_ids": [],
+        "conclusion": "Every observed credential consumer is represented in inventory.",
+    }
+    assert tool_context.actions.skip_summarization is True
     selected = await select_strategy(tool_context)
     assert selected["provider_connection"]["id"] == "connection_one"
     assert selected["ordered_stages"] == [stage.value for stage in Stage]

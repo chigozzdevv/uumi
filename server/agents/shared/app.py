@@ -154,15 +154,19 @@ def _request(context: Any, part_converter: Any) -> Any:
     organisation_id = _bind_request_tenant(context, context.call_context)
     metadata = _message_metadata(context)
     run_id = metadata.get("uumi_run_id")
+    skill = metadata.get("uumi_skill")
     task_context = redact(deepcopy(metadata.get("uumi_task_context")))
     if not isinstance(run_id, str) or not run_id:
         raise ValueError("managed A2A request is missing its run binding")
+    if not isinstance(skill, str) or not skill:
+        raise ValueError("managed A2A request is missing its skill binding")
     if not isinstance(task_context, dict):
         raise ValueError("managed A2A request task context must be an object")
     request.user_id = organisation_id
     request.state_delta = {
         "organisation_id": organisation_id,
         "run_id": run_id,
+        "skill": skill,
         "task_context": task_context,
     }
     return request

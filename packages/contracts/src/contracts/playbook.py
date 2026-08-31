@@ -24,6 +24,7 @@ class PlaybookEffect(StrEnum):
 class SelectorKind(StrEnum):
     ROLE = "role"
     LABEL = "label"
+    FIELD = "field"
     TEXT = "text"
     TEST_ID = "test-id"
     CSS = "css"
@@ -46,6 +47,8 @@ class SecureField(Contract):
     name: Identifier
     selector: Selector
     provider_id_selector: Selector
+    provider_id_attribute: str = Field(default="text", pattern=r"^(text|value|href)$")
+    provider_display_name_selector: Selector | None = None
 
 
 class StepOutput(Contract):
@@ -65,6 +68,22 @@ class PlaybookStep(OperationStep):
 
     @model_validator(mode="after")
     def validate_capture(self) -> "PlaybookStep":
+        navigation = self.tool == "browser.navigate"
+        selection = self.tool == "browser.select"
+        if navigation != (self.operation == "navigate"):
+            raise ValueError("browser navigation must use the navigate tool and operation")
+        if selection != (self.operation == "select"):
+            raise ValueError("browser selection must use the select tool and operation")
+        if navigation:
+            if self.selectors:
+                raise ValueError("browser navigation must not declare a selector")
+            if not isinstance(self.parameters.get("url"), str):
+                raise ValueError("browser navigation requires a URL parameter")
+        if selection:
+            if len(self.selectors) != 1:
+                raise ValueError("browser selection requires exactly one selector")
+            if not isinstance(self.parameters.get("value"), str):
+                raise ValueError("browser selection requires an option label")
         if self.effect == PlaybookEffect.CREATE_CREDENTIAL and (
             self.stage != Stage.CREATE
             or self.tool != "browser.secure-capture"
@@ -89,7 +108,7 @@ class PlaybookStep(OperationStep):
             or self.secure_field is not None
         ):
             raise ValueError("credential revocation must use the protected browser revoke tool")
-        if self.tool.startswith("browser.") and self.operation != "navigate" and not self.selectors:
+        if self.tool.startswith("browser.") and not navigation and not self.selectors:
             raise ValueError("browser actions require deterministic selectors")
         if self.tool.startswith("browser.") and len(self.selectors) > 1:
             raise ValueError("each browser step must target exactly one control")

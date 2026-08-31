@@ -10,6 +10,7 @@ from typing import Any
 from agents.runtime import AgentRuntimeService
 from agents.shared.models import OperatorDecision
 from broker.evidence import GcsEvidenceSink
+from browser.playbook import browser_step_context, resolve_playbook_step
 from connectors import ConnectorContext
 from contracts import (
     AgentKind,
@@ -69,13 +70,26 @@ from pydantic import TypeAdapter
 from verifier import VerificationService
 
 from coordinator.broker import McpBrokerClient
-from coordinator.browser import BrowserPauseError, BrowserStepExecutor
+from coordinator.browser import (
+    BrowserPauseError,
+    BrowserStepExecutor,
+    BrowserWorkerError,
+    is_deterministic_browser_step,
+)
 
 
 class StageExecutionError(ValueError):
     def __init__(self, message: str, retryable: bool = False) -> None:
         super().__init__(message)
         self.retryable = retryable
+
+
+def _operator_objective(step_id: str) -> str:
+    return f"Review immutable browser step {step_id} for isolated Computer Use readiness."
+
+
+def _operator_task_id(run_id: str, step_id: str, fencing_token: int) -> str:
+    return _id("task", run_id, step_id, "operator", str(fencing_token))
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,8 +212,11 @@ class StageCoordinator:
                 completed_at=self._clock(),
             )
         except Exception as error:
+            with contextlib.suppress(Exception):
+                await self._browser.terminate(run)
             reason = f"{type(error).__name__}: {error}".replace("\n", " ")[:1024]
             evidence_ids = await self._failure_evidence(run, reason)
+            output = error.output if isinstance(error, BrowserWorkerError) else {}
             result = StageExecutionResult(
                 id=execution_id,
                 organisation_id=run.organisation_id,
@@ -208,6 +225,7 @@ class StageCoordinator:
                 status=StageExecutionStatus.FAILED,
                 evidence_ids=evidence_ids,
                 reason=reason,
+                output=output,
                 retryable=isinstance(error, StageExecutionError) and error.retryable,
                 started_at=started,
                 completed_at=self._clock(),
@@ -477,7 +495,11 @@ class StageCoordinator:
             run_id=run.id,
             agent=AgentKind.INVENTORY,
             skill="detect_stale_mapping",
-            objective="Confirm every observed credential consumer is represented in inventory.",
+            objective=(
+                "Use detect_stale_mapping for "
+                f"{credential.id} and confirm every observed credential consumer is represented "
+                "in inventory."
+            ),
             context={
                 "run": run.model_dump(mode="json"),
                 "inventory_item": credential.model_dump(mode="json"),
@@ -487,8 +509,17 @@ class StageCoordinator:
             requested_at=self._clock(),
         )
         agent = await self._agents.execute(task)
-        if not agent.succeeded or agent.output.get("missing_inventory"):
-            raise ValueError("inventory agent found unresolved consumer mappings")
+        if not agent.succeeded:
+            detail = agent.error or "unknown managed-agent failure"
+            raise ValueError(f"inventory agent failed: {detail}")
+        missing_inventory = agent.output.get("missing_inventory")
+        if missing_inventory:
+            missing = (
+                ", ".join(item for item in missing_inventory if isinstance(item, str))
+                if isinstance(missing_inventory, list)
+                else "invalid structured result"
+            )
+            raise ValueError(f"inventory agent found unresolved consumer mappings: {missing}")
         output = {
             "credential_id": credential.id,
             "browser_playbook_version": (
@@ -671,6 +702,9 @@ class StageCoordinator:
             outputs = [result]
         flattened = _flatten(outputs)
         provider_id = _find_string(flattened, "provider_id")
+        provider_display_name = _find_optional(flattened, "provider_display_name")
+        if provider_display_name is not None and not isinstance(provider_display_name, str):
+            raise ValueError("stage output has invalid provider_display_name")
         secret_reference = _find_string(flattened, "secret_reference")
         fingerprint = _find_string(flattened, "fingerprint")
         generation_id = _id("generation", run.id, provider_id)
@@ -679,6 +713,7 @@ class StageCoordinator:
             organisation_id=run.organisation_id,
             credential_id=credential.id,
             provider_id=provider_id,
+            provider_display_name=provider_display_name,
             fingerprint=fingerprint,
             scopes=credential.scopes,
             state=GenerationState.CREATING,
@@ -1030,7 +1065,25 @@ class StageCoordinator:
         self, run: RotationRun
     ) -> tuple[frozenset[str], tuple[str, ...], StageBindings, dict[str, Any]]:
         context = await self._rotation_context(run)
-        outputs, evidence = await self._execute_provider_steps(run, context, Stage.REVOKE)
+        old = await self._catalog.get(
+            FirestorePaths.generation(
+                run.organisation_id, _required(run.current_generation_id, "old generation")
+            ),
+            CredentialGeneration,
+        )
+        provider_revocation_required = _requires_provider_revocation(
+            context.browser_playbook is not None, old.provider_id
+        )
+        if provider_revocation_required:
+            outputs, evidence = await self._execute_provider_steps(run, context, Stage.REVOKE)
+        else:
+            outputs = [
+                {
+                    "outcome": "Provider revocation not applicable",
+                    "reason": "bootstrap generation has no provider credential",
+                }
+            ]
+            evidence = ()
         replacement_report = await self._run_verification(
             run,
             negative=False,
@@ -1052,14 +1105,12 @@ class StageCoordinator:
             for output in outputs
             if isinstance(output, dict)
         )
-        if context.browser_playbook is not None and not browser_revoked:
+        if (
+            context.browser_playbook is not None
+            and provider_revocation_required
+            and not browser_revoked
+        ):
             raise ValueError("browser playbook did not prove credential revocation")
-        old = await self._catalog.get(
-            FirestorePaths.generation(
-                run.organisation_id, _required(run.current_generation_id, "old generation")
-            ),
-            CredentialGeneration,
-        )
         if old.secret_reference is not None:
             result, ids = await self._execute_operation(
                 run,
@@ -1205,16 +1256,28 @@ class StageCoordinator:
         for step in steps:
             if isinstance(step, PlaybookStep):
                 step_context = await self._step_context(run)
-                payload = _resolve(step.parameters, step_context)
-                if not isinstance(payload, dict):
-                    raise ValueError(f"playbook step {step.id} parameters are invalid")
-                approval = (
-                    await self._approval_for_step(run, step, payload, context.provider.id)
-                    if step.protected
-                    else None
+                resolved = resolve_playbook_step(step, step_context)
+                payload = resolved.parameters
+                try:
+                    approval = (
+                        await self._approval_for_step(
+                            run,
+                            resolved,
+                            payload,
+                            context.provider.id,
+                            allow_previous_fence=stage is Stage.CREATE,
+                        )
+                        if resolved.protected
+                        else None
+                    )
+                except BrowserPauseError:
+                    await self._browser.pause_for_approval(run)
+                    raise
+                decision = (
+                    None
+                    if is_deterministic_browser_step(resolved)
+                    else await self._operator_decision(run, resolved, context, control_version)
                 )
-                decision = await self._operator_decision(run, step, context, control_version)
-                resolved = step.model_copy(update={"parameters": payload})
                 browser_output = await self._browser.execute(
                     run,
                     context.provider,
@@ -1224,7 +1287,10 @@ class StageCoordinator:
                     resolved,
                     approval,
                 )
-                outputs.append({**browser_output, "operator": decision.model_dump(mode="json")})
+                output = dict(browser_output)
+                if decision is not None:
+                    output["operator"] = decision.model_dump(mode="json")
+                outputs.append(output)
             else:
                 result, ids = await self._execute_operation(run, step)
                 outputs.append(result)
@@ -1285,15 +1351,12 @@ class StageCoordinator:
     ) -> OperatorDecision:
         result = await self._agents.execute(
             AgentTask(
-                id=_id("task", run.id, step.id, "operator"),
+                id=_operator_task_id(run.id, step.id, run.fencing_token),
                 organisation_id=run.organisation_id,
                 run_id=run.id,
                 agent=AgentKind.OPERATOR,
                 skill="execute_console_playbook",
-                objective=(
-                    f"Load immutable browser step {step.id} and decide whether it is ready "
-                    "for the isolated Computer Use worker. Do not execute the browser action."
-                ),
+                objective=_operator_objective(step.id),
                 context={
                     "run": run.model_dump(mode="json"),
                     "inventory_item": context.credential.model_dump(mode="json"),
@@ -1327,6 +1390,15 @@ class StageCoordinator:
                 "Console Operator Agent changed the immutable step binding",
                 {"run_id": run.id, "step_id": step.id},
             )
+        decision = decision.model_copy(
+            update={
+                "expected_checkpoint": (
+                    f"checkpoint:{digest(step.checkpoint)}"
+                    if step.checkpoint is not None
+                    else "checkpoint:none"
+                )
+            }
+        )
         if not decision.ready or decision.drift_detected:
             raise BrowserPauseError(
                 decision.pause_reason or "Console Operator Agent detected interface drift",
@@ -1341,16 +1413,8 @@ class StageCoordinator:
     async def _step_context(self, run: RotationRun) -> dict[str, Any]:
         target = await self._optional_target(run)
         old = await self._optional_generation(run.organisation_id, run.current_generation_id)
-        return {
-            "run_id": run.id,
-            "credential_id": run.credential_id,
-            "target_generation_id": run.target_generation_id,
-            "target_provider_id": target.provider_id if target else None,
-            "target_secret_reference": target.secret_reference if target else None,
-            "old_generation_id": run.current_generation_id,
-            "old_provider_id": old.provider_id if old else None,
-            "old_secret_reference": old.secret_reference if old else None,
-        }
+        credential = await self._credential(run)
+        return browser_step_context(run, credential, old, target)
 
     async def _approval_for_step(
         self,
@@ -1359,6 +1423,7 @@ class StageCoordinator:
         payload: dict[str, Any],
         connection_id: str,
         *,
+        allow_previous_fence: bool = False,
         allow_resume_fence: bool = False,
     ) -> Approval:
         if run.plan_id is None or run.plan_hash is None:
@@ -1415,11 +1480,13 @@ class StageCoordinator:
             )
 
         approvals = await self._query(run.organisation_id, "approvals", "run_id", run.id, Approval)
-        # A new approval request must bind the fence acquired by the single resume after this pause.
         candidates = [action_for(run.fencing_token)]
+        if allow_previous_fence and run.fencing_token > 1:
+            candidates.append(action_for(run.fencing_token - 1))
+        requested_action = action_for(run.fencing_token)
         if allow_resume_fence:
-            candidates.append(action_for(run.fencing_token + 1))
-        action = candidates[-1]
+            requested_action = action_for(run.fencing_token + 1)
+        action = requested_action
         matching: list[Approval] = []
         for candidate in candidates:
             current = []
@@ -2080,6 +2147,10 @@ def _revocation_checks(
     if old_secret_reference is None:
         raise ValueError("revocation has no old secret version to disable")
     return frozenset({"old-revoked", "replacement-valid", "old-rejected", "old-secret-disabled"})
+
+
+def _requires_provider_revocation(browser_managed: bool, provider_id: str | None) -> bool:
+    return not browser_managed or provider_id is not None
 
 
 def required_connection_roles() -> frozenset[ConnectionRole]:
