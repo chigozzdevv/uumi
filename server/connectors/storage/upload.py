@@ -146,6 +146,7 @@ class GcsUploadConnector:
                 ),
                 params=params,
                 json={
+                    "bucket": self._bucket,
                     "name": object_name,
                     "contentType": content_type,
                     "metadata": {

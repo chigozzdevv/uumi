@@ -1018,6 +1018,93 @@ async def test_google_error_recognises_only_exact_rate_exceeded_detail() -> None
     await google.close()
 
 
+@pytest.mark.anyio
+async def test_google_stream_error_includes_sanitized_detail() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "status": "INVALID_ARGUMENT",
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/google.rpc.BadRequest",
+                            "fieldViolations": [{"field": "tools[0].computerUse"}],
+                        }
+                    ],
+                }
+            },
+        )
+
+    google = _google(handler)
+    with pytest.raises(ConnectorError) as captured:
+        async for _ in google.stream("POST", "https://aiplatform.googleapis.com/message:stream"):
+            pass
+
+    assert captured.value.safe_detail == "invalid-argument.field-tools[0].computerUse"
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_google_error_includes_only_the_denied_iam_permission() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            403,
+            json={
+                "error": {
+                    "status": "PERMISSION_DENIED",
+                    "message": "sensitive provider detail",
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                            "reason": "IAM_PERMISSION_DENIED",
+                            "metadata": {
+                                "permission": "aiplatform.endpoints.predict",
+                                "resource": "sensitive-resource-name",
+                            },
+                        }
+                    ],
+                }
+            },
+        )
+
+    google = _google(handler)
+    with pytest.raises(ConnectorError) as captured:
+        await google.request("POST", "https://aiplatform.googleapis.com/message:send")
+
+    assert captured.value.safe_detail == (
+        "permission-denied.iam-permission-denied.permission-aiplatform.endpoints.predict"
+    )
+    assert "sensitive" not in captured.value.safe_detail
+    await google.close()
+
+
+@pytest.mark.anyio
+async def test_google_operation_marks_internal_failure_retryable() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            json={
+                "name": "operations/operation-one",
+                "done": True,
+                "error": {"code": 13, "message": "sensitive provider detail"},
+            },
+        )
+
+    google = _google(handler)
+    with pytest.raises(ConnectorError) as captured:
+        await google.wait_operation("operations/operation-one")
+
+    assert captured.value.code == "google-operation-failed"
+    assert captured.value.retryable is True
+    assert captured.value.safe_detail == "internal"
+    assert "sensitive" not in str(captured.value)
+    await google.close()
+
+
 def _google(handler: Any) -> GoogleRestClient:
     return GoogleRestClient(
         credentials=Credentials(token="token"),  # type: ignore[no-untyped-call]

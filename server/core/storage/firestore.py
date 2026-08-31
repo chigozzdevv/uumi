@@ -236,7 +236,10 @@ class FirestoreRunRepository:
                 FirestorePaths.lock(command.organisation_id, run.credential_id)
             )
             lock = await lock_ref.get(transaction=transaction)
-            if not lock.exists or _required_data(lock).get("run_id") != run.id:
+            holds_lock = lock.exists and _required_data(lock).get("run_id") == run.id
+            if not holds_lock and not (
+                command.operation == "cancel" and run.status is RunStatus.FAILED
+            ):
                 raise StorageIntegrityError(f"run {run.id} does not hold its credential lock")
 
             if proof is not None:
@@ -293,10 +296,11 @@ class FirestoreRunRepository:
             transaction.set(run_ref, encode(updated))
             transaction.set(step_ref, encode(step))
             transaction.set(outbox_ref, encode(event))
-            if updated.status in {
+            if holds_lock and updated.status in {
                 RunStatus.CANCELLED,
                 RunStatus.COMPLETED,
                 RunStatus.COMPENSATED,
+                RunStatus.FAILED,
             }:
                 transaction.delete(lock_ref)
             return MutationResult(run=updated, step=step, applied=True)

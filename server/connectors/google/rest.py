@@ -135,11 +135,13 @@ class GoogleRestClient:
             params=params,
         ) as response:
             if response.status_code not in expected:
+                await response.aread()
                 retryable = response.status_code in {408, 409, 429, 500, 502, 503, 504}
                 raise ConnectorError(
                     f"google-api-{response.status_code}",
                     f"Google API returned HTTP {response.status_code}",
                     retryable=retryable,
+                    safe_detail=_safe_error_detail(response),
                 )
             async for line in response.aiter_lines():
                 if not line.startswith("data:"):
@@ -173,7 +175,16 @@ class GoogleRestClient:
                 connection=connection,
             )
             if operation.get("done") is True or operation.get("status") == "DONE":
-                if "error" in operation:
+                operation_error = operation.get("error")
+                if isinstance(operation_error, dict):
+                    code = operation_error.get("code")
+                    raise ConnectorError(
+                        "google-operation-failed",
+                        "Google operation completed with an error",
+                        retryable=code in {4, 8, 10, 13, 14},
+                        safe_detail=_safe_error_payload({"error": operation_error}),
+                    )
+                if operation_error is not None:
                     raise ConnectorError(
                         "google-operation-failed", "Google operation completed with an error"
                     )
@@ -297,6 +308,10 @@ def _safe_error_detail(response: httpx.Response) -> str | None:
         payload = response.json()
     except (ValueError, jsonlib.JSONDecodeError):
         return None
+    return _safe_error_payload(payload)
+
+
+def _safe_error_payload(payload: Any) -> str | None:
     if not isinstance(payload, dict):
         return None
     error = payload.get("error")
@@ -306,6 +321,22 @@ def _safe_error_detail(response: httpx.Response) -> str | None:
     status = error.get("status")
     if isinstance(status, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", status):
         values.append(status.lower().replace("_", "-"))
+    elif isinstance(error.get("code"), int):
+        canonical = {
+            3: "invalid-argument",
+            4: "deadline-exceeded",
+            5: "not-found",
+            6: "already-exists",
+            7: "permission-denied",
+            8: "resource-exhausted",
+            9: "failed-precondition",
+            10: "aborted",
+            13: "internal",
+            14: "unavailable",
+            16: "unauthenticated",
+        }.get(error["code"])
+        if canonical is not None:
+            values.append(canonical)
     message = error.get("message")
     if isinstance(message, str) and re.search(
         r"(?:^|\n)Error Details:\s*Rate exceeded\.?\s*$", message, re.IGNORECASE
@@ -321,6 +352,12 @@ def _safe_error_detail(response: httpx.Response) -> str | None:
                 reason = detail.get("reason")
                 if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", reason):
                     values.append(reason.lower().replace("_", "-"))
+                metadata = detail.get("metadata")
+                permission = metadata.get("permission") if isinstance(metadata, dict) else None
+                if isinstance(permission, str) and re.fullmatch(
+                    r"[A-Za-z][A-Za-z0-9_.]{2,127}", permission
+                ):
+                    values.append(f"permission-{permission}")
             elif kind == "type.googleapis.com/google.rpc.BadRequest":
                 violations = detail.get("fieldViolations")
                 if isinstance(violations, list):

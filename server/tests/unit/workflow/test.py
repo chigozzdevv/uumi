@@ -6,6 +6,8 @@ from contracts import (
     CompleteStageCommand,
     CreateRunCommand,
     EventKind,
+    FailRunCommand,
+    Failure,
     RunStatus,
     RuntimeDeployment,
     Stage,
@@ -171,6 +173,42 @@ async def test_cancel_releases_credential_lock() -> None:
 
     assert cancelled.run.status is RunStatus.CANCELLED
     assert repository.events[-2].event.kind is EventKind.RUN_CANCELLED
+    assert next_run.applied is True
+
+
+@pytest.mark.anyio
+async def test_fail_releases_credential_lock() -> None:
+    repository = MemoryRunRepository()
+    workflow = RunWorkflow(repository, clock=lambda: NOW, id_factory=IdSequence())
+    created = await workflow.create(create_command())
+    started = await workflow.start(
+        StartRunCommand(
+            id="command_start",
+            organisation_id="org_one",
+            run_id=created.run.id,
+            actor_id="service_one",
+            expected_revision=created.run.revision,
+            owner_id="worker_one",
+            expires_at=NOW + timedelta(hours=1),
+        )
+    )
+
+    failed = await workflow.fail(
+        FailRunCommand(
+            id="command_fail",
+            organisation_id="org_one",
+            run_id=started.run.id,
+            actor_id="service_one",
+            expected_revision=started.run.revision,
+            fencing_token=started.run.fencing_token,
+            failure=Failure(code="test-failure", message="Test failure.", retryable=False),
+        )
+    )
+    next_run = await workflow.create(
+        create_command(command_id="command_next", event_id="event-two")
+    )
+
+    assert failed.run.status is RunStatus.FAILED
     assert next_run.applied is True
 
 

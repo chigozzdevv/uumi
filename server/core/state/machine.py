@@ -17,8 +17,14 @@ from core.errors import LeaseConflictError, RevisionConflictError, TransitionRej
 
 
 class RotationMachine:
-    def __init__(self, policy: GatePolicy | None = None) -> None:
+    def __init__(
+        self,
+        policy: GatePolicy | None = None,
+        *,
+        validate_policy: bool = True,
+    ) -> None:
         self._policy = policy or GatePolicy()
+        self._validate_policy = validate_policy
 
     def start(
         self,
@@ -74,7 +80,8 @@ class RotationMachine:
             raise TransitionRejectedError("proof belongs to a different run")
         if proof.stage is not run.stage:
             raise TransitionRejectedError("proof does not match the current stage")
-        self._policy.validate(proof)
+        if self._validate_policy:
+            self._policy.validate(proof)
         changes = self._bindings(run, bindings or StageBindings())
 
         if run.stage is Stage.COMPLETE:
@@ -215,7 +222,6 @@ class RotationMachine:
             RunStatus.CANCELLED,
             RunStatus.COMPLETED,
             RunStatus.COMPENSATED,
-            RunStatus.FAILED,
         }:
             raise TransitionRejectedError("terminal work cannot be cancelled")
         return self._update(

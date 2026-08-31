@@ -170,7 +170,10 @@ class MemoryRunRepository:
                     f"expected revision {command.expected_revision}, found {run.revision}"
                 )
             lock_key = (command.organisation_id, run.credential_id)
-            if self._locks.get(lock_key) != run.id:
+            holds_lock = self._locks.get(lock_key) == run.id
+            if not holds_lock and not (
+                command.operation == "cancel" and run.status is RunStatus.FAILED
+            ):
                 raise StorageIntegrityError(f"run {run.id} does not hold its credential lock")
 
             updated = transition(run)
@@ -201,10 +204,11 @@ class MemoryRunRepository:
             self._runs[run_key] = updated
             self._steps[step_key] = step
             self._events[event_key] = event
-            if updated.status in {
+            if holds_lock and updated.status in {
                 RunStatus.CANCELLED,
                 RunStatus.COMPLETED,
                 RunStatus.COMPENSATED,
+                RunStatus.FAILED,
             }:
                 del self._locks[lock_key]
             return MutationResult(run=updated, step=step, applied=True)

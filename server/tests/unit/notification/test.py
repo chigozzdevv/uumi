@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -193,7 +193,7 @@ async def test_invitation_endpoint_is_deterministic_and_system_owned() -> None:
 
 
 async def test_api_email_delivery_configuration_is_complete_and_immutable() -> None:
-    base = {
+    base: dict[str, Any] = {
         "project_id": "uumi-project",
         "region": "us-central1",
         "oidc_audience": "https://api.uumi.example",

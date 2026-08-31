@@ -71,6 +71,24 @@ def test_stage_rejects_incomplete_evidence() -> None:
         machine.complete(run, proof, 1, run.revision, NOW)
 
 
+def test_stage_can_delegate_policy_validation_to_repository() -> None:
+    machine = RotationMachine(validate_policy=False)
+    run = machine.start(make_run(NOW), "worker_one", 0, LEASE_END, NOW)
+    proof = StageProof(
+        run_id=run.id,
+        organisation_id=run.organisation_id,
+        stage=Stage.TRIGGER,
+        checks=frozenset({"request-authenticated"}),
+        evidence_ids=("evidence_one",),
+        actor_id="service_one",
+        recorded_at=NOW,
+    )
+
+    advanced = machine.complete(run, proof, 1, run.revision, NOW)
+
+    assert advanced.stage is Stage.PREFLIGHT
+
+
 def test_run_requires_every_stage_before_completion() -> None:
     machine, run = start()
 
@@ -115,6 +133,27 @@ def test_cancel_releases_the_lease_and_invalidates_queued_work() -> None:
     assert cancelled.fencing_token == 2
     with pytest.raises(TransitionRejectedError, match="terminal"):
         machine.cancel(cancelled, cancelled.revision, NOW)
+
+
+def test_cancel_can_abandon_a_failed_run() -> None:
+    machine, run = start()
+    failed = machine.fail(
+        run,
+        Failure(
+            code="provisioning-failed",
+            message="Browser provisioning failed.",
+            retryable=False,
+        ),
+        run.fencing_token,
+        run.revision,
+        NOW,
+    )
+
+    cancelled = machine.cancel(failed, failed.revision, NOW)
+
+    assert cancelled.status is RunStatus.CANCELLED
+    assert cancelled.failure is None
+    assert cancelled.lease is None
 
 
 def test_cleanup_can_recover_under_a_new_fence() -> None:

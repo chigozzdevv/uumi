@@ -137,6 +137,13 @@ class FirestoreGenerationRepository:
             changed_credential = credential.model_copy(
                 update={
                     "active_generation_id": target.id,
+                    "provider_id": target.provider_id,
+                    "provider_display_name": target.provider_display_name,
+                    "secret_reference": target.secret_reference,
+                    "scopes": target.scopes,
+                    "expires_at": target.expires_at,
+                    "last_observed_at": target.last_observed_at,
+                    "metadata_digest": target.metadata_digest,
                     "updated_at": report.completed_at,
                     "revision": credential.revision + 1,
                 }

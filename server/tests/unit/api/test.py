@@ -981,6 +981,56 @@ async def test_create_and_start_are_authenticated_and_idempotent() -> None:
 
 
 @pytest.mark.anyio
+async def test_failed_run_can_be_cancelled_and_releases_its_credential() -> None:
+    transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("request-failed-create"),
+            json=create_body(),
+        )
+        run = created.json()["run"]
+        started = await client.post(
+            f"/v1/organisations/org_one/runs/{run['id']}/start",
+            headers=headers("request-failed-start"),
+            json={
+                "expected_revision": run["revision"],
+                "expires_at": (NOW + timedelta(hours=1)).isoformat(),
+            },
+        )
+        running = started.json()["run"]
+        failed = await client.post(
+            f"/v1/organisations/org_one/runs/{run['id']}/fail",
+            headers=headers("request-fail"),
+            json={
+                "expected_revision": running["revision"],
+                "fencing_token": running["fencing_token"],
+                "failure": {
+                    "code": "provisioning-failed",
+                    "message": "Browser provisioning failed.",
+                    "retryable": False,
+                },
+            },
+        )
+        cancelled = await client.post(
+            f"/v1/organisations/org_one/runs/{run['id']}/cancel",
+            headers=headers("request-cancel-failed"),
+            json={"expected_revision": failed.json()["run"]["revision"]},
+        )
+        replacement = await client.post(
+            "/v1/organisations/org_one/runs",
+            headers=headers("request-after-cancel"),
+            json={**create_body(), "event_id": "event-after-cancel"},
+        )
+
+    assert failed.status_code == 200
+    assert failed.json()["run"]["status"] == "failed"
+    assert cancelled.status_code == 200
+    assert cancelled.json()["run"]["status"] == "cancelled"
+    assert replacement.status_code == 201
+
+
+@pytest.mark.anyio
 async def test_list_runs_orders_newest_first_and_filters_status() -> None:
     transport = httpx.ASGITransport(app=app(), raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

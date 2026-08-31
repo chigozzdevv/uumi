@@ -107,6 +107,16 @@ class Video:
         )
 
 
+class FailingVideo(Video):
+    async def result(
+        self,
+        operation: str,
+        source_id: str,
+        now: datetime,
+    ) -> WalkthroughAnalysis | None:
+        raise ConnectorError("video-analysis-failed", "Video Intelligence analysis failed")
+
+
 @pytest.mark.anyio
 async def test_walkthrough_upload_analysis_and_ready_handoff() -> None:
     repository = Repository()
@@ -165,6 +175,31 @@ async def test_cloud_storage_video_reference_is_analysed_and_generation_pinned()
     assert analysing.resource.endswith("/walkthroughs/source_one/video#9")
     assert ready.status is WalkthroughStatus.READY
     assert ready.analysis is not None
+
+
+@pytest.mark.anyio
+async def test_failed_video_analysis_is_persisted_without_a_server_error() -> None:
+    repository = Repository()
+    service = WalkthroughService(
+        repository,
+        Uploads(),
+        FailingVideo(),
+        "walkthroughs",
+        lambda: NOW,
+    )
+
+    await service.reference_video(
+        "org_one",
+        "playbook_one",
+        "source_one",
+        "https://storage.googleapis.com/customer-videos/rotation.mp4",
+        "user_one",
+    )
+    failed = await service.refresh("org_one", "playbook_one", "source_one")
+
+    assert failed.status is WalkthroughStatus.FAILED
+    assert failed.failure == "video analysis failed"
+    assert failed.analysis is None
 
 
 @pytest.mark.anyio
@@ -273,6 +308,30 @@ class Google:
         }
 
 
+class FailedVideoGoogle(Google):
+    async def request(
+        self,
+        method: str,
+        url: str,
+        **options: Any,
+    ) -> dict[str, Any]:
+        if method == "POST":
+            return await super().request(method, url, **options)
+        return {
+            "done": True,
+            "response": {
+                "annotationResults": [
+                    {
+                        "error": {
+                            "code": 15,
+                            "message": "Calculator failed",
+                        }
+                    }
+                ]
+            },
+        }
+
+
 class StorageGoogle:
     async def request(
         self,
@@ -305,6 +364,7 @@ class ImportGoogle(StorageGoogle):
             "ifSourceGenerationMatch": "9",
             "ifGenerationMatch": "0",
         }
+        assert options["json"]["bucket"] == "walkthroughs"
         return {
             "done": True,
             "resource": {
@@ -378,3 +438,11 @@ async def test_video_intelligence_returns_timestamped_sanitised_annotations() ->
     assert analysis.screen_text[0].text == "Bearer [redacted]"
     assert analysis.redaction_count == 2
     assert analysis.shots[0].end_seconds == 5
+
+
+@pytest.mark.anyio
+async def test_video_intelligence_rejects_failed_annotation_results() -> None:
+    connector = VideoIntelligenceConnector(FailedVideoGoogle())
+
+    with pytest.raises(ConnectorError, match="Video Intelligence analysis failed"):
+        await connector.result("operations/analysis-one", "source_one", NOW)

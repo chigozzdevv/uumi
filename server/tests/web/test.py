@@ -111,10 +111,10 @@ def test_strips_private_upstream_headers(app: FastAPI) -> None:
     assert "x-private" not in response.headers
 
 
-def test_settings_use_a_short_upstream_timeout() -> None:
+def test_settings_allow_managed_agent_requests_to_complete() -> None:
     settings = WebSettings(
         project_id="useuumi",
         api_url="https://uumi-api.example.run.app",
     )
 
-    assert settings.upstream_timeout_seconds == 50.0
+    assert settings.upstream_timeout_seconds == 290.0

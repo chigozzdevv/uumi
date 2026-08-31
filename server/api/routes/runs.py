@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from contracts import (
+    CancelRunCommand,
     CleanupRunCommand,
     CompleteRecoveryCommand,
     CompleteStageCommand,
@@ -340,6 +341,29 @@ async def pause_run(
             actor_id=identity.actor_id,
             expected_revision=body.expected_revision,
             fencing_token=body.fencing_token,
+        )
+    )
+    return _response(result)
+
+
+@router.post("/{run_id}/cancel", response_model=MutationResponse)
+async def cancel_run(
+    organisation_id: OrganisationId,
+    run_id: RunId,
+    body: RevisionRequest,
+    identity: Identity,
+    key: IdempotencyKey,
+    request: Request,
+) -> MutationResponse:
+    api = services(request)
+    await api.access.require(identity, organisation_id, Permission.RUN_WRITE)
+    result = await api.workflow.cancel(
+        CancelRunCommand(
+            id=command_id(identity, organisation_id, key),
+            organisation_id=organisation_id,
+            run_id=run_id,
+            actor_id=identity.actor_id,
+            expected_revision=body.expected_revision,
         )
     )
     return _response(result)

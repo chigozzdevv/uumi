@@ -267,6 +267,16 @@ def _stage_presentation(
             if approvals:
                 return _approval_presentation(result.output, approvals)
             return "Waiting for revocation approval", ()
+        browser_error = _browser_error(result.output)
+        if browser_error is not None:
+            code, message = browser_error
+            if code == "authentication-required":
+                return "Provider session requires reauthentication", (
+                    StageDetail(label="Provider response", value=message),
+                )
+            return "Browser step needs attention", (
+                StageDetail(label="Provider response", value=message),
+            )
         if _browser_activity(result.output):
             return "Computer Use paused", (StageDetail(label="Method", value="Computer Use"),)
         return None, ()
@@ -415,6 +425,17 @@ def _stage_presentation(
         return "Previous credential revoked", tuple(details)
     if stage is Stage.COMPLETE:
         return "Rotation complete", ()
+
+
+def _browser_error(output: dict[str, Any]) -> tuple[str, str] | None:
+    value = output.get("browser_error")
+    if not isinstance(value, dict):
+        return None
+    code = value.get("code")
+    message = value.get("message")
+    if not isinstance(code, str) or not isinstance(message, str) or not message.strip():
+        return None
+    return code, message
 
 
 def _approval_presentation(

@@ -72,8 +72,13 @@ class VideoIntelligenceConnector:
         screen_text: list[TimedText] = []
         shots: list[VideoShot] = []
         redactions = 0
+        failures: list[dict[str, Any]] = []
         for result in results:
             if not isinstance(result, dict):
+                continue
+            error = result.get("error")
+            if isinstance(error, dict):
+                failures.append(error)
                 continue
             for speech in _objects(result.get("speechTranscriptions")):
                 alternatives = _objects(speech.get("alternatives"))
@@ -116,6 +121,8 @@ class VideoIntelligenceConnector:
                         end_seconds=_seconds(shot.get("endTimeOffset")),
                     )
                 )
+        if failures and len(failures) == len(results):
+            raise ConnectorError("video-analysis-failed", "Video Intelligence analysis failed")
         return WalkthroughAnalysis(
             source_id=source_id,
             transcript=tuple(transcript),

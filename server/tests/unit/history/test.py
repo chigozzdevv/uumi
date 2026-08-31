@@ -188,3 +188,30 @@ def test_approval_history_reflects_the_current_decision() -> None:
 
     assert public.summary == "Revocation approved"
     assert public.details == ()
+
+
+def test_browser_failure_history_exposes_the_safe_provider_reason() -> None:
+    result = StageExecutionResult(
+        id="stage_create",
+        organisation_id="org_one",
+        run_id="run_one",
+        stage=Stage.CREATE,
+        status=StageExecutionStatus.FAILED,
+        output={
+            "browser_error": {
+                "status_code": 409,
+                "code": "checkpoint-mismatch",
+                "message": "approved page was not reached",
+            }
+        },
+        reason="BrowserWorkerError: approved page was not reached",
+        started_at=NOW,
+        completed_at=NOW + timedelta(seconds=1),
+    )
+
+    public = _activity(result)
+
+    assert public.summary == "Browser step needs attention"
+    assert [(item.label, item.value) for item in public.details] == [
+        ("Provider response", "approved page was not reached"),
+    ]

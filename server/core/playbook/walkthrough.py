@@ -256,7 +256,18 @@ class WalkthroughService:
             return source
         if source.operation is None:
             raise PlaybookError("walkthrough analysis operation is missing")
-        analysis = await self._video.result(source.operation, source.id, self._clock())
+        try:
+            analysis = await self._video.result(source.operation, source.id, self._clock())
+        except Exception:
+            failed = source.model_copy(
+                update={
+                    "status": WalkthroughStatus.FAILED,
+                    "failure": "video analysis failed",
+                    "updated_at": self._clock(),
+                    "revision": source.revision + 1,
+                }
+            )
+            return await self._repository.replace(source, failed)
         if analysis is None:
             return source
         changed = source.model_copy(

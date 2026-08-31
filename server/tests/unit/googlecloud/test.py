@@ -96,6 +96,10 @@ async def test_onboarding_discovers_google_resources_without_persisting_token() 
     assert connection.platform == "google-cloud"
     assert connection.roles == frozenset({ConnectionRole.RUNTIME, ConnectionRole.SECRET_STORE})
     assert connection.status is ConnectionStatus.SETUP_REQUIRED
+    assert connection.allowed_resources == (
+        "projects/project-one/locations/us-central1/services",
+        "projects/project-one/secrets",
+    )
     ready = await service.authorize_connection(
         "org_one", session.id, "user-one", connection.revision
     )

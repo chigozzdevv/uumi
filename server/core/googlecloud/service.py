@@ -259,7 +259,12 @@ class GoogleCloudOnboardingService:
             allowed_resources=tuple(
                 dict.fromkeys(
                     (
-                        *(service.reference for service in project.services),
+                        *(
+                            f"projects/{project.project_id}/locations/{region}/services"
+                            for region in dict.fromkeys(
+                                service.region for service in project.services
+                            )
+                        ),
                         f"projects/{project.project_id}/secrets",
                     )
                 )
