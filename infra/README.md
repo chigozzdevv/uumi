@@ -1,33 +1,76 @@
 # Uumi infrastructure
 
-Uumi uses a two-phase infrastructure deployment. The foundation is created first so images,
-Secret Manager versions, organisation grants, ingestion sources, and IAP users can be supplied as real
-immutable inputs. The second apply creates all nine runtimes, the Workflows coordinator, event
-routing, isolated browser fleet, and browser gateway together. Terraform rejects a partial
-runtime deployment.
+Terraform provisions the Uumi data project, its protected runtime graph, and the optional
+Agent Runtime project. Deployment has two applies:
 
-## 1. Bootstrap remote state
+| Phase | Creates | Gate |
+| --- | --- | --- |
+| Foundation | State, Firestore, KMS, Secret Manager containers, IAM, storage, identity, network, perimeter inputs, and Artifact Registry | Runtime image references remain `null` |
+| Runtime | Cloud Run services, Workflows, event delivery, browser gateway, and agent-facing controls | Required image digests, secret versions, organisations, policy, and integration inputs are present |
 
-```bash
+The data project owns Uumi state and services. When `agent_project_id` differs from `project_id`,
+the agent project owns Agent Runtime, Agent Gateway, Agent Registry, Model Armor, staging storage,
+and agent CMEK resources. Terraform receives resource names and immutable version references;
+credential values stay outside Terraform.
+
+## Prerequisites
+
+- A Google Cloud project with billing and the permissions required by the selected IAM and
+  organisation policies.
+- Terraform 1.15.x (CI uses 1.15.8), the Google Cloud CLI, and Application Default Credentials.
+- Docker, `uv`, Python 3.12, and Node.js/npm for image builds and agent deployment.
+- An organisation Access Context Manager policy and an existing operator access level for the
+  runtime phase.
+
+Validate the Terraform roots from the repository root before applying:
+
+```sh
+make infra TERRAFORM=terraform
+```
+
+## 1. Prepare deployment values
+
+Copy the example file to the ignored environment file:
+
+```sh
+cp infra/terraform/environments/dev/values.example.tfvars \
+  infra/terraform/environments/dev/values.tfvars
+```
+
+Replace every `replace-with-*` value. Keep `values.tfvars` out of Git. The important inputs are:
+
+| Input group | Variables |
+| --- | --- |
+| Projects and location | `project_id`, optional `agent_project_id`, `region`, `agent_model_location`, `zone` |
+| Runtime admission | `workflow_organisations`, `access_policy_id`, `operator_access_level`, `gateway_users` |
+| Egress allowlists | `browser_allowed_domains`, `runtime_connector_domains` |
+| Identity Platform | `identity_platform_domains`, `oidc_audience` |
+| Event sources | `scc_sources`, `secret_sources`, `provider_sources`, `rotation_schedules` |
+| Runtime images | The ten required image variables listed in [Build and publish](#5-build-and-publish-images) |
+
+For the foundation apply, leave image references and optional integration values `null` as shown
+in `values.example.tfvars`. The runtime preconditions require the complete set before any
+automation image can be deployed.
+
+## 2. Bootstrap remote state
+
+Create the state bucket once:
+
+```sh
 terraform -chdir=infra/terraform/bootstrap init
 terraform -chdir=infra/terraform/bootstrap apply \
   -var=project_id=YOUR_PROJECT \
   -var=bucket_name=YOUR_STATE_BUCKET
 ```
 
-The state bucket has versioning, uniform access, public-access prevention, and destruction
-protection.
+The bucket has versioning, uniform bucket-level access, public-access prevention, a 90-day rule
+for archived objects, and `prevent_destroy`.
 
-## 2. Apply the foundation
+## 3. Apply the foundation
 
-Copy `infra/terraform/environments/dev/values.example.tfvars` to an untracked `values.tfvars`.
-Keep all nine image variables, `notification_app_url`, and `capability_secret_version` null for
-the first apply. Supply the organisation Access Context Manager policy, an existing operator
-access level constrained by your organisation's trusted identities, devices, or networks, and the
-browser provider-domain allowlist from the beginning; these are infrastructure controls, not
-credential values.
+Initialise the environment against the state bucket:
 
-```bash
+```sh
 terraform -chdir=infra/terraform/environments/dev init \
   -backend-config=bucket=YOUR_STATE_BUCKET \
   -backend-config=prefix=uumi/dev
@@ -35,84 +78,66 @@ terraform -chdir=infra/terraform/environments/dev apply \
   -var-file=values.tfvars
 ```
 
-This creates the protected Firestore database, service accounts, immutable Artifact Registry,
-CMEK keys, locked evidence and audit storage, Agent Runtime staging bucket, GitHub App OAuth and
-webhook secret containers, provider webhook secret containers, capability secret container,
-service perimeter, regional policy, private browser network, one-run VM template, and Identity
-Platform sign-in configuration (email and password enabled; `identity_platform_domains` admits the
-client origin). Computer Use remains unavailable until its on-demand secure-egress lifecycle is
-implemented.
+The foundation creates:
 
-Create secret versions outside Terraform. The capability secret version must contain exactly the
-raw 32-byte private key of an Ed25519 keypair; `capability_public_key` contains only the paired raw
-public key in unpadded base64url form. Only the API and coordinator can read the private key.
-Broker, gateway, and one-run browser workers receive the public key and therefore cannot mint
-capabilities. The GitHub App uses one random webhook HMAC secret and one OAuth client secret;
-customer installations are mapped to Uumi organisations in Firestore only after a signed
-installation delivery and a PKCE-bound user authorization prove ownership. Provider webhooks use
-a distinct random HMAC secret per configured source. Provider signatures cover
-`X-Uumi-Timestamp + "." + raw-body` and Uumi
-rejects timestamps outside the configured replay window. Do not
-place private or HMAC values in Terraform variables, plans, state, commands, or shell history.
+- Firestore Native with pessimistic concurrency, point-in-time recovery, and delete protection.
+- KMS keys, the Artifact Registry, locked evidence and audit storage, agent staging storage, and
+  organisation-scoped browser-session secret containers.
+- Separate service accounts for the API, web gateway, event delivery, ingestion, publisher,
+  broker, coordinator, browser worker, gateway, agents, notifications, audit, and demo consumer.
+- Identity Platform configuration, browser VPC/subnets, the one-run Compute Engine template,
+  service-perimeter inputs, Model Armor templates, and event-source containers.
 
-Register a Google OAuth web client with the Uumi callback URL ending in
-`?google_cloud=callback`. Add its client secret as an immutable version of the managed
-`uumi-google-cloud-oauth-client` secret, then set the three `google_cloud_*` variables together.
-The short-lived user token is KMS-encrypted for the 15-minute onboarding session, is never
-returned to the dashboard, and is cleared immediately after access is authorised. The same Uumi
-OAuth client serves every customer; each authorization is isolated by the signed-in identity,
-PKCE-bound session, and Uumi organisation.
+No runtime service is admitted by this apply. The Cloud Run graph and Workflows become enabled only
+after the image and control gates pass in the runtime apply.
 
-For each Google Cloud connection, select a dedicated customer-managed service account. The
-connection journey preserves existing IAM policies and grants that identity Cloud Run Developer,
-Secret Manager Viewer, and Secret Manager Secret Version Manager on the selected project. It also
-grants Service Account User on the discovered Cloud Run runtime identities and lets the Uumi broker
-and API metadata-discovery boundary mint short-lived tokens for the selected automation identity.
-Access is verified before the connection is marked ready. Customer identities are not Terraform
-inputs, so a new connection never requires a Uumi redeployment. A browser worker receives an
-encrypted, short-lived token for its selected secret-store connection only when Secure Capture or
-authorised takeover needs it; the worker never receives impersonation permission. Uumi stores
-`workload-identity://SERVICE_ACCOUNT_EMAIL` as the connection's authorisation reference; it is
-identity metadata, not a credential. Uumi uses that selected identity for runtime,
-secret-store, and connection-verification calls and rejects fallback to its own process identity.
-The signed-in customer administrator must be authorised to update the selected project's IAM
-policy and the selected service-account policies; Uumi cannot grant itself access to a customer
-account.
+## 4. Create secret versions outside Terraform
 
-Register the customer-facing GitHub App with the Uumi ingestion URL ending in `/v1/github`,
-the configured HTTPS URL as both the OAuth callback and post-install setup URL, read access to
-secret scanning alerts, and the `secret_scanning_alert` event. Keep GitHub's automatic OAuth-on-
-install option disabled: Uumi receives the installation first, then starts its PKCE-bound user
-authorization automatically. Add the App OAuth client secret and webhook HMAC as Secret Manager
-versions outside Terraform, then set their full immutable version references in the second-phase
-variables. GitHub sends installation and installation-repository lifecycle events to Apps by
-default; Uumi uses them to disable stale routing. Uumi never changes security settings on its
-own source repository.
+Create the following Secret Manager versions with the Google Cloud CLI or an approved secret
+provisioning process. Do not place their values in `values.tfvars`, Terraform plans, state,
+commands, logs, or shell history.
 
-Email and password sign-in is enabled by Terraform. Enable Google sign-in in the Identity Platform
-console. Any later enterprise SAML or OIDC client secrets stay in the provider configuration and
-outside Terraform state.
-
-## 3. Build and push every runtime by digest
-
-`make images` builds:
-
-| Image | Dockerfile | Runtime |
+| Secret | Terraform input | Boundary |
 | --- | --- | --- |
-| `api` | `server/api/Dockerfile` | Private control API |
-| `publisher` | `server/publisher/Dockerfile` | Transactional outbox publisher |
-| `ingestion` | `server/ingestion/Dockerfile` | Schedule, Secret Manager, GitHub, SCC, and provider intake |
-| `broker` | `server/broker/Dockerfile` | Capability-scoped MCP broker |
-| `coordinator` | `server/coordinator/Dockerfile` | Deterministic stage executor |
-| `browser` | `server/browser/worker.Dockerfile` | One-run Playwright worker |
-| `gateway` | `server/browser/Dockerfile` | IAP live view and takeover |
-| `notification` | `server/notification/Dockerfile` | Durable email, Slack, and PagerDuty delivery |
-| `auditlog` | `server/auditlog/Dockerfile` | Canonical audit delivery to locked Cloud Logging |
+| Capability signing key | `capability_secret_version` | Exactly the raw 32-byte Ed25519 private key. Only the API and coordinator read it. |
+| Capability public key | `capability_public_key` | The paired raw public key, unpadded base64url. Broker, gateway, and browser workers receive only this key. |
+| GitHub App OAuth and webhook HMAC | `github_client_secret_version`, `github_webhook_secret_version` | Immutable versions. Use one random webhook HMAC secret for the App. |
+| Google Cloud OAuth client secret | `google_cloud_client_secret_version` | Immutable version. Set the client ID, secret version, and callback URL together. |
+| Email delivery credential | `notification_email_secret_version` | Must belong to one entry in `notification_secrets`; set it with `notification_email_sender`. |
+| Provider webhook HMAC | Provider secret containers | Use a distinct random HMAC secret per source. Signatures cover `X-Uumi-Timestamp + "." + raw-body`. |
 
-Tag each image with the Git commit, push it to the `image_repository` Terraform output, and
-resolve its digest:
+The capability public key must be the pair for the private key. Terraform validates the immutable
+version shape; IAM grants must cover the project that owns each referenced secret. Customer
+workload credentials are created and rotated after the foundation exists; Uumi stores only their
+version references and fingerprints.
 
-```bash
+## 5. Build and publish images
+
+Build from the repository root:
+
+```sh
+make images
+```
+
+The runtime phase requires these ten immutable image references. `demo_image` is optional and
+deploys the Resend demo consumer when supplied.
+
+| Variable | Dockerfile | Runtime |
+| --- | --- | --- |
+| `api_image` | `server/api/Dockerfile` | Private control API |
+| `web_image` | `server/web/Dockerfile` | Authenticated web gateway |
+| `publisher_image` | `server/publisher/Dockerfile` | Transactional outbox publisher |
+| `ingestion_image` | `server/ingestion/Dockerfile` | Schedule, Secret Manager, GitHub, SCC, and provider intake |
+| `broker_image` | `server/broker/Dockerfile` | Capability-scoped MCP broker |
+| `coordinator_image` | `server/coordinator/Dockerfile` | Deterministic stage executor and browser-session manager |
+| `browser_image` | `server/browser/worker.Dockerfile` | One-run Computer Use VM worker image |
+| `gateway_image` | `server/browser/Dockerfile` | IAP live view and takeover gateway |
+| `notification_image` | `server/notification/Dockerfile` | Durable email, Slack, and PagerDuty delivery |
+| `auditlog_image` | `server/auditlog/Dockerfile` | Canonical audit delivery to locked Cloud Logging |
+
+Tag and push each image by Git commit, then resolve its digest. Example:
+
+```sh
 gcloud auth configure-docker REGION-docker.pkg.dev
 docker tag uumi-api:local REGION-docker.pkg.dev/PROJECT/uumi/api:GIT_SHA
 docker push REGION-docker.pkg.dev/PROJECT/uumi/api:GIT_SHA
@@ -121,50 +146,79 @@ gcloud artifacts docker images describe \
   --format='value(image_summary.digest)'
 ```
 
-Repeat that operation for all nine images. Set every image variable to its full
-`REGION-docker.pkg.dev/PROJECT/uumi/NAME@sha256:DIGEST` reference. Set the explicit capability
-secret version and paired public key, notification application origin, notification secret
-containers, at least one `workflow_organisation`, at least one IAP `gateway_user`, and the required
-SCC, Secret Manager, provider, and recurring schedule sources.
-Then apply again. For every organisation in `secret_sources`, configure relevant Google Secret
-Manager secrets to publish to the `secret_topics` output; Terraform grants the Secret Manager
-service agent publisher access to those topics.
+Set every required `*_image` variable to the complete
+`REGION-docker.pkg.dev/PROJECT/uumi/NAME@sha256:DIGEST` value. A tag without a digest fails the
+Terraform validation.
 
-The resulting graph includes:
+## 6. Configure external integrations
 
-- Cloud Workflows plus Eventarc/Pub/Sub delivery for authoritative run coordination.
-- Private API, publisher, broker, coordinator, notification, and canonical audit Cloud Run services.
-- Authenticated public transport for signed GitHub/provider webhooks and OIDC-bound Google push
-  delivery.
-- SCC v2 and Secret Manager topics, retrying push subscriptions, recurring Cloud Scheduler jobs,
-  and retained dead-letter review.
-- A no-public-IP, Shielded, CMEK-encrypted, auto-deleting Compute Engine VM per browser run.
-- A private browser network and one-run VM template. Computer Use egress is intentionally disabled
-  until Uumi can create and remove its allowlisted proxy for active browser sessions only.
-- An enforced VPC Service Controls perimeter for persisted data APIs plus a project resource
-  location policy bound to the selected region. When Agent Gateway is enabled, Vertex Agent
-  Runtime is governed by Gateway, IAM, Model Armor, and CMEK instead of VPC Service Controls,
-  because Google Cloud does not support attaching Agent Gateway to a VPC-SC Agent Runtime.
-  Third-party internet control remains the Secure Web Proxy's responsibility.
-- The signed-webhook ingestion service remains externally reachable by design. Cloud Run's Admin
-  API is therefore outside the service perimeter; ingress authentication and replay protection
-  guard that transport, while every persisted data service stays inside the perimeter. The Admin
-  API remains reachable from the VPC so the broker can perform approved Cloud Run rotation steps.
-- IAP-authenticated live view and takeover through a VPC-connected Cloud Run gateway.
-- A one-year locked, versioned, CMEK evidence bucket containing sanitised replay and verified
-  hash-chain manifests, plus a seven-year locked regional Cloud Logging bucket for canonical
-  audit events.
-- OpenTelemetry export to Cloud Trace and Monitoring with alerts on incident-ingestion,
-  notification, and audit dead letters.
+Complete these registrations before the runtime apply:
 
-## 4. Deploy and register the four agents
+**Google Cloud onboarding**
 
-Run the deployment under the `uumi-agents` deployment identity. `--project` is the separate,
-non-perimeter agent project that owns Agent Runtime, Agent Gateway, Agent Registry, Model Armor,
-the staging bucket, and CMEK. `--catalog-project` is the VPC-SC-protected Uumi project that owns
-the Firestore registration catalog:
+- Register one HTTPS OAuth web client with a callback ending in `?google_cloud=callback`.
+- Store its client secret as an immutable version and set
+  `google_cloud_client_id`, `google_cloud_client_secret_version`, and
+  `google_cloud_callback_url` together.
+- The onboarding token is KMS-encrypted for a 15-minute session, never returned to the dashboard,
+  and cleared after authorisation.
 
-```bash
+**GitHub App**
+
+- Register the Uumi ingestion URL ending in `/v1/github`.
+- Use the configured HTTPS URL for the OAuth callback and post-install setup URL.
+- Grant read access to secret-scanning alerts and enable the `secret_scanning_alert` event.
+- Disable automatic OAuth-on-install. Uumi verifies the installation delivery before starting the
+  PKCE-bound user authorisation.
+- Store the App OAuth secret and webhook HMAC as immutable versions.
+
+**Customer Google Cloud connections**
+
+- Select a dedicated customer-managed service account per connection.
+- Grant it Cloud Run Developer, Secret Manager Viewer, Secret Manager Secret Version Manager, and
+  Service Account User on the discovered Cloud Run identities as required by the connection.
+- Uumi stores `workload-identity://SERVICE_ACCOUNT_EMAIL`, not a credential. Access is verified
+  before the connection becomes ready.
+
+**Identity Platform and notifications**
+
+- Email/password sign-in is configured by Terraform. Enable Google sign-in in the Identity
+  Platform console.
+- Set `notification_app_url`, `notification_email_secret_version`, and
+  `notification_email_sender` together when email delivery is enabled.
+
+## 7. Apply the runtime graph
+
+The second apply is a hard gate. It requires both control-plane images, all eight automation
+images, the capability version and public key, organisation and policy inputs, browser/API
+allowlists, IAP users, and the required GitHub and notification inputs.
+
+```sh
+terraform -chdir=infra/terraform/environments/dev apply \
+  -var-file=values.tfvars
+```
+
+This enables nine Cloud Run services when all required images are supplied: API, web gateway,
+publisher, ingestion, broker, coordinator, notification worker, audit publisher, and IAP browser
+gateway. The browser worker image is used by the one-run Compute Engine VM template. The optional
+Resend demo is a tenth Cloud Run service.
+
+The graph also includes:
+
+- Workflows, Eventarc, Pub/Sub, Cloud Scheduler, SCC notifications, ordered delivery, retries,
+  and retained dead-letter subscriptions.
+- Private runtime subnets, no-public-IP Shielded browser VMs, CMEK, and on-demand default-deny
+  Secure Web Proxy egress for approved browser domains.
+- VPC Service Controls and regional resource-location policy for supported persisted data APIs.
+  Agent Gateway, IAM, Model Armor, and CMEK govern Agent Runtime when it is in a separate project.
+- IAP-authenticated live view and takeover, locked regional audit logging, evidence retention, and
+  Cloud Trace/Monitoring alerts.
+
+## 8. Deploy and register the agent fleet
+
+Run the deployment under the `uumi-agents` identity. From the repository root:
+
+```sh
 uv run --all-extras python -m agents.deploy \
   --project YOUR_AGENT_PROJECT \
   --catalog-project YOUR_UUMI_DATA_PROJECT \
@@ -182,51 +236,51 @@ uv run --all-extras python -m agents.deploy \
   --version RELEASE_VERSION
 ```
 
-The deployment uploads the complete Python package topology, creates separately bounded
-Inventory, Planner, Playbook Builder, and Console Operator ADK applications in Agent Runtime,
-assigns each deployment its own Agent Identity, enables tracing and Memory Bank, binds ingress and
-egress Agent Gateway enforcement, and writes immutable tenant routing registrations to Firestore.
-Agent Runtime deployments are catalogued in Agent Registry; Firestore remains Uumi's exact
-per-tenant and per-skill routing index.
+The command deploys four separately bounded ADK applications: Inventory Assessment, Planner,
+Playbook Builder, and Console Operator. Each gets its own Agent Identity, Agent Runtime version,
+gateway enforcement, tracing, and Memory Bank configuration. Immutable per-organisation routing
+registrations are written to Firestore and catalogued in Agent Registry.
 
-## 5. Operational readiness
+## 9. Readiness checks
 
 Before enabling schedules or webhooks, verify:
 
-- Identity Platform completes email and Google sign-in on an authorised domain, and the
-  API rejects a sign-in token issued for a different project;
-- all nine Cloud Run revisions use the expected image digests;
-- the four agent registrations report ready and resolve exactly one deployment per skill;
-- each registration carries a distinct Agent Identity and both governed gateway resources;
-- Model Armor blocks a seeded prompt-injection probe and IAP rejects an unregistered endpoint;
-- capability, GitHub, and provider webhook secret versions exist and IAM grants are limited to
-  their workloads;
-- every workload-identity connection can impersonate only its selected customer service account,
-  and a connection-scoped read fails when its required resource role is removed;
-- a customer GitHub App installation completes PKCE user verification, receives a signed
-  installation delivery, and reports secret scanning enabled for every selected repository;
-- credential Controls pin verified-exposure sources independently of the GitHub connection and
-  ambiguous repository correlations require confirmation;
-- adding or removing an installation repository invalidates readiness until onboarding is repeated;
-- Workflows can complete a controlled dry-run assignment in an isolated non-production
-  environment;
-- the browser VM has no external IP, starts the exact digest, and is deleted at run completion;
-- the browser VM's default route resolves to Secure Web Proxy and an unlisted domain is denied;
-- the service perimeter is enforced, the region policy matches deployment, and operator access
-  succeeds only through the declared Access Context Manager level;
-- IAP view and takeover are identity-bound and Secure Capture produces no secret-bearing frame;
-- SCC and Secret Manager delivery failures appear in the retained dead-letter subscription;
-- a seeded delivery failure opens the corresponding Cloud Monitoring incident and its traces
-  correlate to the runtime revision;
-- the final negative provider and secret probes pass and the exported audit manifest validates
-  from the genesis hash.
+- All required Cloud Run revisions use the expected image digests.
+- The four agent registrations are ready and resolve exactly one deployment per skill.
+- Capability, GitHub, provider webhook, and notification secret versions exist with workload-only
+  IAM grants.
+- Identity Platform sign-in works on an authorised domain and rejects tokens from another project.
+- Every workload-identity connection is limited to its selected customer service account.
+- GitHub installation, PKCE authorisation, secret-scanning delivery, and repository routing pass.
+- Workflows completes a controlled dry run in an isolated non-production organisation.
+- Browser VMs have no external IP, run the expected image, resolve egress through Secure Web Proxy,
+  and are deleted after the run.
+- IAP view/takeover is identity-bound and Secure Capture produces no secret-bearing frame.
+- SCC, Secret Manager, notification, and audit dead-letter paths raise their Monitoring alerts.
+- Negative provider and Secret Manager probes pass; the exported audit manifest validates from the
+  genesis hash.
 
-No credential value is an infrastructure input. API-key and OAuth connection material is created
-and governed in Secret Manager after the platform foundation exists; workload-identity
-connections store only the selected service-account reference.
+## Security invariants
 
-The storage module creates one CMEK-protected browser-session secret container per configured
-Uumi organisation. The API can list and reconcile its versions, while the isolated browser
-worker can only add and access versions. Connection setup selects no workload secret: the setup
-worker writes filtered provider state to the organisation container and the API receives only the
-resulting version reference and fingerprint.
+- Plaintext credential values never enter Terraform, plans, state, logs, traces, evidence, replay,
+  prompts, model context, or audit payloads.
+- API and coordinator can read the capability private key. Broker, gateway, agents, and browser
+  workers receive only the public key or short-lived, connection-scoped material when required.
+- Provider and Secret Manager mutations use leases, revisions, fencing tokens, idempotency keys,
+  and pre-mutation reconciliation. Stale workers cannot commit.
+- Provider-side revocation is proved before the old Secret Manager version is disabled. A
+  compensating recovery remains a separate terminal outcome.
+
+## Outputs and changes
+
+Useful outputs after the runtime apply include:
+
+```sh
+terraform -chdir=infra/terraform/environments/dev output
+```
+
+This exposes service URIs, the Artifact Registry prefix, event topics, dead-letter subscriptions,
+the audit bucket, agent gateways, and the browser template. It does not expose secret values.
+
+Keep `values.tfvars`, Terraform state, plans, and generated credentials outside Git. Review the
+plan for unexpected IAM, perimeter, network, or retention changes before every apply.
